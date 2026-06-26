@@ -85,24 +85,18 @@ jobs:
             printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
           } > keystore.properties
 
-      - name: Build signed release APK and AAB
-        run: ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Generate SHA-256 checksums
+      - name: Collect release APK
         run: |
           mkdir -p release-artifacts
           cp app/build/outputs/apk/release/*.apk release-artifacts/
-          cp app/build/outputs/bundle/release/*.aab release-artifacts/
-          cd release-artifacts
-          sha256sum * > SHA256SUMS.txt
-          for artifact in *.apk *.aab; do
-            sha256sum "$artifact" > "$artifact.sha256"
-          done
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nexa-release-artifacts
+          name: nexa-release-apk
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 14

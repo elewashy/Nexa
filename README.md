@@ -25,14 +25,6 @@ Current app version:
 
 Download the release APK from the latest release page, then install it on an Android 8.0+ device. Android may ask you to allow installs from the browser or file manager used to open the APK.
 
-Release artifacts include SHA-256 checksum files. After downloading an APK, you can verify it on Linux/macOS with:
-
-```bash
-sha256sum Nexa_V1.0.0.apk
-```
-
-Compare the output with the matching `.sha256` file attached to the release.
-
 ## Key Features
 
 - WebView-based browser with a clean native Android interface
@@ -95,10 +87,10 @@ keyAlias=replace-with-key-alias
 keyPassword=replace-with-key-password
 ```
 
-Build a signed release APK and AAB:
+Build a signed release APK:
 
 ```bash
-./gradlew assembleRelease bundleRelease
+./gradlew assembleRelease
 ```
 
 GitHub release builds use repository secrets:
@@ -198,7 +190,7 @@ For large changes, open an issue first so the design can be discussed before imp
 
 ## Roadmap
 
-- Publish signed GitHub releases with checksums
+- Publish signed GitHub releases
 - Strengthen update verification around downloaded APKs
 - Expand tests for browser resources, downloads, and update flows
 - Continue improving storage behavior for broader Android distribution
