@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1 - 2026-06-27
+
+### Changed
+
+- Incremented the Android app version after the initial public release.
+- Aligned the browser refresh affordance more closely with the official Material 3 Expressive `LoadingIndicator` defaults.
+
 ## 1.0.0 - 2026-06-26
 
 Initial public release of Nexa.

@@ -20,7 +20,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.core.EaseOutQuart
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -33,16 +32,16 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,11 +53,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.zIndex
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -175,8 +172,6 @@ class MainActivity : AppCompatActivity() {
         private const val STATE_LAST_KNOWN_URL = "last_known_url"
         private const val PAGE_TRANSITION_DURATION_MS = 300
         private const val BROWSER_REFRESH_TRIGGER_DP = 80f
-        private const val BROWSER_REFRESH_DRAG_RESISTANCE = 0.5f
-        private const val BROWSER_REFRESH_MAX_DRAG_MULTIPLIER = 1.6f
         private const val BROWSER_REFRESH_MIN_VISIBLE_MS = 300L
     }
 
@@ -359,10 +354,10 @@ class MainActivity : AppCompatActivity() {
                             .fillMaxSize()
                             .windowInsetsPadding(WindowInsets.statusBars)
                     ) {
-                        // WebView consumes native touch events, so Compose nested-scroll
-                        // pull-to-refresh cannot observe browser pulls. Gesture bridging
-                        // is installed on the WebView and the official M3 LoadingIndicator
-                        // is rendered as a Compose overlay here.
+                        // WebView consumes native touch events, so Compose nested scroll
+                        // cannot drive PullToRefreshBox. The gesture is bridged from
+                        // WebView while the official M3 Expressive LoadingIndicator is
+                        // rendered as the refresh affordance.
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -448,40 +443,30 @@ class MainActivity : AppCompatActivity() {
         isRefreshing: Boolean,
         pullDistancePx: Float,
     ) {
+        val state = rememberPullToRefreshState()
         val density = LocalDensity.current
         val triggerPx = with(density) { BROWSER_REFRESH_TRIGGER_DP.dp.toPx() }
-        val dragFraction = (pullDistancePx / triggerPx).coerceIn(0f, 1f)
-        val visible = isRefreshing || dragFraction > 0f
-        if (!visible) return
 
-        val targetAlpha = if (isRefreshing) 1f else dragFraction
-        val targetScale = if (isRefreshing) 1f else 0.65f + (0.35f * dragFraction)
-        val alpha by animateFloatAsState(targetValue = targetAlpha, label = "browserRefreshAlpha")
-        val scale by animateFloatAsState(targetValue = targetScale, label = "browserRefreshScale")
-        val translationY = with(density) {
+        LaunchedEffect(isRefreshing) {
             if (isRefreshing) {
-                16.dp.toPx()
+                state.animateToThreshold()
             } else {
-                (pullDistancePx * 0.45f).coerceAtMost(32.dp.toPx())
+                state.animateToHidden()
             }
         }
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .zIndex(1f)
-                .padding(top = 8.dp)
-                .size(48.dp)
-                .graphicsLayer {
-                    this.alpha = alpha
-                    scaleX = scale
-                    scaleY = scale
-                    this.translationY = translationY
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            LoadingIndicator(color = MaterialTheme.colorScheme.primary)
+        LaunchedEffect(isRefreshing, pullDistancePx, triggerPx) {
+            if (!isRefreshing) {
+                state.snapTo((pullDistancePx / triggerPx).coerceAtLeast(0f))
+            }
         }
+
+        PullToRefreshDefaults.LoadingIndicator(
+            state = state,
+            isRefreshing = isRefreshing,
+            modifier = Modifier
+                .align(Alignment.TopCenter),
+        )
     }
 
     @Composable
@@ -681,10 +666,10 @@ class MainActivity : AppCompatActivity() {
         val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         val density = resources.displayMetrics.density
         val triggerDistance = BROWSER_REFRESH_TRIGGER_DP * density
-        val maxPullDistance = triggerDistance * BROWSER_REFRESH_MAX_DRAG_MULTIPLIER
         var downY = 0f
-        var pullDistance = 0f
+        var adjustedPullDistance = 0f
         var isPulling = false
+        var webViewGestureCancelled = false
 
         setOnTouchListener { _, event ->
             if (isRefreshing()) return@setOnTouchListener false
@@ -692,8 +677,9 @@ class MainActivity : AppCompatActivity() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downY = event.rawY
-                    pullDistance = 0f
+                    adjustedPullDistance = 0f
                     isPulling = false
+                    webViewGestureCancelled = false
                     false
                 }
 
@@ -701,10 +687,18 @@ class MainActivity : AppCompatActivity() {
                     val dragDistance = event.rawY - downY
                     val canPull = !canScrollVertically(-1) && dragDistance > touchSlop
                     if (isPulling || canPull) {
+                        if (!webViewGestureCancelled) {
+                            cancelActiveWebViewGesture(event)
+                            webViewGestureCancelled = true
+                        }
                         isPulling = true
-                        pullDistance = ((dragDistance - touchSlop).coerceAtLeast(0f) * BROWSER_REFRESH_DRAG_RESISTANCE)
-                            .coerceAtMost(maxPullDistance)
-                        onPullDistanceChange(pullDistance)
+                        adjustedPullDistance = (dragDistance - touchSlop).coerceAtLeast(0f) * 0.5f
+                        onPullDistanceChange(
+                            calculatePullToRefreshOffset(
+                                adjustedDistancePulled = adjustedPullDistance,
+                                thresholdPx = triggerDistance,
+                            )
+                        )
                         true
                     } else {
                         false
@@ -714,9 +708,9 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
                     if (isPulling) {
-                        val shouldRefresh = pullDistance >= triggerDistance
+                        val shouldRefresh = adjustedPullDistance > triggerDistance
                         isPulling = false
-                        pullDistance = 0f
+                        adjustedPullDistance = 0f
                         onPullDistanceChange(0f)
                         if (shouldRefresh) onPullRefresh()
                         true
@@ -728,6 +722,25 @@ class MainActivity : AppCompatActivity() {
                 else -> false
             }
         }
+    }
+
+    private fun WebView.cancelActiveWebViewGesture(event: MotionEvent) {
+        val cancelEvent = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+        try {
+            onTouchEvent(cancelEvent)
+        } finally {
+            cancelEvent.recycle()
+        }
+    }
+
+    private fun calculatePullToRefreshOffset(adjustedDistancePulled: Float, thresholdPx: Float): Float {
+        if (adjustedDistancePulled <= thresholdPx) return adjustedDistancePulled
+
+        val progress = adjustedDistancePulled / thresholdPx
+        val overshootPercent = progress - 1f
+        val linearTension = overshootPercent.coerceIn(0f, 2f)
+        val tensionPercent = linearTension - linearTension * linearTension / 4f
+        return thresholdPx + thresholdPx * tensionPercent
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
