@@ -53,7 +53,9 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager --channel=3 "platforms;android-37"
+        run: |
+          sdkmanager --install "platforms;android-37.0"
+          ln -sfn "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
