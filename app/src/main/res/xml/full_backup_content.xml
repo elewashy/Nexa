@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Keep legacy pre-Android 12 backup behavior aligned with data_extraction_rules. -->
+    <exclude domain="sharedpref" path="DownloadPrefs.xml" />
+    <exclude domain="sharedpref" path="AdBlockerPrefs.xml" />
+    <exclude domain="sharedpref" path="ValidLinkCheckerPrefs.xml" />
+    <exclude domain="file" path="app_cfg.dat" />
+    <exclude domain="file" path="ad_hosts.txt" />
+    <exclude domain="file" path="valid_links.txt" />
+</full-backup-content>

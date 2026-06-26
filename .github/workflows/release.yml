@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Signed Android Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Validate signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          missing=0
+          for name in SIGNING_KEY SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_STORE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              printf 'Missing required GitHub secret: %s\n' "$name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            printf '\nConfigure these repository secrets before publishing a release:\n'
+            printf '%s\n' '- SIGNING_KEY: base64 encoded release keystore file'
+            printf '%s\n' '- SIGNING_KEY_ALIAS: release key alias'
+            printf '%s\n' '- SIGNING_KEY_PASSWORD: release key password'
+            printf '%s\n' '- SIGNING_STORE_PASSWORD: release keystore password'
+            exit 1
+          fi
+
+      - name: Prepare signing config
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          printf '%s' "$SIGNING_KEY" | base64 --decode > release-keystore.jks
+          {
+            printf 'storeFile=%s\n' "$GITHUB_WORKSPACE/release-keystore.jks"
+            printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$SIGNING_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Build signed release APK and AAB
+        run: ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
+
+      - name: Generate SHA-256 checksums
+        run: |
+          mkdir -p release-artifacts
+          cp app/build/outputs/apk/release/*.apk release-artifacts/
+          cp app/build/outputs/bundle/release/*.aab release-artifacts/
+          cd release-artifacts
+          sha256sum * > SHA256SUMS.txt
+          for artifact in *.apk *.aab; do
+            sha256sum "$artifact" > "$artifact.sha256"
+          done
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexa-release-artifacts
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*

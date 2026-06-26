@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Nexa is a browser, so users may intentionally open HTTP sites. Keep app-wide
+         cleartext enabled for WebView navigation; security-sensitive app endpoints must
+         still use HTTPS and validate their own metadata/content. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

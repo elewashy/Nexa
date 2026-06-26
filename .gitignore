@@ -1,0 +1,28 @@
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local machine / IDE settings
+.idea/
+.vscode/
+.gradle/
+.kotlin/
+local.properties
+
+# Signing keys and secrets
+keystore.properties
+*.jks
+*.keystore
+
+# Reference projects (local only)
+references/
+
+# Build outputs
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+app/release/
+*.apk
+*.aab
