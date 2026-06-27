@@ -47,6 +47,12 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      - name: Validate changelog for app version
+        run: bash scripts/changelog-version.sh validate
+
+      - name: Prepare release notes from changelog
+        run: bash scripts/changelog-version.sh extract release-notes.md
+
       - name: Validate signing secrets
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
@@ -105,3 +111,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release-artifacts/*
+          body_path: release-notes.md

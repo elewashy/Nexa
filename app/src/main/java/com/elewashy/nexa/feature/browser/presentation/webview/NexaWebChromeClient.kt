@@ -44,10 +44,10 @@ class NexaWebChromeClient(
     private val webView: WebView,
     private val customViewContainer: FrameLayout,
     private val rootView: View,
-    private val onProgressChangedEvent: (Int) -> Unit = {},
-    private val onFullscreenEnter: () -> Unit = {},
-    private val onFullscreenExit: () -> Unit = {},
-    private val onProgressComplete: () -> Unit = {}
+    private var onProgressChangedEvent: (Int) -> Unit = {},
+    private var onFullscreenEnter: () -> Unit = {},
+    private var onFullscreenExit: () -> Unit = {},
+    private var onProgressComplete: () -> Unit = {}
 ) : WebChromeClient() {
 
     companion object {
@@ -62,6 +62,18 @@ class NexaWebChromeClient(
 
     /** `true` while a fullscreen custom view is showing. */
     val isFullscreen: Boolean get() = customView != null
+
+    fun updateCallbacks(
+        onProgressChangedEvent: (Int) -> Unit,
+        onFullscreenEnter: () -> Unit,
+        onFullscreenExit: () -> Unit,
+        onProgressComplete: () -> Unit,
+    ) {
+        this.onProgressChangedEvent = onProgressChangedEvent
+        this.onFullscreenEnter = onFullscreenEnter
+        this.onFullscreenExit = onFullscreenExit
+        this.onProgressComplete = onProgressComplete
+    }
 
     // ────────────────────────────────────────────────────────────
     //  Fullscreen lifecycle

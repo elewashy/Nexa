@@ -13,6 +13,8 @@ on:
       - gradlew
       - gradlew.bat
       - .github/workflows/ci.yml
+      - CHANGELOG.md
+      - scripts/**
   pull_request:
     paths:
       - app/**
@@ -23,6 +25,8 @@ on:
       - gradlew
       - gradlew.bat
       - .github/workflows/ci.yml
+      - CHANGELOG.md
+      - scripts/**
 
 permissions:
   contents: read
@@ -62,6 +66,9 @@ jobs:
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
+
+      - name: Validate changelog for app version
+        run: bash scripts/changelog-version.sh validate
 
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace

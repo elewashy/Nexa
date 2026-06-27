@@ -527,6 +527,7 @@ class MainActivity : AppCompatActivity() {
         val currentIsRefreshing by rememberUpdatedState(isRefreshing)
         val currentOnPullDistanceChange by rememberUpdatedState(onPullDistanceChange)
         val currentOnPullRefresh by rememberUpdatedState(onPullRefresh)
+        val currentOnRefreshComplete by rememberUpdatedState(onRefreshComplete)
 
         AndroidView(
             factory = { ctx ->
@@ -605,7 +606,7 @@ class MainActivity : AppCompatActivity() {
                         onProgressChangedEvent = { browserViewModel.onProgressChanged(it) },
                         onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
                         onFullscreenExit = { browserViewModel.onFullscreenExit() },
-                        onProgressComplete = onRefreshComplete
+                        onProgressComplete = { currentOnRefreshComplete() },
                     )
                     webChromeClient = chromeClient
 
@@ -620,7 +621,20 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            update = { view ->
+                view.installPullToRefreshTouchBridge(
+                    isRefreshing = { currentIsRefreshing },
+                    onPullDistanceChange = { currentOnPullDistanceChange(it) },
+                    onPullRefresh = { currentOnPullRefresh() },
+                )
+                (view.webChromeClient as? NexaWebChromeClient)?.updateCallbacks(
+                    onProgressChangedEvent = { browserViewModel.onProgressChanged(it) },
+                    onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
+                    onFullscreenExit = { browserViewModel.onFullscreenExit() },
+                    onProgressComplete = { currentOnRefreshComplete() },
+                )
+            },
         )
 
         // ── Context menu as a pure Compose ModalBottomSheet ──────

@@ -1,7 +1,7 @@
 # Nexa
 
 [![CI](https://img.shields.io/github/actions/workflow/status/elewashy/Nexa/ci.yml?branch=main&label=CI)](https://github.com/elewashy/Nexa/actions/workflows/ci.yml)
-[![Latest Version](https://img.shields.io/badge/latest-1.0.1-0A7EA4)](https://github.com/elewashy/Nexa/releases/latest)
+[![Latest Version](https://img.shields.io/badge/latest-1.0.2-0A7EA4)](https://github.com/elewashy/Nexa/releases/latest)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)](https://developer.android.com/about/versions/oreo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -20,7 +20,7 @@ https://github.com/elewashy/Nexa/releases/latest
 Current app version:
 
 ```text
-1.0.1
+1.0.2
 ```
 
 Download the release APK from the latest release page, then install it on an Android 8.0+ device. Android may ask you to allow installs from the browser or file manager used to open the APK.
