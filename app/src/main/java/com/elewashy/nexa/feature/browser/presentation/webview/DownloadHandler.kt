@@ -19,8 +19,6 @@ object DownloadHandler {
 
     /** Source tag for normal browser downloads. */
     const val SOURCE_BROWSER = "BROWSER"
-    /** Source tag for auto-detected MP4 downloads. */
-    const val SOURCE_BROWSER_MP4 = "BROWSER_MP4"
 
     /**
      * Starts a download via [DownloadService].
@@ -31,7 +29,8 @@ object DownloadHandler {
      * @param contentDisposition Content-Disposition header value (nullable)
      * @param userAgent        WebView user-agent string
      * @param currentPageUrl   URL of the page the WebView is currently showing
-     * @param source           One of [SOURCE_BROWSER], [SOURCE_BROWSER_MP4]
+     * @param source           Source tag for the download.
+     * @param onDownloadStarted Optional UI callback for Compose callers.
      */
     fun startDownload(
         context: Context,
@@ -40,7 +39,8 @@ object DownloadHandler {
         contentDisposition: String? = null,
         userAgent: String,
         currentPageUrl: String?,
-        source: String = SOURCE_BROWSER
+        source: String = SOURCE_BROWSER,
+        onDownloadStarted: (() -> Unit)? = null,
     ) {
         try {
             // Do NOT decode the URL. OkHttp expects the raw encoded URL.
@@ -75,11 +75,11 @@ object DownloadHandler {
             )
             context.startForegroundService(intent)
 
-            val message = when (source) {
-                SOURCE_BROWSER_MP4 -> context.getString(R.string.mp4_download_starting)
-                else -> context.getString(R.string.download_starting)
+            if (onDownloadStarted != null) {
+                onDownloadStarted()
+            } else {
+                Toast.makeText(context, context.getString(R.string.download_starting), Toast.LENGTH_SHORT).show()
             }
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(context, context.getString(R.string.error_starting_download, e.message.orEmpty()), Toast.LENGTH_LONG).show()
         }

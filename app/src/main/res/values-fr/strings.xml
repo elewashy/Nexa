@@ -136,17 +136,18 @@
     <string name="report_issue">Signaler un problème</string>
     <string name="report_issue_description">Aidez-nous à nous améliorer en signalant des bugs ou des suggestions</string>
     <string name="select_quality">Sélectionner la qualité</string>
+    <string name="select_quality_subtitle">Choisissez un format à télécharger</string>
+    <string name="preparing_quality_options">Préparation des options de qualité</string>
+    <string name="quality_options_unavailable">Aucune option de qualité disponible</string>
     <string name="download">Télécharger</string>
     <string name="download_started">Téléchargement démarré</string>
     <string name="cancel_download">Annuler le téléchargement</string>
     <string name="cancel_download_message">Annuler %s ?</string>
     <string name="download_cancelled">Téléchargement annulé</string>
-    <string name="delete_items">Supprimer les éléments</string>
-    <string name="delete_from_device">Supprimer de l’appareil</string>
-    <string name="remove_from_list">Retirer de la liste</string>
+    <string name="deleted_file_message">%s supprimé</string>
+    <string name="deleted_items_message">%d éléments supprimés</string>
+    <string name="undo">Annuler</string>
     <string name="open_file">Ouvrir le fichier</string>
-    <string name="delete_file_message">Supprimer %s ?</string>
-    <string name="removed_from_list">Retiré de la liste</string>
     <string name="file_not_found_error">Erreur : fichier introuvable</string>
     <string name="no_app_found_open_file">Aucune application trouvée pour ouvrir ce fichier</string>
     <string name="error_opening_file">Erreur lors de l’ouverture du fichier : %s</string>
@@ -154,13 +155,13 @@
     <string name="allow_apk_installs_settings">Ouvrez les paramètres de l’application pour autoriser les installations d’APK</string>
     <string name="no_apk_installer_found">Aucun installateur trouvé pour cet APK</string>
     <string name="error_installing_apk">Erreur lors de l’installation de l’APK : %s</string>
-    <string name="file_deleted_successfully">Fichier supprimé avec succès</string>
-    <string name="failed_to_delete_file">Échec de la suppression du fichier</string>
     <string name="audio">Audio</string>
     <string name="video">Vidéo</string>
     <string name="watermark">Filigrane</string>
-    <string name="mp4_download_starting">Démarrage du téléchargement MP4…</string>
     <string name="download_starting">Démarrage du téléchargement…</string>
+    <string name="browser_download_snackbar_title">Téléchargement du fichier…</string>
+    <string name="browser_download_snackbar_subtitle">Consultez la notification pour suivre le téléchargement</string>
+    <string name="details">Détails</string>
     <string name="error_starting_download">Erreur au démarrage du téléchargement : %s</string>
     <string name="enable_unknown_apps_install">Veuillez activer « Installer des applications inconnues », puis touchez de nouveau Installer</string>
     <string name="cannot_open_install_settings">Impossible d’ouvrir les paramètres d’installation : %s</string>
@@ -219,18 +220,6 @@
     <plurals name="selected_count">
         <item quantity="one">%d sélectionné</item>
         <item quantity="other">%d sélectionnés</item>
-    </plurals>
-    <plurals name="delete_items_message">
-        <item quantity="one">Supprimer %d élément ?</item>
-        <item quantity="other">Supprimer %d éléments ?</item>
-    </plurals>
-    <plurals name="files_deleted_count">
-        <item quantity="one">%1$d fichier supprimé sur %2$d</item>
-        <item quantity="other">%1$d fichiers supprimés sur %2$d</item>
-    </plurals>
-    <plurals name="items_removed_count">
-        <item quantity="one">%d élément retiré</item>
-        <item quantity="other">%d éléments retirés</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="one">%d liste mise à jour</item>

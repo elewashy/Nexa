@@ -136,17 +136,18 @@
     <string name="report_issue">الإبلاغ عن مشكلة</string>
     <string name="report_issue_description">ساعدنا على التحسين بالإبلاغ عن الأخطاء أو الاقتراحات</string>
     <string name="select_quality">اختر الجودة</string>
+    <string name="select_quality_subtitle">اختر صيغة للتنزيل</string>
+    <string name="preparing_quality_options">جارٍ تجهيز خيارات الجودة</string>
+    <string name="quality_options_unavailable">لا توجد خيارات جودة متاحة</string>
     <string name="download">تنزيل</string>
     <string name="download_started">بدأ التنزيل</string>
     <string name="cancel_download">إلغاء التنزيل</string>
     <string name="cancel_download_message">إلغاء %s؟</string>
     <string name="download_cancelled">تم إلغاء التنزيل</string>
-    <string name="delete_items">حذف العناصر</string>
-    <string name="delete_from_device">حذف من الجهاز</string>
-    <string name="remove_from_list">إزالة من القائمة</string>
+    <string name="deleted_file_message">تم حذف %s</string>
+    <string name="deleted_items_message">تم حذف %d عناصر</string>
+    <string name="undo">تراجع</string>
     <string name="open_file">فتح الملف</string>
-    <string name="delete_file_message">حذف %s؟</string>
-    <string name="removed_from_list">تمت الإزالة من القائمة</string>
     <string name="file_not_found_error">خطأ: الملف غير موجود</string>
     <string name="no_app_found_open_file">لم يتم العثور على تطبيق لفتح هذا الملف</string>
     <string name="error_opening_file">خطأ أثناء فتح الملف: %s</string>
@@ -154,13 +155,13 @@
     <string name="allow_apk_installs_settings">افتح إعدادات التطبيق للسماح بتثبيت ملفات APK</string>
     <string name="no_apk_installer_found">لم يتم العثور على مثبت لهذا الـ APK</string>
     <string name="error_installing_apk">خطأ أثناء تثبيت APK: %s</string>
-    <string name="file_deleted_successfully">تم حذف الملف بنجاح</string>
-    <string name="failed_to_delete_file">فشل حذف الملف</string>
     <string name="audio">الصوت</string>
     <string name="video">الفيديو</string>
     <string name="watermark">علامة مائية</string>
-    <string name="mp4_download_starting">بدء تنزيل MP4…</string>
     <string name="download_starting">بدء التنزيل…</string>
+    <string name="browser_download_snackbar_title">جارٍ تنزيل الملف…</string>
+    <string name="browser_download_snackbar_subtitle">راجع الإشعار لمعرفة حالة التنزيل</string>
+    <string name="details">التفاصيل</string>
     <string name="error_starting_download">خطأ في بدء التنزيل: %s</string>
     <string name="enable_unknown_apps_install">يرجى تفعيل "تثبيت التطبيقات غير المعروفة" ثم الضغط على تثبيت مرة أخرى</string>
     <string name="cannot_open_install_settings">تعذر فتح إعدادات التثبيت: %s</string>
@@ -223,30 +224,6 @@
         <item quantity="few">%d عناصر محددة</item>
         <item quantity="many">%d عنصرًا محددًا</item>
         <item quantity="other">%d عنصر محدد</item>
-    </plurals>
-    <plurals name="delete_items_message">
-        <item quantity="zero">حذف أي عناصر؟</item>
-        <item quantity="one">حذف عنصر واحد؟</item>
-        <item quantity="two">حذف عنصرين؟</item>
-        <item quantity="few">حذف %d عناصر؟</item>
-        <item quantity="many">حذف %d عنصرًا؟</item>
-        <item quantity="other">حذف %d عنصر؟</item>
-    </plurals>
-    <plurals name="files_deleted_count">
-        <item quantity="zero">لم يتم حذف أي ملفات من أصل %2$d</item>
-        <item quantity="one">تم حذف ملف واحد من أصل %2$d</item>
-        <item quantity="two">تم حذف ملفين من أصل %2$d</item>
-        <item quantity="few">تم حذف %1$d ملفات من أصل %2$d</item>
-        <item quantity="many">تم حذف %1$d ملفًا من أصل %2$d</item>
-        <item quantity="other">تم حذف %1$d ملف من أصل %2$d</item>
-    </plurals>
-    <plurals name="items_removed_count">
-        <item quantity="zero">لم تتم إزالة أي عناصر</item>
-        <item quantity="one">تمت إزالة عنصر واحد</item>
-        <item quantity="two">تمت إزالة عنصرين</item>
-        <item quantity="few">تمت إزالة %d عناصر</item>
-        <item quantity="many">تمت إزالة %d عنصرًا</item>
-        <item quantity="other">تمت إزالة %d عنصر</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="zero">لم يتم تحديث أي قوائم</item>

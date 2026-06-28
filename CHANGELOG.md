@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.3 - 2026-06-29
+
+### Improved
+
+- Redesigned the download quality selector with a cleaner Material 3 layout.
+- Added a smoother shimmer loading state while quality options are prepared.
+- Improved TikTok download quality detection and labeling.
+- Replaced download delete confirmations with a faster undo option.
+- Improved browser download feedback with a clearer snackbar and shortcut to Downloads.
+- Refined browser and downloads overflow menus for a more consistent Material 3 experience.
+
 ## 1.0.2 - 2026-06-27
 
 ### Fixed

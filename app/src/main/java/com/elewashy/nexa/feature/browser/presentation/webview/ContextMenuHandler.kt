@@ -75,11 +75,13 @@ object ContextMenuHandler {
      * @param action   The selected [ContextMenuAction]
      * @param webView  The WebView for hit-test data
      * @param context  Context for intents and dialogs
+     * @param onDownloadStarted Optional UI callback for downloaded images.
      */
     fun onActionSelected(
         action: ContextMenuAction,
         webView: WebView,
-        context: Context
+        context: Context,
+        onDownloadStarted: (() -> Unit)? = null,
     ): ContextMenuResult {
         val message = Handler(Looper.getMainLooper()).obtainMessage()
         webView.requestFocusNodeHref(message)
@@ -90,7 +92,7 @@ object ContextMenuHandler {
 
         return when (action) {
             ContextMenuAction.VIEW_IMAGE -> handleViewImage(imgUrl, webView)
-            ContextMenuAction.SAVE_IMAGE -> handleSaveImage(imgUrl, webView, context)
+            ContextMenuAction.SAVE_IMAGE -> handleSaveImage(imgUrl, webView, context, onDownloadStarted)
             ContextMenuAction.SHARE      -> handleShare(url ?: imgUrl, context)
             ContextMenuAction.CLOSE      -> ContextMenuResult.None
         }
@@ -110,7 +112,12 @@ object ContextMenuHandler {
         }
     }
 
-    private fun handleSaveImage(imgUrl: String?, webView: WebView, context: Context): ContextMenuResult {
+    private fun handleSaveImage(
+        imgUrl: String?,
+        webView: WebView,
+        context: Context,
+        onDownloadStarted: (() -> Unit)?,
+    ): ContextMenuResult {
         imgUrl ?: return ContextMenuResult.None
         return if (imgUrl.contains("base64")) {
             val bitmap = decodeBase64Image(imgUrl) ?: return ContextMenuResult.None
@@ -130,7 +137,8 @@ object ContextMenuHandler {
                 url = imgUrl,
                 mimeType = "image/*",
                 userAgent = webView.settings.userAgentString,
-                currentPageUrl = webView.url
+                currentPageUrl = webView.url,
+                onDownloadStarted = onDownloadStarted,
             )
             ContextMenuResult.None
         }

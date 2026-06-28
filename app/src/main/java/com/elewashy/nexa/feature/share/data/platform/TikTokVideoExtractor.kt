@@ -1,5 +1,6 @@
 package com.elewashy.nexa.feature.share.data.platform
 
+import android.util.Base64
 import android.util.Log
 import com.elewashy.nexa.feature.share.data.VideoExtractor
 import com.elewashy.nexa.feature.share.data.platform.ShareExtractionSupport.TIKWM_BASE_URL
@@ -9,6 +10,7 @@ import com.elewashy.nexa.feature.share.data.platform.ShareExtractionSupport.deco
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import okhttp3.MultipartBody
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URL
@@ -17,22 +19,13 @@ import java.util.Locale
 internal class TikTokVideoExtractor : PlatformVideoExtractor {
 
     override suspend fun extract(url: String): VideoExtractor.ExtractionResult = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Processing TikTok URL...")
-
         try {
-            val legacyResult = extractLegacy(url)
-            if (legacyResult.success) {
-                Log.d(TAG, "Legacy TikTok API extraction succeeded with ${legacyResult.videos.size} media options")
-                return@withContext legacyResult
-            }
-
-            Log.w(TAG, "Legacy TikTok API failed, falling back to TikWM: ${legacyResult.error}")
             val tikWmResult = extractWithTikWm(url)
             if (tikWmResult.success) return@withContext tikWmResult
 
             VideoExtractor.ExtractionResult(
                 success = false,
-                error = legacyResult.error ?: tikWmResult.error ?: "Failed to extract TikTok media"
+                error = tikWmResult.error ?: "Failed to extract TikTok media"
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error extracting TikTok video", e)
@@ -88,24 +81,29 @@ internal class TikTokVideoExtractor : PlatformVideoExtractor {
                     error = "TikWM response is missing data"
                 )
 
-            return mapTikWmResponse(data)
+            return mapTikWmResponse(data, url)
         }
     }
 
-    private fun mapTikWmResponse(data: JSONObject): VideoExtractor.ExtractionResult {
+    private fun mapTikWmResponse(data: JSONObject, sourceUrl: String): VideoExtractor.ExtractionResult {
         val media = linkedMapOf<String, TikTokMediaOption>()
 
         getTikWmVideoQualities(data).forEach { option ->
             media.putIfAbsent(option.url, option)
         }
 
+        getSnapTikHdOption(sourceUrl)?.let { option -> media.putIfAbsent(option.url, option) }
+
         val audioUrl = fixTikTokUrl(data.optString("music"))
         if (audioUrl != null) {
-            val duration = data.optInt("duration").takeIf { it > 0 }?.let { "${it}s" }
             media.putIfAbsent(
                 audioUrl,
                 TikTokMediaOption(
-                    label = buildTikTokLabel(TikTokOptionType.AUDIO, "AUDIO", extra = duration),
+                    label = buildTikTokLabel(
+                        type = TikTokOptionType.AUDIO,
+                        qualityName = "Audio",
+                        sizeBytes = getTikWmAudioSize(data)
+                    ),
                     url = audioUrl,
                     priority = 100
                 )
@@ -127,13 +125,7 @@ internal class TikTokVideoExtractor : PlatformVideoExtractor {
     }
 
     private fun getTikWmVideoQualities(data: JSONObject): List<TikTokMediaOption> {
-        val qualityMap = listOf(
-            TikTokQualityConfig(TikTokOptionType.VIDEO, "HD", "hdplay", "hd_size"),
-            TikTokQualityConfig(TikTokOptionType.VIDEO, "SD", "play", "size"),
-            TikTokQualityConfig(TikTokOptionType.WATERMARK, "Watermarked", "wmplay", "wm_size")
-        )
-
-        return qualityMap.mapIndexedNotNull { index, config ->
+        return TIKWM_VIDEO_QUALITIES.mapIndexedNotNull { index, config ->
             val url = fixTikTokUrl(data.optString(config.urlKey)) ?: return@mapIndexedNotNull null
             val size = data.optLong(config.sizeKey).takeIf { it > 0L }
             TikTokMediaOption(
@@ -144,125 +136,124 @@ internal class TikTokVideoExtractor : PlatformVideoExtractor {
         }
     }
 
-    private fun extractLegacy(url: String): VideoExtractor.ExtractionResult {
-        try {
-            val videoId = when {
-                url.contains("vt.tiktok.com") || url.contains("vm.tiktok.com") -> {
-                    TIKTOK_SHORT_ID_RE.find(url)?.groupValues?.get(1)
-                }
-                else -> {
-                    TIKTOK_NUMERIC_ID_RE.find(url)?.groupValues?.get(1)
-                }
-            }
+    private fun getTikWmAudioSize(data: JSONObject): Long? {
+        return data.optLong("music_size").takeIf { it > 0L }
+            ?: data.optLong("audio_size").takeIf { it > 0L }
+            ?: data.optJSONObject("music_info")?.optLong("size")?.takeIf { it > 0L }
+    }
 
-            if (videoId == null) {
-                return VideoExtractor.ExtractionResult(
-                    success = false,
-                    error = "Could not extract video ID from URL"
-                )
-            }
-
-            Log.d(TAG, "Video ID: $videoId")
-
-            val apiUrl = "$TIKTOK_API_URL?id=$videoId"
+    private fun getSnapTikHdOption(url: String): TikTokMediaOption? {
+        return try {
+            val hash = getSnapTikHash() ?: return null
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("url", url)
+                .addFormDataPart("hash", hash)
+                .build()
             val request = Request.Builder()
-                .url(apiUrl)
+                .url(SNAPTIK_CHECK_URL)
+                .post(requestBody)
                 .header("User-Agent", USER_AGENT_DESKTOP)
-                .header("Accept", "*/*")
-                .header("Origin", "https://tiktokdownloader.com")
-                .header("Referer", "https://tiktokdownloader.com/")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Origin", SNAPTIK_BASE_URL)
+                .header("Referer", SNAPTIK_HOME_URL)
                 .build()
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return VideoExtractor.ExtractionResult(
-                        success = false,
-                        error = "API request failed: ${response.code}"
-                    )
+                    return null
                 }
-
-                val json = JSONObject(response.body.string())
-                val videos = mutableMapOf<String, String>()
-
-                if (json.has("video_no_watermark")) {
-                    val mainVideo = json.getJSONObject("video_no_watermark")
-                    val sizeMb = mainVideo.getDouble("size_mb")
-                    val width = mainVideo.optInt("width", 720)
-                    val height = mainVideo.optInt("height", 1280)
-                    val quality = "${width}x${height}-${String.format(Locale.US, "%.1f", sizeMb)}MB"
-                    videos[quality] = mainVideo.getString("url")
-                }
-
-                if (json.has("video_no_watermark_alternatives")) {
-                    val alternatives = json.getJSONArray("video_no_watermark_alternatives")
-                    for (i in 0 until alternatives.length()) {
-                        val video = alternatives.getJSONObject(i)
-                        val sizeMb = video.getDouble("size_mb")
-                        val width = video.getInt("width")
-                        val height = video.getInt("height")
-                        val quality = "${width}x${height}-${String.format(Locale.US, "%.1f", sizeMb)}MB"
-                        videos[quality] = video.getString("url")
-                    }
-                }
-
-                if (json.has("video_watermark")) {
-                    val watermarkVideo = json.getJSONObject("video_watermark")
-                    val sizeMb = watermarkVideo.getDouble("size_mb")
-                    val width = watermarkVideo.optInt("width", 720)
-                    val height = watermarkVideo.optInt("height", 720)
-                    val quality = "WATERMARK:${width}x${height}-${String.format(Locale.US, "%.1f", sizeMb)}MB"
-                    videos[quality] = watermarkVideo.getString("url")
-                }
-
-                if (json.has("audio")) {
-                    val audio = json.getJSONObject("audio")
-                    if (audio.has("url")) {
-                        val audioUrl = audio.getString("url")
-                        val duration = if (audio.has("duration_seconds")) {
-                            val durationSec = audio.getInt("duration_seconds")
-                            val minutes = durationSec / 60
-                            val seconds = durationSec % 60
-                            if (minutes > 0) String.format(Locale.US, "%d:%02d", minutes, seconds) else "${seconds}s"
-                        } else {
-                            "Unknown"
-                        }
-                        videos["AUDIO:AUDIO - $duration"] = audioUrl
-                        Log.d(TAG, "Found audio track: $duration")
-                    }
-                }
-
-                Log.d(TAG, "Found ${videos.size} media options (video + audio)")
-
-                if (videos.isEmpty()) {
-                    return VideoExtractor.ExtractionResult(
-                        success = false,
-                        error = "No video found in API response"
-                    )
-                }
-
-                return VideoExtractor.ExtractionResult(
-                    success = true,
-                    platform = "TikTok",
-                    videos = videos
-                )
+                parseSnapTikHdOption(response.body.string())
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error extracting TikTok video using legacy API", e)
-            return VideoExtractor.ExtractionResult(
-                success = false,
-                error = "Error: ${e.message}"
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getSnapTikHash(): String? {
+        val request = Request.Builder()
+            .url(SNAPTIK_HOME_URL)
+            .header("User-Agent", USER_AGENT_DESKTOP)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                return null
+            }
+            return parseSnapTikHash(response.body.string())
+        }
+    }
+
+    private fun parseSnapTikHash(html: String): String? {
+        val shift = SNAPTIK_SHIFT_RE.find(html)?.groupValues?.get(1)?.toIntOrNull()
+        if (shift == null) return null
+
+        val encodedArray = SNAPTIK_ARRAY_RE.find(html)?.groupValues?.get(1)
+        if (encodedArray == null) return null
+
+        return SNAPTIK_STRING_RE.findAll(encodedArray)
+            .mapNotNull { match -> decryptSnapTikString(match.groupValues[1], shift) }
+            .firstNotNullOfOrNull { decrypted ->
+                SNAPTIK_HASH_RE.find(decrypted)?.groupValues?.get(1)
+            }
+    }
+
+    private fun decryptSnapTikString(encoded: String, shift: Int): String? {
+        return try {
+            val decoded = String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+            buildString(decoded.length) {
+                decoded.forEach { char ->
+                    append(
+                        if (char.isLetter()) {
+                            val base = if (char.isUpperCase()) 'A'.code else 'a'.code
+                            (((char.code - base - shift).floorMod(26)) + base).toChar()
+                        } else {
+                            char
+                        }
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun parseSnapTikHdOption(html: String): TikTokMediaOption? {
+        return SNAPTIK_ANCHOR_RE.findAll(html).firstNotNullOfOrNull { match ->
+            val attributes = match.groupValues[1]
+            val className = SNAPTIK_CLASS_RE.find(attributes)?.groupValues?.get(1).orEmpty()
+            if (!className.split(WHITESPACE_RE).contains("btn")) return@firstNotNullOfOrNull null
+
+            val href = SNAPTIK_HREF_RE.find(attributes)?.groupValues?.get(1)
+                ?.takeIf { it.isNotBlank() }
+                ?: return@firstNotNullOfOrNull null
+            val text = match.groupValues[2]
+                .replace(HTML_TAG_RE, "")
+                .replace(WHITESPACE_RE, " ")
+                .trim()
+
+            if (text != "Download") return@firstNotNullOfOrNull null
+
+            TikTokMediaOption(
+                label = "HD",
+                url = resolveSnapTikUrl(href),
+                priority = 10
             )
         }
     }
 
-    private fun fixTikTokUrl(path: String?): String? {
+    private fun resolveSnapTikUrl(path: String): String = resolveUrl(path, SNAPTIK_BASE_URL).orEmpty()
+
+    private fun fixTikTokUrl(path: String?): String? = resolveUrl(path, TIKWM_BASE_URL)
+
+    private fun resolveUrl(path: String?, baseUrl: String): String? {
         if (path.isNullOrBlank()) return null
         val decoded = decodeUrl(path)
         return if (decoded.startsWith("/")) {
             try {
-                URL(URL(TIKWM_BASE_URL), decoded).toString()
+                URL(URL(baseUrl), decoded).toString()
             } catch (_: Exception) {
-                "$TIKWM_BASE_URL$decoded"
+                "$baseUrl$decoded"
             }
         } else {
             decoded
@@ -315,8 +306,23 @@ internal class TikTokVideoExtractor : PlatformVideoExtractor {
     private companion object {
         const val TAG = "TikTokVideoExtractor"
         const val TIKWM_API_URL = "https://www.tikwm.com/api/"
-        const val TIKTOK_API_URL = "https://api.twitterpicker.com/tiktok/mediav2"
-        val TIKTOK_SHORT_ID_RE = Regex("""/([\w]+)/?$""")
-        val TIKTOK_NUMERIC_ID_RE = Regex("""/video/(\d+)""")
+        const val SNAPTIK_BASE_URL = "https://snaptik.cx"
+        const val SNAPTIK_HOME_URL = "$SNAPTIK_BASE_URL/en/"
+        const val SNAPTIK_CHECK_URL = "$SNAPTIK_BASE_URL/en/check/"
+        val TIKWM_VIDEO_QUALITIES = listOf(
+            TikTokQualityConfig(TikTokOptionType.VIDEO, "No Watermark", "play", "size"),
+            TikTokQualityConfig(TikTokOptionType.WATERMARK, "Watermarked", "wmplay", "wm_size")
+        )
+        val SNAPTIK_SHIFT_RE = Regex("""\(\s*_0x[a-f0-9]+\([^)]+\)\s*,\s*(\d+)\s*\)\)""")
+        val SNAPTIK_ARRAY_RE = Regex("""var\s*\$?\s*=\s*\[(.*?)]\s*;""", RegexOption.DOT_MATCHES_ALL)
+        val SNAPTIK_STRING_RE = Regex(""""([^"\\]*(?:\\.[^"\\]*)*)"""")
+        val SNAPTIK_HASH_RE = Regex("""hash\s*:\s*'([^']+)'""")
+        val SNAPTIK_ANCHOR_RE = Regex("""<a\b([^>]*)>(.*?)</a>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val SNAPTIK_CLASS_RE = Regex("""class=["']([^"']*)["']""", RegexOption.IGNORE_CASE)
+        val SNAPTIK_HREF_RE = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        val HTML_TAG_RE = Regex("""<[^>]+>""")
+        val WHITESPACE_RE = Regex("\\s+")
     }
 }
+
+private fun Int.floorMod(other: Int): Int = ((this % other) + other) % other

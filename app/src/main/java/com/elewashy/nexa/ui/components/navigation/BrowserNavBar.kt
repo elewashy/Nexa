@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DropdownMenuPopup
+import androidx.compose.material3.DropdownMenuPopupPositionProvider
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -26,16 +28,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProgressIndicatorDefaults
-import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,18 +45,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import com.elewashy.nexa.R
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.icons.ArrowBack
@@ -151,16 +157,12 @@ fun BrowserNavBar(
             )
             if (state.moreOptionsVisible) {
                 var menuExpanded by remember { mutableStateOf(false) }
-                var menuOpenGeneration by remember { mutableIntStateOf(0) }
                 LaunchedEffect(state.toolbarVisible, state.currentUrl) {
                     menuExpanded = false
                 }
                 Box {
                     IconButton(
-                        onClick = {
-                            menuOpenGeneration += 1
-                            menuExpanded = true
-                        },
+                        onClick = { menuExpanded = true },
                         modifier = Modifier.size(dimensions.actionSize)
                     ) {
                         Icon(
@@ -170,79 +172,189 @@ fun BrowserNavBar(
                             modifier = Modifier.size(dimensions.iconSize)
                         )
                     }
-                }
-                if (menuExpanded) {
-                    key(menuOpenGeneration) {
-                        val sheetState = rememberBottomSheetState(
-                            initialValue = SheetValue.Hidden,
-                            enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded)
-                        )
-                        ModalBottomSheet(
-                            onDismissRequest = { menuExpanded = false },
-                            sheetState = sheetState,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .widthIn(max = adaptiveInfo.sheetMaxWidth)
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceEvenly,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        OverflowActionButton(
-                                            icon = ArrowBack,
-                                            label = stringResource(R.string.back),
-                                            enabled = state.backEnabled,
-                                            onClick = { menuExpanded = false; onMenuBackClick() }
-                                        )
-                                        OverflowActionButton(
-                                            icon = ArrowForward,
-                                            label = stringResource(R.string.forward),
-                                            enabled = state.forwardEnabled,
-                                            onClick = { menuExpanded = false; onMenuForwardClick() }
-                                        )
-                                        OverflowActionButton(
-                                            icon = Share,
-                                            label = stringResource(R.string.share),
-                                            enabled = state.currentUrl != null,
-                                            onClick = {
-                                                menuExpanded = false
-                                                state.currentUrl?.let { onMenuShareClick(it) }
-                                            }
-                                        )
-                                    }
-                                    HorizontalDivider(modifier = Modifier.padding(bottom = 8.dp))
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.downloads)) },
-                                        leadingIcon = {
-                                            Icon(Download, contentDescription = null)
-                                        },
-                                        onClick = { menuExpanded = false; onDownloadsClick() }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.settings)) },
-                                        leadingIcon = {
-                                            Icon(Settings, contentDescription = null)
-                                        },
-                                        onClick = { menuExpanded = false; onSettingsClick() }
-                                    )
-                                }
-                            }
-                        }
-                    }
+
+                    BrowserMoreOptionsMenu(
+                        expanded = menuExpanded,
+                        state = state,
+                        onDismiss = { menuExpanded = false },
+                        onBackClick = {
+                            menuExpanded = false
+                            onMenuBackClick()
+                        },
+                        onForwardClick = {
+                            menuExpanded = false
+                            onMenuForwardClick()
+                        },
+                        onShareClick = {
+                            menuExpanded = false
+                            state.currentUrl?.let { onMenuShareClick(it) }
+                        },
+                        onDownloadsClick = {
+                            menuExpanded = false
+                            onDownloadsClick()
+                        },
+                        onSettingsClick = {
+                            menuExpanded = false
+                            onSettingsClick()
+                        },
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun BrowserMoreOptionsMenu(
+    expanded: Boolean,
+    state: BrowserNavBarState,
+    onDismiss: () -> Unit,
+    onBackClick: () -> Unit,
+    onForwardClick: () -> Unit,
+    onShareClick: () -> Unit,
+    onDownloadsClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val positionProvider = remember(density) {
+        BrowserMoreMenuPositionProvider(density = density)
+    }
+
+    DropdownMenuPopup(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        popupPositionProvider = positionProvider,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Surface(
+            modifier = Modifier.width(BrowserMoreMenuWidth),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp,
+        ) {
+            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.downloads)) },
+                    leadingIcon = {
+                        Icon(Download, contentDescription = null)
+                    },
+                    onClick = onDownloadsClick,
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.settings)) },
+                    leadingIcon = {
+                        Icon(Settings, contentDescription = null)
+                    },
+                    onClick = onSettingsClick,
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OverflowActionButton(
+                        icon = ArrowBack,
+                        label = stringResource(R.string.back),
+                        enabled = state.backEnabled,
+                        onClick = onBackClick,
+                    )
+                    OverflowActionButton(
+                        icon = ArrowForward,
+                        label = stringResource(R.string.forward),
+                        enabled = state.forwardEnabled,
+                        onClick = onForwardClick,
+                    )
+                    OverflowActionButton(
+                        icon = Share,
+                        label = stringResource(R.string.share),
+                        enabled = state.currentUrl != null,
+                        onClick = onShareClick,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// The standard DropdownMenu keeps a 48dp vertical window margin, which makes a bottom-bar menu
+// float too far above its trigger. This provider keeps Material popup behavior but positions from
+// the More button bounds directly.
+private class BrowserMoreMenuPositionProvider(
+    private val density: Density,
+) : DropdownMenuPopupPositionProvider {
+    override var transformOrigin by mutableStateOf(TransformOrigin.Center)
+        private set
+
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val edgeMarginPx = with(density) { BrowserMoreMenuEdgeMargin.roundToPx() }
+        val anchorSpacingPx = with(density) { BrowserMoreMenuAnchorSpacing.roundToPx() }
+        val horizontalNudgePx = with(density) { BrowserMoreMenuHorizontalNudge.roundToPx() }
+
+        val x = calculateHorizontalPosition(
+            anchorBounds = anchorBounds,
+            windowSize = windowSize,
+            popupContentSize = popupContentSize,
+            layoutDirection = layoutDirection,
+            edgeMarginPx = edgeMarginPx,
+            horizontalNudgePx = horizontalNudgePx,
+        )
+        val y = calculateVerticalPosition(
+            anchorBounds = anchorBounds,
+            windowSize = windowSize,
+            popupContentSize = popupContentSize,
+            edgeMarginPx = edgeMarginPx,
+            anchorSpacingPx = anchorSpacingPx,
+        )
+
+        val anchorCenter = Offset(anchorBounds.center.x.toFloat(), anchorBounds.center.y.toFloat())
+        transformOrigin = TransformOrigin(
+            pivotFractionX = ((anchorCenter.x - x) / popupContentSize.width).coerceIn(0f, 1f),
+            pivotFractionY = ((anchorCenter.y - y) / popupContentSize.height).coerceIn(0f, 1f),
+        )
+
+        return IntOffset(x, y)
+    }
+
+    private fun calculateHorizontalPosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        popupContentSize: IntSize,
+        layoutDirection: LayoutDirection,
+        edgeMarginPx: Int,
+        horizontalNudgePx: Int,
+    ): Int {
+        val anchorAlignedX = when (layoutDirection) {
+            LayoutDirection.Ltr -> anchorBounds.right - popupContentSize.width
+            LayoutDirection.Rtl -> anchorBounds.left
+        }
+        val nudgeDirection = if (anchorBounds.center.x < windowSize.width / 2) -1 else 1
+        val maxX = windowSize.width - edgeMarginPx - popupContentSize.width
+        return (anchorAlignedX + nudgeDirection * horizontalNudgePx).coerceIn(
+            minimumValue = edgeMarginPx,
+            maximumValue = maxX.coerceAtLeast(edgeMarginPx),
+        )
+    }
+
+    private fun calculateVerticalPosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        popupContentSize: IntSize,
+        edgeMarginPx: Int,
+        anchorSpacingPx: Int,
+    ): Int {
+        val preferredAboveAnchorY = anchorBounds.bottom - popupContentSize.height - anchorSpacingPx
+        val maxY = windowSize.height - edgeMarginPx - popupContentSize.height
+        return preferredAboveAnchorY.coerceIn(edgeMarginPx, maxY.coerceAtLeast(edgeMarginPx))
     }
 }
 
@@ -253,29 +365,17 @@ private fun OverflowActionButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.width(80.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    FilledTonalIconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .size(48.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA },
     ) {
-        FilledTonalIconButton(
-            onClick = onClick,
-            enabled = enabled,
-            shape = OverflowActionShape,
-            modifier = Modifier.size(52.dp),
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA),
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(22.dp),
         )
     }
 }
@@ -470,5 +570,8 @@ private fun rememberBrowserNavBarDimensions(): BrowserNavBarDimensions {
 private const val COMPACT_HEIGHT_DP = 600
 private const val EXPANDED_WIDTH_DP = 600
 private val MIN_TOUCH_TARGET = 48.dp
-private val OverflowActionShape: Shape = CutCornerShape(topStart = 14.dp, topEnd = 6.dp, bottomEnd = 14.dp, bottomStart = 6.dp)
+private val BrowserMoreMenuWidth = 248.dp
+private val BrowserMoreMenuEdgeMargin = 8.dp
+private val BrowserMoreMenuAnchorSpacing = 8.dp
+private val BrowserMoreMenuHorizontalNudge = 28.dp
 private const val DISABLED_ALPHA = 0.35f

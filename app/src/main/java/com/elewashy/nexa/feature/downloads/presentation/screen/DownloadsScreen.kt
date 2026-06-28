@@ -29,6 +29,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -51,8 +54,8 @@ import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadItemCard
 import com.elewashy.nexa.ui.adaptive.adaptiveGridColumns
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.PagerSegmentedControl
 import com.elewashy.nexa.ui.components.common.PillTab
-import com.elewashy.nexa.ui.components.common.PillTabBar
 import kotlinx.coroutines.launch
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.DeleteFilled
@@ -68,6 +71,7 @@ private enum class DownloadsTab(val titleRes: Int, val icon: ImageVector) {
 @Composable
 fun DownloadsScreen(
     downloads: List<DownloadItem>,
+    snackbarHostState: SnackbarHostState,
     selectedItems: Set<Long>,
     isMultiSelectMode: Boolean,
     onBackClick: () -> Unit,
@@ -77,7 +81,8 @@ fun DownloadsScreen(
     onResumeClick: (DownloadItem) -> Unit,
     onCancelClick: (DownloadItem) -> Unit,
     onRetryClick: (DownloadItem) -> Unit,
-    onMoreOptionsClick: (DownloadItem) -> Unit,
+    onOpenFileClick: (DownloadItem) -> Unit,
+    onDeleteClick: (DownloadItem) -> Unit,
     onDeleteSelected: () -> Unit,
     onClearSelection: () -> Unit
 ) {
@@ -146,6 +151,23 @@ fun DownloadsScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .navigationBarsPadding(),
+            ) { snackbarData ->
+                Snackbar(
+                    snackbarData,
+                    shape = MaterialTheme.shapes.extraLarge,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    actionColor = MaterialTheme.colorScheme.primary,
+                    dismissActionContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
         Column(
@@ -153,26 +175,20 @@ fun DownloadsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            Box(
+            PagerSegmentedControl(
+                pagerState = pagerState,
+                maxWidth = adaptiveInfo.listMaxWidth,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = adaptiveInfo.horizontalPadding, vertical = 8.dp),
-                contentAlignment = Alignment.Center,
             ) {
-                PillTabBar(
-                    pagerState = pagerState,
-                    modifier = Modifier
-                        .widthIn(max = adaptiveInfo.listMaxWidth)
-                        .fillMaxWidth()
-                ) {
-                    DownloadsTab.entries.forEachIndexed { index, tab ->
-                        PillTab(
-                            index = index,
-                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                            text = { Text(stringResource(tab.titleRes)) },
-                            icon = { Icon(tab.icon, contentDescription = null) }
-                        )
-                    }
+                DownloadsTab.entries.forEachIndexed { index, tab ->
+                    PillTab(
+                        index = index,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                        text = { Text(stringResource(tab.titleRes)) },
+                        icon = { Icon(tab.icon, contentDescription = null) }
+                    )
                 }
             }
 
@@ -198,7 +214,9 @@ fun DownloadsScreen(
                         isMultiSelectMode = isMultiSelectMode,
                         onItemClick = onItemClick,
                         onItemLongClick = onItemLongClick,
-                        onMoreOptionsClick = onMoreOptionsClick,
+                        onOpenFileClick = onOpenFileClick,
+                        onRetryClick = onRetryClick,
+                        onDeleteClick = onDeleteClick,
                     )
                 }
             }
@@ -252,7 +270,9 @@ private fun AppsTabContent(
     isMultiSelectMode: Boolean,
     onItemClick: (DownloadItem) -> Unit,
     onItemLongClick: (DownloadItem) -> Unit,
-    onMoreOptionsClick: (DownloadItem) -> Unit,
+    onOpenFileClick: (DownloadItem) -> Unit,
+    onRetryClick: (DownloadItem) -> Unit,
+    onDeleteClick: (DownloadItem) -> Unit,
 ) {
     if (items.isEmpty()) {
         TabEmptyState(
@@ -271,7 +291,9 @@ private fun AppsTabContent(
                     isMultiSelectMode = isMultiSelectMode,
                     onClick = { onItemClick(item) },
                     onLongClick = { onItemLongClick(item) },
-                    onMoreOptionsClick = { onMoreOptionsClick(item) },
+                    onOpenFileClick = { onOpenFileClick(item) },
+                    onRetryClick = { onRetryClick(item) },
+                    onDeleteClick = { onDeleteClick(item) },
                 )
             }
         )

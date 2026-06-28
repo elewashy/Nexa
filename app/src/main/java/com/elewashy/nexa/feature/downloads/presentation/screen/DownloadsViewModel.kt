@@ -7,7 +7,6 @@ import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import com.elewashy.nexa.feature.downloads.domain.usecase.CancelDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.ObserveDownloadsUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.PauseDownloadUseCase
-import com.elewashy.nexa.feature.downloads.domain.usecase.RemoveDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.ResumeDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.RetryDownloadUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,16 +25,14 @@ import javax.inject.Inject
  * thin host that:
  *  - Renders `uiState` with `collectAsStateWithLifecycle`.
  *  - Forwards click callbacks to methods on this VM.
- *  - Handles only Android-native concerns (permissions, FileProvider, APK
- *    install, toasts) that cannot move into the VM.
+ *  - Handles only Android-native concerns (FileProvider, APK install, toasts)
+ *    that cannot move into the VM.
  *
  * All download-engine commands go through use cases backed by the
  * `DownloadRepository` (the SSOT introduced in sub-phase 3.3).
  *
- * NOTE: File-system deletion (`deleteFileFromDevice` / batch delete) stays in
- * the Activity because it requires runtime-permission prompts and a
- * `FileProvider`. The VM exposes `cancel`/`remove` so the Activity can
- * sequence the delete-then-cancel flow.
+ * Destructive deletes are undoable: the VM hides pending items immediately,
+ * waits for the Material snackbar result, then commits through the repository.
  */
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
@@ -43,30 +40,32 @@ class DownloadsViewModel @Inject constructor(
     private val pauseDownload: PauseDownloadUseCase,
     private val resumeDownload: ResumeDownloadUseCase,
     private val cancelDownload: CancelDownloadUseCase,
-    private val removeDownload: RemoveDownloadUseCase,
     private val retryDownload: RetryDownloadUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
 
+    private var nextDeleteToken = 1L
+    private var latestDownloads: List<DownloadItem> = emptyList()
+    private val pendingDeletes = linkedMapOf<Long, PendingDelete>()
+
     init {
         // Mirror the repository's sorted snapshot into the UI state. Selection
         // and dialog flags are preserved across emissions.
         viewModelScope.launch {
             observeDownloads().collect { snapshot ->
+                latestDownloads = snapshot
                 _uiState.update { state ->
                     val validIds = snapshot.mapTo(HashSet()) { it.id }
                     val prunedSelection = state.selectedItems.filterTo(HashSet()) { it in validIds }
                     state.copy(
-                        downloads = snapshot,
+                        downloads = visibleDownloads(snapshot),
                         selectedItems = prunedSelection,
                         // Auto-exit multi-select if the selection was emptied by a remote removal
                         isMultiSelectMode = state.isMultiSelectMode && prunedSelection.isNotEmpty(),
                         // Drop any dialog pointing at an item that no longer exists
                         cancelDialogItem = state.cancelDialogItem?.takeIf { it.id in validIds },
-                        moreOptionsDialogItem = state.moreOptionsDialogItem?.takeIf { it.id in validIds },
-                        deleteSelectedItems = state.deleteSelectedItems.filter { it.id in validIds }
                     )
                 }
             }
@@ -140,18 +139,12 @@ class DownloadsViewModel @Inject constructor(
     fun resume(item: DownloadItem) { viewModelScope.launch { resumeDownload(item.id) } }
     fun retry(item: DownloadItem) { viewModelScope.launch { retryDownload(item.id) } }
 
-    /** Used by the confirmation-dialog positive button. Cancels + deletes on disk. */
+    /** Used by the cancel confirmation-dialog positive button. */
     fun confirmCancel() {
         val target = _uiState.value.cancelDialogItem ?: return
         viewModelScope.launch { cancelDownload(target.id) }
         dismissCancelDialog()
     }
-
-    /** Used when the Activity has already deleted the file on disk itself. */
-    fun cancelInEngine(id: Long) { viewModelScope.launch { cancelDownload(id) } }
-
-    /** Remove from list but keep the on-disk file. */
-    fun removeFromList(id: Long) { viewModelScope.launch { removeDownload(id) } }
 
     // ── Dialog state ─────────────────────────────────────────────────
 
@@ -163,28 +156,83 @@ class DownloadsViewModel @Inject constructor(
         _uiState.update { it.copy(cancelDialogItem = null) }
     }
 
-    fun showMoreOptionsDialog(item: DownloadItem) {
-        _uiState.update { it.copy(moreOptionsDialogItem = item) }
+    fun requestDelete(item: DownloadItem) {
+        requestDelete(listOf(item))
     }
 
-    fun dismissMoreOptionsDialog() {
-        _uiState.update { it.copy(moreOptionsDialogItem = null) }
+    fun requestSelectedDelete() {
+        val state = _uiState.value
+        requestDelete(state.downloads.filter { it.id in state.selectedItems })
     }
 
-    fun showDeleteSelectedDialog() {
+    private fun requestDelete(items: List<DownloadItem>) {
+        val pendingIds = pendingDeleteIds()
+        val targetItems = items.filterNot { it.id in pendingIds }
+        if (targetItems.isEmpty()) return
+
+        val token = nextDeleteToken++
+        pendingDeletes[token] = PendingDelete(targetItems)
+        val deletedIds = targetItems.mapTo(HashSet()) { it.id }
+
         _uiState.update { state ->
-            val items = state.downloads.filter { it.id in state.selectedItems }
-            state.copy(deleteSelectedItems = items)
+            val newSelection = state.selectedItems - deletedIds
+            state.copy(
+                downloads = visibleDownloads(),
+                selectedItems = newSelection,
+                isMultiSelectMode = newSelection.isNotEmpty(),
+                deleteSnackbarQueue = state.deleteSnackbarQueue + PendingDeleteSnackbar(
+                    token = token,
+                    fileName = targetItems.singleOrNull()?.fileName,
+                    itemCount = targetItems.size,
+                ),
+            )
         }
     }
 
-    fun dismissDeleteSelectedDialog() {
-        _uiState.update { it.copy(deleteSelectedItems = emptyList()) }
+    fun onDeleteSnackbarResult(token: Long, undo: Boolean) {
+        if (undo) {
+            undoDelete(token)
+        } else {
+            commitDelete(token)
+        }
     }
 
-    /** Clears multi-select after a batch delete / remove. */
-    fun onBatchOperationFinished() {
-        clearSelection()
+    private fun undoDelete(token: Long) {
+        pendingDeletes.remove(token) ?: return
+        _uiState.update { state ->
+            state.copy(
+                downloads = visibleDownloads(),
+                deleteSnackbarQueue = state.deleteSnackbarQueue.filterNot { it.token == token },
+            )
+        }
+    }
+
+    private fun commitDelete(token: Long) {
+        val pending = pendingDeletes[token] ?: return
+        _uiState.update { state ->
+            state.copy(deleteSnackbarQueue = state.deleteSnackbarQueue.filterNot { it.token == token })
+        }
+        viewModelScope.launch {
+            try {
+                pending.items.forEach { item -> cancelDownload(item.id) }
+            } finally {
+                pendingDeletes.remove(token)
+                _uiState.update { state -> state.copy(downloads = visibleDownloads()) }
+            }
+        }
+    }
+
+    private fun visibleDownloads(snapshot: List<DownloadItem> = latestDownloads): List<DownloadItem> {
+        val pendingIds = pendingDeleteIds()
+        return snapshot.filterNot { it.id in pendingIds }
+    }
+
+    private fun pendingDeleteIds(): Set<Long> {
+        return buildSet {
+            pendingDeletes.values.forEach { pending ->
+                pending.items.forEach { item -> add(item.id) }
+            }
+        }
     }
 
     /**
@@ -195,4 +243,6 @@ class DownloadsViewModel @Inject constructor(
         data object Handled : ItemClickAction()
         data class OpenFile(val item: DownloadItem) : ItemClickAction()
     }
+
+    private data class PendingDelete(val items: List<DownloadItem>)
 }

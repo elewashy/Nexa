@@ -38,8 +38,10 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -54,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -66,6 +69,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.elewashy.nexa.R
 import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
@@ -80,6 +84,8 @@ import com.elewashy.nexa.feature.browser.presentation.webview.WebViewConfigurato
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuResult
 import com.elewashy.nexa.feature.browser.presentation.screen.ContextMenuAction
 import com.elewashy.nexa.feature.browser.presentation.screen.Base64ImageDialog
+import com.elewashy.nexa.feature.browser.presentation.screen.BrowserDownloadSnackbarDefaults
+import com.elewashy.nexa.feature.browser.presentation.screen.BrowserSnackbarHost
 import com.elewashy.nexa.feature.browser.presentation.screen.ContextMenuScreen
 import com.elewashy.nexa.feature.downloads.presentation.screen.DownloadsRoute
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
@@ -332,6 +338,21 @@ class MainActivity : AppCompatActivity() {
                 var imageDialogDataUrl by remember { mutableStateOf<String?>(null) }
                 val snackbarHostState = remember { SnackbarHostState() }
                 val composableScope = rememberCoroutineScope()
+                val downloadSnackbarTitle = stringResource(R.string.browser_download_snackbar_title)
+                val downloadSnackbarAction = stringResource(R.string.details)
+
+                fun showDownloadSnackbar() {
+                    composableScope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = downloadSnackbarTitle,
+                            actionLabel = downloadSnackbarAction,
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            launchDownloadsPage()
+                        }
+                    }
+                }
 
                 fun startBrowserRefresh() {
                     if (!isRefreshing) isRefreshing = true
@@ -380,6 +401,7 @@ class MainActivity : AppCompatActivity() {
                                     onShowMessage = { message ->
                                         composableScope.launch { snackbarHostState.showSnackbar(message) }
                                     },
+                                    onDownloadStarted = ::showDownloadSnackbar,
                                     onShowBase64Image = { imageDialogDataUrl = it },
                                 )
 
@@ -421,8 +443,14 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    SnackbarHost(
+                    BrowserSnackbarHost(
                         hostState = snackbarHostState,
+                        downloadMessage = downloadSnackbarTitle,
+                        bottomOffset = if (state.toolbarVisible) {
+                            BrowserDownloadSnackbarDefaults.BottomOffsetWithNavBar
+                        } else {
+                            BrowserDownloadSnackbarDefaults.EdgeMargin
+                        },
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
 
@@ -522,12 +550,14 @@ class MainActivity : AppCompatActivity() {
         onPullRefresh: () -> Unit,
         onRefreshComplete: () -> Unit,
         onShowMessage: (String) -> Unit,
+        onDownloadStarted: () -> Unit,
         onShowBase64Image: (String) -> Unit,
     ) {
         val currentIsRefreshing by rememberUpdatedState(isRefreshing)
         val currentOnPullDistanceChange by rememberUpdatedState(onPullDistanceChange)
         val currentOnPullRefresh by rememberUpdatedState(onPullRefresh)
         val currentOnRefreshComplete by rememberUpdatedState(onRefreshComplete)
+        val currentOnDownloadStarted by rememberUpdatedState(onDownloadStarted)
 
         AndroidView(
             factory = { ctx ->
@@ -563,17 +593,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // ── Download listener ──────────────────────────────
-                    setDownloadListener { url, _, contentDisposition, mimeType, _ ->
-                        DownloadHandler.startDownload(
-                            context = ctx,
-                            url = url,
-                            mimeType = mimeType,
-                            contentDisposition = contentDisposition,
-                            userAgent = settings.userAgentString,
-                            currentPageUrl = this.url
-                        )
-                    }
+                    bindDownloadListener(
+                        onDownloadStarted = { currentOnDownloadStarted() },
+                    )
 
                     // ── WebViewClient ──────────────────────────────────
                     webViewClient = NexaWebViewClient(
@@ -628,6 +650,9 @@ class MainActivity : AppCompatActivity() {
                     onPullDistanceChange = { currentOnPullDistanceChange(it) },
                     onPullRefresh = { currentOnPullRefresh() },
                 )
+                view.bindDownloadListener(
+                    onDownloadStarted = { currentOnDownloadStarted() },
+                )
                 (view.webChromeClient as? NexaWebChromeClient)?.updateCallbacks(
                     onProgressChangedEvent = { browserViewModel.onProgressChanged(it) },
                     onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
@@ -648,7 +673,8 @@ class MainActivity : AppCompatActivity() {
                     ContextMenuHandler.onActionSelected(
                         action = action,
                         webView = wv,
-                        context = this@MainActivity
+                        context = this@MainActivity,
+                        onDownloadStarted = { currentOnDownloadStarted() },
                     ).let { result ->
                         when (result) {
                             ContextMenuResult.None -> Unit
@@ -669,6 +695,20 @@ class MainActivity : AppCompatActivity() {
         LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
             webView?.pauseTimers()
             webView?.onPause()
+        }
+    }
+
+    private fun WebView.bindDownloadListener(onDownloadStarted: () -> Unit) {
+        setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+            DownloadHandler.startDownload(
+                context = context,
+                url = url,
+                mimeType = mimeType,
+                contentDisposition = contentDisposition,
+                userAgent = settings.userAgentString,
+                currentPageUrl = this.url,
+                onDownloadStarted = onDownloadStarted,
+            )
         }
     }
 

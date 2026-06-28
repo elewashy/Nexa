@@ -87,8 +87,7 @@ fun Base64ImageDialog(
 /**
  * Compose screen for the browser context menu bottom sheet.
  *
- * Uses Material3 [ModalBottomSheet] + [SegmentedListItem] with leading icons —
- * identical structure to the Downloads [OptionsBottomSheet].
+ * Uses Material3 [ModalBottomSheet] + [SegmentedListItem] with leading icons.
  *
  * @param actions Available context menu actions (varies by hit-test type)
  * @param onAction Callback when an action is tapped

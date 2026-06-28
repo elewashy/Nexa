@@ -172,6 +172,9 @@
 
     <!-- Share Video Feature -->
     <string name="select_quality">Select Quality</string>
+    <string name="select_quality_subtitle">Choose a format to download</string>
+    <string name="preparing_quality_options">Preparing quality options</string>
+    <string name="quality_options_unavailable">No quality options available</string>
     <string name="download">Download</string>
     <string name="download_started">Download started</string>
 
@@ -179,12 +182,10 @@
     <string name="cancel_download">Cancel Download</string>
     <string name="cancel_download_message">Cancel %s?</string>
     <string name="download_cancelled">Download cancelled</string>
-    <string name="delete_items">Delete Items</string>
-    <string name="delete_from_device">Delete from device</string>
-    <string name="remove_from_list">Remove from list</string>
+    <string name="deleted_file_message">Deleted %s</string>
+    <string name="deleted_items_message">Deleted %d items</string>
+    <string name="undo">Undo</string>
     <string name="open_file">Open file</string>
-    <string name="delete_file_message">Delete %s?</string>
-    <string name="removed_from_list">Removed from list</string>
     <string name="file_not_found_error">Error: File not found</string>
     <string name="no_app_found_open_file">No app found to open this file</string>
     <string name="error_opening_file">Error opening file: %s</string>
@@ -192,13 +193,13 @@
     <string name="allow_apk_installs_settings">Open app settings to allow APK installs</string>
     <string name="no_apk_installer_found">No installer found for this APK</string>
     <string name="error_installing_apk">Error installing APK: %s</string>
-    <string name="file_deleted_successfully">File deleted successfully</string>
-    <string name="failed_to_delete_file">Failed to delete file</string>
     <string name="audio">Audio</string>
     <string name="video">Video</string>
     <string name="watermark">Watermark</string>
-    <string name="mp4_download_starting">MP4 download starting…</string>
     <string name="download_starting">Download starting…</string>
+    <string name="browser_download_snackbar_title">Downloading file…</string>
+    <string name="browser_download_snackbar_subtitle">See notification for download status</string>
+    <string name="details">Details</string>
     <string name="error_starting_download">Error starting download: %s</string>
     <string name="enable_unknown_apps_install">Please enable "Install unknown apps" then tap Install again</string>
     <string name="cannot_open_install_settings">Cannot open install settings: %s</string>
@@ -257,18 +258,6 @@
     <plurals name="selected_count">
         <item quantity="one">%d selected</item>
         <item quantity="other">%d selected</item>
-    </plurals>
-    <plurals name="delete_items_message">
-        <item quantity="one">Delete %d item?</item>
-        <item quantity="other">Delete %d items?</item>
-    </plurals>
-    <plurals name="files_deleted_count">
-        <item quantity="one">%1$d of %2$d file deleted</item>
-        <item quantity="other">%1$d of %2$d files deleted</item>
-    </plurals>
-    <plurals name="items_removed_count">
-        <item quantity="one">%d item removed</item>
-        <item quantity="other">%d items removed</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="one">Updated %d list</item>

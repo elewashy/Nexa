@@ -5,12 +5,16 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -19,7 +23,11 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +37,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
@@ -59,7 +68,8 @@ fun DownloadItemCard(
     onResumeClick: (() -> Unit)? = null,
     onCancelClick: (() -> Unit)? = null,
     onRetryClick: (() -> Unit)? = null,
-    onMoreOptionsClick: (() -> Unit)? = null
+    onOpenFileClick: (() -> Unit)? = null,
+    onDeleteClick: (() -> Unit)? = null,
 ) {
     val accentColor = MaterialTheme.colorScheme.primary
     val context = LocalContext.current
@@ -131,7 +141,8 @@ fun DownloadItemCard(
                     item = item,
                     onCancelClick = onCancelClick,
                     onRetryClick = onRetryClick,
-                    onMoreOptionsClick = onMoreOptionsClick
+                    onOpenFileClick = onOpenFileClick,
+                    onDeleteClick = onDeleteClick,
                 )
             }
         } else null
@@ -246,7 +257,8 @@ private fun TrailingAction(
     item: DownloadItem,
     onCancelClick: (() -> Unit)?,
     onRetryClick: (() -> Unit)?,
-    onMoreOptionsClick: (() -> Unit)?
+    onOpenFileClick: (() -> Unit)?,
+    onDeleteClick: (() -> Unit)?,
 ) {
     when (item.status) {
         DownloadStatus.DOWNLOADING,
@@ -271,16 +283,82 @@ private fun TrailingAction(
         }
         DownloadStatus.COMPLETED,
         DownloadStatus.CANCELLED -> {
-            IconButton(onClick = { onMoreOptionsClick?.invoke() }) {
-                Icon(
-                    imageVector = MoreVert,
-                    contentDescription = stringResource(R.string.more_options),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            DownloadOverflowMenu(
+                item = item,
+                onOpenFileClick = onOpenFileClick,
+                onRetryClick = onRetryClick,
+                onDeleteClick = onDeleteClick,
+            )
         }
     }
 }
+
+@Composable
+private fun DownloadOverflowMenu(
+    item: DownloadItem,
+    onOpenFileClick: (() -> Unit)?,
+    onRetryClick: (() -> Unit)?,
+    onDeleteClick: (() -> Unit)?,
+) {
+    var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                imageVector = MoreVert,
+                contentDescription = stringResource(R.string.more_options),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 160.dp, max = 280.dp),
+            offset = DpOffset(x = 0.dp, y = 4.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 0.dp,
+            shadowElevation = 3.dp,
+        ) {
+            Spacer(Modifier.height(8.dp))
+            when (item.status) {
+                DownloadStatus.COMPLETED -> {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.open_file)) },
+                        onClick = {
+                            expanded = false
+                            onOpenFileClick?.invoke()
+                        },
+                        contentPadding = DownloadMenuItemPadding,
+                    )
+                }
+                DownloadStatus.CANCELLED -> {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.retry)) },
+                        onClick = {
+                            expanded = false
+                            onRetryClick?.invoke()
+                        },
+                        contentPadding = DownloadMenuItemPadding,
+                    )
+                }
+                else -> Unit
+            }
+
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.delete)) },
+                onClick = {
+                    expanded = false
+                    onDeleteClick?.invoke()
+                },
+                contentPadding = DownloadMenuItemPadding,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+private val DownloadMenuItemPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp)
 
 @Composable
 private fun rememberProgressStroke(): Stroke {

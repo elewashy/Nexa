@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LocalContentColor
@@ -23,10 +24,8 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -39,6 +38,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -47,6 +47,27 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+
+@Composable
+fun PagerSegmentedControl(
+    pagerState: PagerState,
+    maxWidth: Dp,
+    modifier: Modifier = Modifier,
+    tabs: @Composable RowScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        PillTabBar(
+            pagerState = pagerState,
+            modifier = Modifier
+                .widthIn(max = maxWidth)
+                .fillMaxWidth(),
+            tabs = tabs,
+        )
+    }
+}
 
 @Composable
 fun PillTabBar(
@@ -111,14 +132,7 @@ fun RowScope.PillTab(
     val colors = LocalPillTabBarColors.current
     val isSelected = state.pagerState.currentPage == index
     val contentScale by animatePillTabScale(state.pressedTabIndex == index)
-
-    val hasComposed = remember { mutableStateOf(false) }
-    LaunchedEffect(isSelected) {
-        if (!hasComposed.value) {
-            hasComposed.value = true
-            return@LaunchedEffect
-        }
-    }
+    val handleClick = onClick
 
     Box(
         modifier = modifier
@@ -127,13 +141,17 @@ fun RowScope.PillTab(
             .semantics {
                 role = Role.Tab
                 selected = isSelected
+                onClick {
+                    handleClick()
+                    true
+                }
             }
             .graphicsLayer {
                 scaleX = contentScale
                 scaleY = contentScale
                 transformOrigin = transformOriginForIndex(index, state.tabCount)
             }
-            .pointerInput(Unit) {
+            .pointerInput(handleClick, index) {
                 detectTapGestures(
                     onPress = {
                         state.onPressedTabIndexChange(index)
@@ -143,7 +161,7 @@ fun RowScope.PillTab(
                             state.onPressedTabIndexChange(-1)
                         }
                     },
-                    onTap = { onClick() }
+                    onTap = { handleClick() }
                 )
             },
         contentAlignment = Alignment.Center

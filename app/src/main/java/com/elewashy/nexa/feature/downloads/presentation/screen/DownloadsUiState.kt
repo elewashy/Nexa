@@ -14,18 +14,20 @@ import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
  * @property selectedItems       IDs of items selected while in multi-select mode.
  * @property isMultiSelectMode   Whether long-press selection mode is active.
  * @property cancelDialogItem    Non-null while the single-item cancel dialog is shown.
- * @property moreOptionsDialogItem  Non-null while the more-options dialog is shown.
- * @property deleteSelectedItems Non-empty while the batch delete dialog is shown.
+ * @property deleteSnackbarQueue Pending undo snackbars for recently deleted items.
  */
 data class DownloadsUiState(
     val downloads: List<DownloadItem> = emptyList(),
     val selectedItems: Set<Long> = emptySet(),
     val isMultiSelectMode: Boolean = false,
     val cancelDialogItem: DownloadItem? = null,
-    val moreOptionsDialogItem: DownloadItem? = null,
-    val deleteSelectedItems: List<DownloadItem> = emptyList()
+    val deleteSnackbarQueue: List<PendingDeleteSnackbar> = emptyList()
 ) {
     val showCancelDialog: Boolean get() = cancelDialogItem != null
-    val showMoreOptionsDialog: Boolean get() = moreOptionsDialogItem != null
-    val showDeleteSelectedDialog: Boolean get() = deleteSelectedItems.isNotEmpty()
 }
+
+data class PendingDeleteSnackbar(
+    val token: Long,
+    val fileName: String?,
+    val itemCount: Int,
+)
