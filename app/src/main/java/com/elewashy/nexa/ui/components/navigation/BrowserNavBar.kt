@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,6 +29,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,7 +55,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -89,6 +91,8 @@ fun BrowserNavBar(
     onMenuShareClick: (String) -> Unit,
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    urlFieldValue: TextFieldValue,
+    onUrlFieldValueChange: (TextFieldValue) -> Unit,
     onUrlCommit: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -107,21 +111,14 @@ fun BrowserNavBar(
             .background(background),
     ) {
         if (state.urlBarVisible) {
-            UrlBar(
-                initialText = state.urlText,
-                primary = primary,
-                onSurface = colors.onSurface,
-                onSurfaceVariant = colors.onSurfaceVariant,
-                dimensions = dimensions,
+            BrowserUrlBar(
+                value = urlFieldValue,
+                onValueChange = onUrlFieldValueChange,
                 onCommit = onUrlCommit,
             )
         }
 
-        ProgressStrip(
-            progressPercent = state.progressPercent,
-            primary = primary,
-            dimensions = dimensions,
-        )
+        BrowserNavigationProgress(progressPercent = state.progressPercent)
 
         Row(
             modifier = Modifier
@@ -156,51 +153,178 @@ fun BrowserNavBar(
                 onClick = onLinkClick,
             )
             if (state.moreOptionsVisible) {
-                var menuExpanded by remember { mutableStateOf(false) }
-                LaunchedEffect(state.toolbarVisible, state.currentUrl) {
-                    menuExpanded = false
-                }
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(dimensions.actionSize)
-                    ) {
-                        Icon(
-                            imageVector = MoreHoriz,
-                            contentDescription = stringResource(R.string.more_options),
-                            tint = primary,
-                            modifier = Modifier.size(dimensions.iconSize)
-                        )
-                    }
-
-                    BrowserMoreOptionsMenu(
-                        expanded = menuExpanded,
-                        state = state,
-                        onDismiss = { menuExpanded = false },
-                        onBackClick = {
-                            menuExpanded = false
-                            onMenuBackClick()
-                        },
-                        onForwardClick = {
-                            menuExpanded = false
-                            onMenuForwardClick()
-                        },
-                        onShareClick = {
-                            menuExpanded = false
-                            state.currentUrl?.let { onMenuShareClick(it) }
-                        },
-                        onDownloadsClick = {
-                            menuExpanded = false
-                            onDownloadsClick()
-                        },
-                        onSettingsClick = {
-                            menuExpanded = false
-                            onSettingsClick()
-                        },
-                    )
-                }
+                MoreOptionsAction(
+                    state = state,
+                    primary = primary,
+                    actionSize = dimensions.actionSize,
+                    iconSize = dimensions.iconSize,
+                    onBackClick = onMenuBackClick,
+                    onForwardClick = onMenuForwardClick,
+                    onShareClick = onMenuShareClick,
+                    onDownloadsClick = onDownloadsClick,
+                    onSettingsClick = onSettingsClick,
+                )
             }
         }
+    }
+}
+
+/** Left-side adaptive navigation for medium and expanded browser windows. */
+@Composable
+fun BrowserNavigationRail(
+    state: BrowserNavBarState,
+    onRefreshClick: () -> Unit,
+    onLinkClick: () -> Unit,
+    onHomeClick: () -> Unit,
+    onMenuBackClick: () -> Unit,
+    onMenuForwardClick: () -> Unit,
+    onMenuShareClick: (String) -> Unit,
+    onDownloadsClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (!state.toolbarVisible) return
+
+    val colors = MaterialTheme.colorScheme
+
+    NavigationRail(
+        modifier = modifier.fillMaxHeight(),
+        containerColor = colors.surfaceContainer,
+        contentColor = colors.onSurface,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            NavigationRailAction(
+                icon = Home,
+                label = stringResource(R.string.home_btn),
+                visible = state.homeVisible,
+                onClick = onHomeClick,
+            )
+            NavigationRailAction(
+                icon = Refresh,
+                label = stringResource(R.string.refresh_btn),
+                visible = state.refreshVisible,
+                onClick = onRefreshClick,
+            )
+            NavigationRailAction(
+                icon = Language,
+                label = stringResource(R.string.search),
+                visible = state.linkButtonVisible,
+                onClick = onLinkClick,
+            )
+            if (state.moreOptionsVisible) {
+                MoreOptionsRailItem(
+                    state = state,
+                    onBackClick = onMenuBackClick,
+                    onForwardClick = onMenuForwardClick,
+                    onShareClick = onMenuShareClick,
+                    onDownloadsClick = onDownloadsClick,
+                    onSettingsClick = onSettingsClick,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavigationRailAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    visible: Boolean,
+) {
+    if (!visible) return
+
+    NavigationRailItem(
+        selected = false,
+        onClick = onClick,
+        icon = { Icon(imageVector = icon, contentDescription = label) },
+        label = { Text(label) },
+    )
+}
+
+@Composable
+private fun MoreOptionsRailItem(
+    state: BrowserNavBarState,
+    onBackClick: () -> Unit,
+    onForwardClick: () -> Unit,
+    onShareClick: (String) -> Unit,
+    onDownloadsClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(state.toolbarVisible, state.currentUrl) {
+        menuExpanded = false
+    }
+    Box {
+        NavigationRailItem(
+            selected = false,
+            onClick = { menuExpanded = true },
+            icon = {
+                Icon(
+                    imageVector = MoreHoriz,
+                    contentDescription = stringResource(R.string.more_options),
+                )
+            },
+            label = { Text(stringResource(R.string.more_options)) },
+        )
+        BrowserMoreOptionsMenu(
+            expanded = menuExpanded,
+            state = state,
+            onDismiss = { menuExpanded = false },
+            onBackClick = { menuExpanded = false; onBackClick() },
+            onForwardClick = { menuExpanded = false; onForwardClick() },
+            onShareClick = {
+                menuExpanded = false
+                state.currentUrl?.let(onShareClick)
+            },
+            onDownloadsClick = { menuExpanded = false; onDownloadsClick() },
+            onSettingsClick = { menuExpanded = false; onSettingsClick() },
+        )
+    }
+}
+
+@Composable
+private fun MoreOptionsAction(
+    state: BrowserNavBarState,
+    primary: Color,
+    actionSize: Dp,
+    iconSize: Dp,
+    onBackClick: () -> Unit,
+    onForwardClick: () -> Unit,
+    onShareClick: (String) -> Unit,
+    onDownloadsClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(state.toolbarVisible, state.currentUrl) {
+        menuExpanded = false
+    }
+    Box {
+        IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(actionSize)) {
+            Icon(
+                imageVector = MoreHoriz,
+                contentDescription = stringResource(R.string.more_options),
+                tint = primary,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+        BrowserMoreOptionsMenu(
+            expanded = menuExpanded,
+            state = state,
+            onDismiss = { menuExpanded = false },
+            onBackClick = { menuExpanded = false; onBackClick() },
+            onForwardClick = { menuExpanded = false; onForwardClick() },
+            onShareClick = {
+                menuExpanded = false
+                state.currentUrl?.let(onShareClick)
+            },
+            onDownloadsClick = { menuExpanded = false; onDownloadsClick() },
+            onSettingsClick = { menuExpanded = false; onSettingsClick() },
+        )
     }
 }
 
@@ -410,11 +534,12 @@ private fun NavAction(
 }
 
 @Composable
-private fun ProgressStrip(
+fun BrowserNavigationProgress(
     progressPercent: Int?,
-    primary: Color,
-    dimensions: BrowserNavBarDimensions,
+    modifier: Modifier = Modifier,
 ) {
+    val dimensions = rememberBrowserNavBarDimensions()
+    val primary = MaterialTheme.colorScheme.primary
     var lastPercent by remember { mutableIntStateOf(0) }
     if (progressPercent != null) lastPercent = progressPercent
     AnimatedVisibility(
@@ -426,6 +551,7 @@ private fun ProgressStrip(
         LinearProgressIndicator(
             progress = { value },
             modifier = Modifier
+                .then(modifier)
                 .fillMaxWidth()
                 .height(dimensions.progressHeight),
             color = primary,
@@ -438,31 +564,24 @@ private fun ProgressStrip(
 }
 
 @Composable
-private fun UrlBar(
-    initialText: String,
-    primary: Color,
-    onSurface: Color,
-    onSurfaceVariant: Color,
-    dimensions: BrowserNavBarDimensions,
+fun BrowserUrlBar(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
     onCommit: (String) -> Unit,
 ) {
+    val colors = MaterialTheme.colorScheme
+    val dimensions = rememberBrowserNavBarDimensions()
+    val primary = colors.primary
+    val onSurface = colors.onSurface
+    val onSurfaceVariant = colors.onSurfaceVariant
     val focusRequester = remember { FocusRequester() }
-    var fieldValue by remember(initialText) {
-        mutableStateOf(
-            TextFieldValue(
-                text = initialText,
-                selection = TextRange(0, initialText.length),
-            )
-        )
-    }
-
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
 
     TextField(
-        value = fieldValue,
-        onValueChange = { fieldValue = it },
+        value = value,
+        onValueChange = onValueChange,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = dimensions.urlBarHorizontalPadding, vertical = dimensions.urlBarVerticalPadding)
@@ -490,7 +609,7 @@ private fun UrlBar(
             imeAction = ImeAction.Go,
         ),
         keyboardActions = KeyboardActions(
-            onGo = { onCommit(fieldValue.text) },
+            onGo = { onCommit(value.text) },
         ),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,

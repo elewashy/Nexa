@@ -81,9 +81,6 @@ fun AvailableUpdateDialog(
                 )
                 ListItem(
                     modifier = Modifier.clickable { dontShowAgain = !dontShowAgain },
-                    headlineContent = {
-                        Text(stringResource(R.string.never_show_again))
-                    },
                     leadingContent = {
                         Checkbox(
                             checked = dontShowAgain,
@@ -91,7 +88,9 @@ fun AvailableUpdateDialog(
                         )
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
+                ) {
+                    Text(stringResource(R.string.never_show_again))
+                }
             }
         }
     )

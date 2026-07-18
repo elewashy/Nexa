@@ -13,19 +13,19 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowHeightSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import kotlin.math.floor
-
-enum class WindowWidthClass { Compact, Medium, Expanded }
-
-enum class WindowHeightClass { Compact, Medium, Expanded }
 
 @Immutable
 data class AdaptiveLayoutInfo(
     val widthDp: Int,
     val heightDp: Int,
-    val widthClass: WindowWidthClass,
-    val heightClass: WindowHeightClass,
+    val windowSizeClass: WindowSizeClass,
     val isLandscape: Boolean,
     val isCompact: Boolean,
     val isMedium: Boolean,
@@ -39,10 +39,13 @@ data class AdaptiveLayoutInfo(
     val listMaxWidth: Dp,
     val gridMinCellWidth: Dp,
 ) {
+    val widthClass: WindowWidthSizeClass get() = windowSizeClass.widthSizeClass
+    val heightClass: WindowHeightSizeClass get() = windowSizeClass.heightSizeClass
     val useSideNavigation: Boolean = isExpanded || (isMedium && isLandscape) || isTvLike
     val useTwoPane: Boolean = isExpanded && widthDp >= 900
 }
 
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun rememberAdaptiveLayoutInfo(): AdaptiveLayoutInfo {
     val density = LocalDensity.current
@@ -52,54 +55,47 @@ fun rememberAdaptiveLayoutInfo(): AdaptiveLayoutInfo {
     val isLandscape = widthDp >= heightDp
 
     return remember(widthDp, heightDp, isLandscape) {
-        val widthClass = when {
-            widthDp < 600 -> WindowWidthClass.Compact
-            widthDp < 840 -> WindowWidthClass.Medium
-            else -> WindowWidthClass.Expanded
-        }
-        val heightClass = when {
-            heightDp < 480 -> WindowHeightClass.Compact
-            heightDp < 900 -> WindowHeightClass.Medium
-            else -> WindowHeightClass.Expanded
-        }
+        val windowSizeClass = WindowSizeClass.calculateFromSize(
+            size = DpSize(widthDp.dp, heightDp.dp),
+        )
+        val widthClass = windowSizeClass.widthSizeClass
         val isTvLike = widthDp >= 960 && isLandscape
         val horizontalPadding = when (widthClass) {
-            WindowWidthClass.Compact -> 16.dp
-            WindowWidthClass.Medium -> 24.dp
-            WindowWidthClass.Expanded -> if (isTvLike) 48.dp else 32.dp
+            WindowWidthSizeClass.Compact -> 16.dp
+            WindowWidthSizeClass.Medium -> 24.dp
+            else -> if (isTvLike) 48.dp else 32.dp
         }
         AdaptiveLayoutInfo(
             widthDp = widthDp,
             heightDp = heightDp,
-            widthClass = widthClass,
-            heightClass = heightClass,
+            windowSizeClass = windowSizeClass,
             isLandscape = isLandscape,
-            isCompact = widthClass == WindowWidthClass.Compact,
-            isMedium = widthClass == WindowWidthClass.Medium,
-            isExpanded = widthClass == WindowWidthClass.Expanded,
+            isCompact = widthClass == WindowWidthSizeClass.Compact,
+            isMedium = widthClass == WindowWidthSizeClass.Medium,
+            isExpanded = widthClass == WindowWidthSizeClass.Expanded,
             isTvLike = isTvLike,
             horizontalPadding = horizontalPadding,
             paneSpacing = if (isTvLike) 32.dp else 24.dp,
             contentMaxWidth = when (widthClass) {
-                WindowWidthClass.Compact -> 560.dp
-                WindowWidthClass.Medium -> 640.dp
-                WindowWidthClass.Expanded -> if (isTvLike) 1040.dp else 920.dp
+                WindowWidthSizeClass.Compact -> 560.dp
+                WindowWidthSizeClass.Medium -> 640.dp
+                else -> if (isTvLike) 1040.dp else 920.dp
             },
             dialogMaxWidth = if (isTvLike) 720.dp else 560.dp,
             sheetMaxWidth = when (widthClass) {
-                WindowWidthClass.Compact -> 560.dp
-                WindowWidthClass.Medium -> 640.dp
-                WindowWidthClass.Expanded -> 720.dp
+                WindowWidthSizeClass.Compact -> 560.dp
+                WindowWidthSizeClass.Medium -> 640.dp
+                else -> 720.dp
             },
             listMaxWidth = when (widthClass) {
-                WindowWidthClass.Compact -> 560.dp
-                WindowWidthClass.Medium -> 680.dp
-                WindowWidthClass.Expanded -> 960.dp
+                WindowWidthSizeClass.Compact -> 560.dp
+                WindowWidthSizeClass.Medium -> 680.dp
+                else -> 960.dp
             },
             gridMinCellWidth = when (widthClass) {
-                WindowWidthClass.Compact -> 160.dp
-                WindowWidthClass.Medium -> 220.dp
-                WindowWidthClass.Expanded -> if (isTvLike) 280.dp else 240.dp
+                WindowWidthSizeClass.Compact -> 160.dp
+                WindowWidthSizeClass.Medium -> 220.dp
+                else -> if (isTvLike) 280.dp else 240.dp
             },
         )
     }

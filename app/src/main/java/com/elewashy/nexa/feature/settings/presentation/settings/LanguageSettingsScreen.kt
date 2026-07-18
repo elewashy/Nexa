@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material3.ExpandedFullScreenSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
@@ -23,10 +25,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -193,15 +196,25 @@ private fun LanguageSearchView(
     val resources = LocalResources.current
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val searchBarState = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
+    val textFieldState = rememberTextFieldState(initialText = query)
+    val text = textFieldState.text.toString()
 
-    SearchBar(
+    LaunchedEffect(text) {
+        if (text != query) onQueryChange(text)
+    }
+    LaunchedEffect(searchBarState.currentValue) {
+        if (searchBarState.currentValue == SearchBarValue.Collapsed) onClose()
+    }
+
+    ExpandedFullScreenSearchBar(
+        state = searchBarState,
         inputField = {
             SearchBarDefaults.InputField(
-                query = query,
-                onQueryChange = onQueryChange,
+                textFieldState = textFieldState,
+                searchBarState = searchBarState,
                 onSearch = { keyboardController?.hide() },
-                expanded = true,
-                onExpandedChange = { if (!it) onClose() },
+                modifier = Modifier.focusRequester(focusRequester),
                 placeholder = { Text(stringResource(R.string.search_language)) },
                 leadingIcon = {
                     IconButton(onClick = onClose) {
@@ -212,8 +225,8 @@ private fun LanguageSearchView(
                     }
                 },
                 trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) {
+                    if (text.isNotEmpty()) {
+                        IconButton(onClick = { textFieldState.edit { replace(0, length, "") } }) {
                             Icon(
                                 Close,
                                 contentDescription = stringResource(R.string.clear_search),
@@ -223,9 +236,6 @@ private fun LanguageSearchView(
                 },
             )
         },
-        expanded = true,
-        onExpandedChange = { if (!it) onClose() },
-        modifier = Modifier.focusRequester(focusRequester),
     ) {
         if (query.isEmpty()) {
             // Empty state: show a centred search icon + hint
@@ -289,9 +299,8 @@ private fun LanguageListItem(
                 onClick = null,
             )
         },
-        headlineContent = { Text(headlineText) },
         supportingContent = supportingText?.let { { Text(it) } },
-    )
+    ) { Text(headlineText) }
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

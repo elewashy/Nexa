@@ -27,6 +27,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,11 +53,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -102,6 +106,10 @@ import com.elewashy.nexa.feature.splash.presentation.SplashViewModel
 import com.elewashy.nexa.feature.splash.presentation.screen.LoadingScreen
 import com.elewashy.nexa.feature.splash.presentation.screen.NoInternetScreen
 import com.elewashy.nexa.ui.components.navigation.BrowserNavBar
+import com.elewashy.nexa.ui.components.navigation.BrowserNavigationProgress
+import com.elewashy.nexa.ui.components.navigation.BrowserNavigationRail
+import com.elewashy.nexa.ui.components.navigation.BrowserUrlBar
+import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.theme.NexaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
@@ -340,6 +348,20 @@ class MainActivity : AppCompatActivity() {
                 val composableScope = rememberCoroutineScope()
                 val downloadSnackbarTitle = stringResource(R.string.browser_download_snackbar_title)
                 val downloadSnackbarAction = stringResource(R.string.details)
+                val adaptiveInfo = rememberAdaptiveLayoutInfo()
+                val useSideNavigation = !adaptiveInfo.isCompact
+                val navigationState = state.toNavBarState()
+                var urlFieldValue by rememberSaveable(
+                    navigationState.urlText,
+                    stateSaver = TextFieldValue.Saver,
+                ) {
+                    mutableStateOf(
+                        TextFieldValue(
+                            text = navigationState.urlText,
+                            selection = TextRange(0, navigationState.urlText.length),
+                        )
+                    )
+                }
 
                 fun showDownloadSnackbar() {
                     composableScope.launch {
@@ -370,11 +392,38 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 Box(modifier = modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .windowInsetsPadding(WindowInsets.statusBars)
-                    ) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        if (useSideNavigation && state.toolbarVisible) {
+                            BrowserNavigationRail(
+                                state = navigationState,
+                                onRefreshClick = ::startBrowserRefresh,
+                                onLinkClick = browserViewModel::toggleUrlContainer,
+                                onHomeClick = ::navigateToHome,
+                                onMenuBackClick = ::goBack,
+                                onMenuForwardClick = ::goForward,
+                                onMenuShareClick = ::shareCurrentPage,
+                                onDownloadsClick = ::launchDownloadsPage,
+                                onSettingsClick = ::launchSettingsPage,
+                            )
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .windowInsetsPadding(WindowInsets.statusBars)
+                        ) {
+                            if (useSideNavigation && state.toolbarVisible) {
+                                if (navigationState.urlBarVisible) {
+                                    BrowserUrlBar(
+                                        value = urlFieldValue,
+                                        onValueChange = { urlFieldValue = it },
+                                        onCommit = browserViewModel::onUrlCommitted,
+                                    )
+                                }
+                                BrowserNavigationProgress(progressPercent = navigationState.progressPercent)
+                            }
+
                         // WebView consumes native touch events, so Compose nested scroll
                         // cannot drive PullToRefreshBox. The gesture is bridged from
                         // WebView while the official M3 Expressive LoadingIndicator is
@@ -421,24 +470,27 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // Navigation bar
-                        if (state.toolbarVisible) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                BrowserNavBar(
-                                    state = state.toNavBarState(),
-                                    onRefreshClick = ::startBrowserRefresh,
-                                    onLinkClick = browserViewModel::toggleUrlContainer,
-                                    onHomeClick = ::navigateToHome,
-                                    onMenuBackClick = ::goBack,
-                                    onMenuForwardClick = ::goForward,
-                                    onMenuShareClick = ::shareCurrentPage,
-                                    onDownloadsClick = ::launchDownloadsPage,
-                                    onSettingsClick = ::launchSettingsPage,
-                                    onUrlCommit = browserViewModel::onUrlCommitted,
-                                )
+                            // Compact windows retain the established bottom action bar.
+                            if (!useSideNavigation && state.toolbarVisible) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    BrowserNavBar(
+                                        state = navigationState,
+                                        onRefreshClick = ::startBrowserRefresh,
+                                        onLinkClick = browserViewModel::toggleUrlContainer,
+                                        onHomeClick = ::navigateToHome,
+                                        onMenuBackClick = ::goBack,
+                                        onMenuForwardClick = ::goForward,
+                                        onMenuShareClick = ::shareCurrentPage,
+                                        onDownloadsClick = ::launchDownloadsPage,
+                                        onSettingsClick = ::launchSettingsPage,
+                                        urlFieldValue = urlFieldValue,
+                                        onUrlFieldValueChange = { urlFieldValue = it },
+                                        onUrlCommit = browserViewModel::onUrlCommitted,
+                                    )
+                                }
                             }
                         }
                     }
@@ -446,7 +498,7 @@ class MainActivity : AppCompatActivity() {
                     BrowserSnackbarHost(
                         hostState = snackbarHostState,
                         downloadMessage = downloadSnackbarTitle,
-                        bottomOffset = if (state.toolbarVisible) {
+                        bottomOffset = if (!useSideNavigation && state.toolbarVisible) {
                             BrowserDownloadSnackbarDefaults.BottomOffsetWithNavBar
                         } else {
                             BrowserDownloadSnackbarDefaults.EdgeMargin

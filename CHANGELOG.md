@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0 - 2026-07-18
+
+### Added
+
+- Added adaptive browser navigation: phones use the bottom controls, while tablets, foldables, Chromebooks, and larger windows use a left-side navigation rail.
+
+### Improved
+
+- Improved the language search experience with the latest Material 3 full-screen search behavior.
+- Unified browser navigation styling and accessibility across compact and large-screen layouts.
+
+### Fixed
+
+- Fixed a startup crash related to restoring browser address-field state.
+
 ## 1.0.3 - 2026-06-29
 
 ### Improved

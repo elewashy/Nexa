@@ -94,14 +94,6 @@ fun DownloadItemCard(
                 onResumeClick = onResumeClick
             )
         },
-        headlineContent = {
-            Text(
-                text = item.fileName,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
         supportingContent = {
             Column {
                 if (isActive) {
@@ -146,7 +138,14 @@ fun DownloadItemCard(
                 )
             }
         } else null
-    )
+    ) {
+        Text(
+            text = item.fileName,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
