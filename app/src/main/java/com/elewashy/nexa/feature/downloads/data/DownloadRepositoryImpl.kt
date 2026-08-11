@@ -656,6 +656,9 @@ class DownloadRepositoryImpl @Inject constructor(
      * [Environment.isExternalStorageManager] does not exist yet — query the
      * underlying app-op directly. Unknown/ungranted ops return false.
      */
+    // unsafeCheckOpNoThrow is deprecated but is the only API that can query
+    // the all-files-access app-op on API 29 (isExternalStorageManager is 30+).
+    @Suppress("DEPRECATION")
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun hasAllFilesAccessOnQ(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

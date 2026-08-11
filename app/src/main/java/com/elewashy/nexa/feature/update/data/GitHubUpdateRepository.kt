@@ -25,7 +25,7 @@ class GitHubRateLimitedException :
 
 @Singleton
 class GitHubUpdateRepository @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
     private val httpClientProvider: HttpClientProvider,
     private val gson: Gson,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher

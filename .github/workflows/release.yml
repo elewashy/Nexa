@@ -4,6 +4,9 @@ on:
   release:
     types:
       - published
+  push:
+    tags:
+      - v*
 
 permissions:
   contents: write
@@ -120,3 +123,4 @@ jobs:
         with:
           files: release-artifacts/*
           body_path: release-notes.md
+          make_latest: true
