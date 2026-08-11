@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.2.0 - 2026-08-11
+
+### Added
+
+- Support for shared links that redirect to the actual post, including Threads share links and Twitter/X short (t.co) links.
+- Unit tests covering share-link label handling and quality formatting.
+- New About page sections: Contributors, Open Source Licenses, and a link to the developer's GitHub profile.
+- GitHub icon on the About page next to the Telegram icon; Issues & Feedback now opens GitHub.
+- In-browser video download button: appears automatically on pages from supported video platforms and opens the download sheet; long-press turns it into a close button to hide it for the current page, and it can be disabled entirely in Settings (General → Downloads).
+- "Continue anyway" option on the no-internet screen, so cached pages and settings stay reachable offline.
+
+### Improved
+
+- Faster video extraction: redirect links are resolved only when needed, and shared-link handling no longer adds extra requests for regular links.
+- Rebuilt the video extraction pipeline for reliability and maintainability, with clearer error messages when a video can't be found.
+- TikTok downloads now use a single faster service instead of scraping a third-party fallback site.
+- The Filters status on the Updates page now refreshes automatically after every filter check, including the one that runs at app startup.
+- Download file names now use the correct platform name even when the link was shared as a short or redirect link.
+- GitHub releases now publish SHA-256 checksum files, and in-app updates verify the downloaded APK against them before offering installation.
+- The app can now start and browse without an internet connection; filters update in the background when connectivity returns.
+- More reliable downloads: resume state now survives app restarts, and unfinished files are kept hidden until complete.
+- Downloads on Android 10 devices now check the storage permission correctly, with clear guidance instead of unexplained failures.
+- When the system pauses a long background download, you now get a notification that lets you resume it.
+- Failed page loads show a clear error screen with retry and back-to-home options, without covering pages that loaded fine.
+- Update checks now handle GitHub rate limits with a clear message.
+- Updated Compose Material 3, Material Kolor, Compose Shimmer, and KSP to their latest versions.
+
+### Fixed
+
+- Fixed video extraction failing for shared Threads links.
+- Fixed unsupported-platform errors for Twitter/X links shared as t.co short links.
+- Fixed the large-screen/tablet browser navigation differing from the phone layout: the side rail now uses the same actions, colors, and sizing as the bottom bar, with icon labels removed.
+- Fixed the AdBlock filter update notification appearing on every launch even when nothing changed; it now only shows while updated lists are actually being downloaded and applied.
+- Fixed website file uploads not working in the browser, including multi-file uploads.
+- Fixed fullscreen video handling: back now exits fullscreen correctly, switching videos works, and portrait videos are no longer force-rotated.
+- Fixed the address bar accepting unsafe URL schemes (javascript:, data:, file:).
+- Fixed downloads restarting from zero or corrupting after the app was closed mid-download.
+- Fixed tapping a download notification opening the browser instead of the Downloads page.
+
 ## 1.1.0 - 2026-07-18
 
 ### Added

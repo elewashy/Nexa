@@ -47,6 +47,13 @@ class SegmentFileWriter(
     @Volatile private var channel: FileChannel? = null
 
     /**
+     * Terminal flag — once closed or deleted, [ensureOpen] must never recreate
+     * the file. Without it an in-flight [writeAt] racing a [deleteFile] would
+     * resurrect the just-deleted partial file.
+     */
+    @Volatile private var closed = false
+
+    /**
      * Pre-allocates the file to [totalSize] bytes.
      *
      * Call this **once** before any segment downloading starts.
@@ -59,6 +66,9 @@ class SegmentFileWriter(
         if (totalSize <= 0) return
 
         synchronized(initLock) {
+            if (closed) {
+                throw java.io.IOException("File writer is closed: $filePath")
+            }
             try {
                 val file = File(filePath)
                 file.parentFile?.mkdirs()
@@ -92,6 +102,9 @@ class SegmentFileWriter(
      * @param length    Number of bytes to write from [data].
      */
     fun writeAt(position: Long, data: ByteArray, offset: Int = 0, length: Int = data.size) {
+        if (closed) {
+            throw java.io.IOException("File writer is closed: $filePath")
+        }
         val fc = ensureOpen()
         // FileChannel.write(ByteBuffer, Long) is thread-safe and doesn't update the 
         // channel's position, eliminating the need for seek+synchronization.
@@ -123,6 +136,7 @@ class SegmentFileWriter(
      */
     fun close() {
         synchronized(initLock) {
+            closed = true
             try {
                 channel?.close()
                 channel = null
@@ -158,6 +172,9 @@ class SegmentFileWriter(
 
         synchronized(initLock) {
             channel?.let { return it }
+            if (closed) {
+                throw java.io.IOException("File writer is closed: $filePath")
+            }
 
             val file = File(filePath)
             file.parentFile?.mkdirs()

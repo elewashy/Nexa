@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
 import android.util.Log
+import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -35,11 +36,17 @@ object HttpProber {
      * @property supportsRanges  `true` if the server advertised `Accept-Ranges: bytes`.
      *                           May be a lie — actual support is validated at download time.
      * @property statusCode      HTTP status code from the successful probe.
+     * @property contentType     MIME type reported by the server (without parameters), if any.
+     * @property fileName        Filename from Content-Disposition or the final URL, if any.
+     * @property finalUrl        URL after redirects, if the probe reached the server.
      */
     data class ProbeResult(
         val contentLength: Long = -1L,
         val supportsRanges: Boolean = false,
-        val statusCode: Int = 0
+        val statusCode: Int = 0,
+        val contentType: String? = null,
+        val fileName: String? = null,
+        val finalUrl: String? = null
     )
 
     /**
@@ -118,7 +125,10 @@ object HttpProber {
         return ProbeResult(
             contentLength = contentLength,
             supportsRanges = acceptRanges,
-            statusCode = response.code
+            statusCode = response.code,
+            contentType = extractContentType(response),
+            fileName = extractFileName(response),
+            finalUrl = response.request.url.toString()
         )
     }
 
@@ -156,7 +166,33 @@ object HttpProber {
         return ProbeResult(
             contentLength = totalLength,
             supportsRanges = supportsRanges,
-            statusCode = response.code
+            statusCode = response.code,
+            contentType = extractContentType(response),
+            fileName = extractFileName(response),
+            finalUrl = response.request.url.toString()
         )
+    }
+
+    private fun extractContentType(response: okhttp3.Response): String? {
+        return response.header("Content-Type")
+            ?.substringBefore(';')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Filename candidate from Content-Disposition, falling back to the last
+     * URL path segment when it looks like a file.
+     */
+    private fun extractFileName(response: okhttp3.Response): String? {
+        response.header("Content-Disposition")?.let { cd ->
+            FileNameResolver.extractFilenameFromContentDisposition(cd)?.let { return it }
+        }
+
+        val url = response.request.url.toString()
+        val segment = url.substringAfterLast('/')
+            .substringBefore('?')
+            .substringBefore('#')
+        return if (segment.isNotEmpty() && segment.contains('.')) segment else null
     }
 }

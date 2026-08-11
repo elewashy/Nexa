@@ -4,9 +4,6 @@ on:
   release:
     types:
       - published
-  push:
-    tags:
-      - v*
 
 permissions:
   contents: write
@@ -91,6 +88,9 @@ jobs:
             printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
           } > keystore.properties
 
+      - name: Run debug unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
       - name: Build signed release APK
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
@@ -98,6 +98,14 @@ jobs:
         run: |
           mkdir -p release-artifacts
           cp app/build/outputs/apk/release/*.apk release-artifacts/
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd release-artifacts
+          for apk in *.apk; do
+            sha256sum "$apk" > "$apk.sha256"
+          done
+          sha256sum *.apk > checksums.txt
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4

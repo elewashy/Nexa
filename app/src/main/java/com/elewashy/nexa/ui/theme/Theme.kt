@@ -17,12 +17,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.elewashy.nexa.core.storage.AppPreferences
+import com.elewashy.nexa.core.storage.ThemeModeSeed
+import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.rememberDynamicColorScheme
@@ -167,7 +168,7 @@ fun NexaTheme(
     val usePureBlack = pureBlack
         ?: prefs.pureBlack.collectAsState(initial = false).value
     val seedColor = selectedThemeColor
-        ?: Color(prefs.selectedThemeColor.collectAsState(initial = DefaultThemeColor.toArgb()).value)
+        ?: Color(prefs.selectedThemeColor.collectAsState(initial = DEFAULT_THEME_COLOR_ARGB).value)
 
     val colorScheme = when {
         seedColor == DefaultThemeColor && useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -214,8 +215,12 @@ fun NexaTheme(
 @Composable
 fun isAppInDarkTheme(): Boolean {
     val configuration = LocalConfiguration.current
+    val context = LocalContext.current
     val prefs = rememberAppPreferences()
-    val themeMode by prefs.themeMode.collectAsState(initial = AppThemeMode.SYSTEM)
+    // Synchronous SharedPrefs seed: DataStore is async, so without it the
+    // first frame would render with SYSTEM and flash on the first emission.
+    val seededMode = remember { ThemeModeSeed.read(context) }
+    val themeMode by prefs.themeMode.collectAsState(initial = seededMode)
 
     return when (AppTheme.fromPreferenceValue(themeMode)) {
         AppTheme.DARK -> true

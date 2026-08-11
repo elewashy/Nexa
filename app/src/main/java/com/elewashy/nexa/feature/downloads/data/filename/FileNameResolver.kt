@@ -2,15 +2,12 @@ package com.elewashy.nexa.feature.downloads.data.filename
 
 import android.util.Log
 import android.webkit.MimeTypeMap
+import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.feature.downloads.data.engine.HttpProber
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.CacheControl
-import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
-import okhttp3.Request as OkHttpRequest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -25,7 +22,18 @@ object FileNameResolver {
 
     private const val TAG = "FileNameResolver"
 
-    // ----- Pre-compiled regex patterns (allocated once) -----
+    @Volatile
+    private var clientProvider: HttpClientProvider? = null
+
+    /**
+     * Wired once at app startup (NexaApp): this object is referenced statically
+     * and cannot be Hilt-injected, so the shared provider is handed in here.
+     */
+    fun installSharedClientProvider(provider: HttpClientProvider) {
+        clientProvider = provider
+    }
+
+    // Pre-compiled regex patterns (allocated once)
 
     private val FILENAME_STAR_RE =
         Regex("filename\\*=(?:UTF-8'')?([^;]+)", RegexOption.IGNORE_CASE)
@@ -47,14 +55,14 @@ object FileNameResolver {
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     )
 
-    // Lazy OkHttpClient – optimised for fast HEAD requests only
-    private val httpClient by lazy {
-        OkHttpClient.Builder()
+    // Optimised for fast HEAD probes: tight timeouts + an overall call cap.
+    // Derived from the shared provider so probes reuse the app-wide pool.
+    private val httpClient: OkHttpClient by lazy {
+        (clientProvider?.newBuilder() ?: OkHttpClient.Builder())
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(12, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
             .callTimeout(20, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(2, 30, TimeUnit.SECONDS))
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
@@ -66,94 +74,32 @@ object FileNameResolver {
     // ===================================================================
 
     /**
-     * Resolves filename + content-type by probing the server.
-     * Starts with a fast HEAD request, then fallbacks to a GET (Range) if HEAD is blocked.
-     *
-     * @return Pair(filename, contentType) — either or both may be null.
+     * Single shared probe pass over [url]. Returns the full [HttpProber.ProbeResult]
+     * (size, range support, content type, filename candidate, final URL) so callers
+     * can resolve the filename AND plan the download from one request — probing the
+     * same URL twice could burn one-time signed URLs on the GET fallback.
      */
-    suspend fun fetchFilenameFromServer(
+    suspend fun probeOnce(
         url: String,
         userAgent: String?,
         referer: String?,
         cookies: String?
-    ): Pair<String?, String?> = withContext(Dispatchers.IO) {
-        var fileName: String? = null
-        var contentType: String? = null
- 
-        try {
-            Log.d(TAG, "Probing server → $url")
- 
-            val baseRequest = OkHttpRequest.Builder()
-                .url(url)
-                .cacheControl(CacheControl.Builder().noCache().build())
-                .apply {
-                    addHeader("User-Agent", userAgent ?: "Mozilla/5.0")
-                    referer?.let { addHeader("Referer", it) }
-                    cookies?.let { addHeader("Cookie", it) }
-                    addHeader("Accept", "*/*")
-                }
-                .build()
- 
-            // Phase 1: Try HEAD (fastest)
-            val headRequest = baseRequest.newBuilder().head().build()
-            val startMs = System.currentTimeMillis()
- 
-            httpClient.newCall(headRequest).execute().use { headResponse ->
-                Log.d(TAG, "HEAD ${headResponse.code} in ${System.currentTimeMillis() - startMs}ms")
- 
-                if (headResponse.isSuccessful) {
-                    processResponse(headResponse, url).let { (name, type) ->
-                        fileName = name
-                        contentType = type
-                    }
-                } else {
-                    // Phase 2: Try GET with Range if HEAD failed (common for protected video hosts)
-                    Log.d(TAG, "HEAD failed, falling back to GET Range...")
-                    val getRequest = baseRequest.newBuilder()
-                        .get()
-                        .addHeader("Range", "bytes=0-0")
-                        .build()
-                        
-                    httpClient.newCall(getRequest).execute().use { getResponse ->
-                        Log.d(TAG, "GET (Range) ${getResponse.code}")
-                        processResponse(getResponse, url).let { (name, type) ->
-                            fileName = name
-                            contentType = type
-                        }
-                    }
-                }
-            }
+    ): HttpProber.ProbeResult {
+        val headers = buildMap {
+            put("User-Agent", userAgent ?: "Mozilla/5.0")
+            referer?.let { put("Referer", it) }
+            cookies?.let { put("Cookie", it) }
+            put("Accept", "*/*")
+            // Match the engine's probe semantics — never let OkHttp rewrite the
+            // response (transparent gzip) between probing and downloading.
+            put("Accept-Encoding", "identity")
+        }
+        return try {
+            HttpProber.probe(httpClient, url, headers)
         } catch (e: Exception) {
             Log.w(TAG, "Server probe failed (using fallback): ${e.message}")
+            HttpProber.ProbeResult()
         }
- 
-        Pair(fileName, contentType)
-    }
- 
-    /** Internal helper to extract metadata from a successful response (HEAD or GET). */
-    private fun processResponse(response: okhttp3.Response, url: String): Pair<String?, String?> {
-        if (!response.isSuccessful && response.code != 206) return Pair(null, null)
- 
-        val type = response.header("Content-Type")?.substringBefore(';')
-        var name: String? = null
- 
-        val cd = response.header("Content-Disposition")
-        if (cd != null) {
-            name = extractFilenameFromContentDisposition(cd)
-            if (name != null) Log.d(TAG, "Filename from Disposition: $name")
-        }
- 
-        if (name == null) {
-            val urlSegment = url.substringAfterLast('/')
-                .substringBefore('?')
-                .substringBefore('#')
-            if (urlSegment.isNotEmpty() && urlSegment.contains('.')) {
-                name = decodePercent(urlSegment)
-                Log.d(TAG, "Filename from URL: $name")
-            }
-        }
- 
-        return Pair(name, type)
     }
 
     /**
@@ -237,9 +183,16 @@ object FileNameResolver {
     /**
      * Returns a unique file name inside [directory].
      * Appends `_1`, `_2`, … if the name already exists (caps at 1000 → timestamp fallback).
+     * A leftover `.part` partial file also counts as a collision, as does any
+     * name in [reservedNames] — names reserved in memory by concurrent
+     * in-flight downloads whose `.part` file does not exist on disk yet.
      */
-    fun uniqueName(directory: File, fileName: String): String {
-        if (!File(directory, fileName).exists()) return fileName
+    fun uniqueName(
+        directory: File,
+        fileName: String,
+        reservedNames: Set<String> = emptySet()
+    ): String {
+        if (!nameTaken(directory, fileName) && fileName !in reservedNames) return fileName
 
         val lastDot = fileName.lastIndexOf('.')
         val base: String
@@ -254,12 +207,15 @@ object FileNameResolver {
 
         for (i in 1..1000) {
             val candidate = "${base}_$i$ext"
-            if (!File(directory, candidate).exists()) return candidate
+            if (!nameTaken(directory, candidate) && candidate !in reservedNames) return candidate
         }
 
         // Safety fallback
         return "${base}_${System.currentTimeMillis()}$ext"
     }
+
+    private fun nameTaken(directory: File, name: String): Boolean =
+        File(directory, name).exists() || File(directory, "$name.part").exists()
 
     // ===================================================================
     //  Internal helpers

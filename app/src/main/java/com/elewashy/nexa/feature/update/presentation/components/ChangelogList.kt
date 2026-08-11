@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -23,16 +24,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.paging.LoadState
-import androidx.paging.compose.LazyPagingItems
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.util.relativeTime
 import com.elewashy.nexa.feature.update.domain.model.ReleaseHistoryEntry
+import com.elewashy.nexa.feature.update.presentation.ChangelogsUiState
 import com.elewashy.nexa.ui.icons.Campaign
 
 @Composable
 fun ChangelogList(
-    changelogs: LazyPagingItems<ReleaseHistoryEntry>,
+    state: ChangelogsUiState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp)
 ) {
@@ -40,40 +40,39 @@ fun ChangelogList(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        when {
-            changelogs.loadState.refresh is LoadState.Loading -> {
+        when (state) {
+            ChangelogsUiState.Loading -> {
                 CircularProgressIndicator(
                     modifier = Modifier.size(32.dp),
                     strokeWidth = 3.dp,
                 )
             }
 
-            changelogs.loadState.refresh is LoadState.Error -> {
-                val error = changelogs.loadState.refresh as LoadState.Error
+            is ChangelogsUiState.Error -> {
                 Text(
-                    text = error.error.message ?: stringResource(R.string.changelog_download_fail),
+                    text = state.message ?: stringResource(R.string.changelog_download_fail),
                     style = MaterialTheme.typography.titleLarge
                 )
             }
 
-            changelogs.itemCount == 0 -> Text(
-                text = stringResource(R.string.no_changelogs_found),
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = contentPadding
-                ) {
-                    items(
-                        count = changelogs.itemCount,
-                        key = { changelogs.peek(it)?.version ?: it }
-                    ) { index ->
-                        changelogs[index]?.let { changelog ->
+            is ChangelogsUiState.Loaded -> {
+                if (state.releases.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.no_changelogs_found),
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = contentPadding
+                    ) {
+                        items(
+                            items = state.releases,
+                            key = { it.version }
+                        ) { changelog ->
                             ChangelogItem(
                                 changelog = changelog,
-                                showDivider = index < changelogs.itemCount - 1
+                                showDivider = changelog != state.releases.last()
                             )
                         }
                     }
@@ -92,7 +91,7 @@ private fun ChangelogItem(
         Changelog(
             description = changelog.description,
             version = changelog.version,
-            publishDate = changelog.createdAt.relativeTime(LocalContext.current)
+            publishDate = changelog.createdAt?.relativeTime(LocalContext.current)
         )
         if (showDivider) {
             HorizontalDivider(
@@ -107,7 +106,7 @@ private fun ChangelogItem(
 fun Changelog(
     description: String,
     version: String,
-    publishDate: String
+    publishDate: String?
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -134,19 +133,23 @@ fun Changelog(
                     color = MaterialTheme.colorScheme.primary,
                 )
 
-                Spacer(modifier = Modifier)
+                // Malformed release timestamps surface as null: hide the date
+                // (and its separator) instead of showing a bogus relative time.
+                if (publishDate != null) {
+                    Spacer(modifier = Modifier)
 
-                Text(
-                    "•",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.outline,
-                )
+                    Text(
+                        "•",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
 
-                Text(
-                    publishDate,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.outline,
-                )
+                    Text(
+                        publishDate,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
             }
         }
         Markdown(

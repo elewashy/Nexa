@@ -1,7 +1,9 @@
 package com.elewashy.nexa.feature.browser.presentation
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.MotionEvent
@@ -17,12 +19,19 @@ import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseOutQuart
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -32,10 +41,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +54,8 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -61,6 +74,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -101,6 +115,9 @@ import com.elewashy.nexa.feature.onboarding.OnboardingScreen
 import com.elewashy.nexa.feature.onboarding.OnboardingViewModel
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsNavigation
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
+import com.elewashy.nexa.feature.share.data.SharePlatform
+import com.elewashy.nexa.feature.share.data.SharePlatformDetector
+import com.elewashy.nexa.feature.share.presentation.ShareActivity
 import com.elewashy.nexa.feature.splash.presentation.SplashUiState
 import com.elewashy.nexa.feature.splash.presentation.SplashViewModel
 import com.elewashy.nexa.feature.splash.presentation.screen.LoadingScreen
@@ -133,7 +150,7 @@ import javax.inject.Inject
  *
  * Lifecycle:
  *  - onCreate: Initialize UI, permissions, and the VM observer.
- *  - onNewIntent: Route new intents (deep-link, notifications).
+ *  - onNewIntent: Route new intents (deep-link, download page).
  *  - onDestroy: Tear down WebView and clear KEEP_SCREEN_ON defensively.
  */
 @AndroidEntryPoint
@@ -152,8 +169,9 @@ class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
     private var chromeClient: NexaWebChromeClient? = null
     private lateinit var customViewContainer: FrameLayout
+    private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
     private var lastKnownUrl: String? = null
-    private var hasMainFrameLoadError = false
+    private var restoredFromProcessDeath = false
     private var requestedRoute by mutableStateOf<String?>(null)
     private val updateViewModel: UpdateViewModel by viewModels()
 
@@ -184,9 +202,20 @@ class MainActivity : AppCompatActivity() {
         private const val ROUTE_UPDATE = "update"
 
         private const val STATE_LAST_KNOWN_URL = "last_known_url"
+        private const val STATE_WEB_VIEW = "web_view_state"
         private const val PAGE_TRANSITION_DURATION_MS = 300
         private const val BROWSER_REFRESH_TRIGGER_DP = 80f
         private const val BROWSER_REFRESH_MIN_VISIBLE_MS = 300L
+        private val SNACKBAR_CLEARANCE = 116.dp
+
+        /**
+         * In-memory marker: survives activity recreation but is cleared when
+         * the process is killed. Distinguishes a process-death restore (full
+         * WebView state restore) from a plain recreation (reload the URL —
+         * restoring the full WebView state after a recreation can leave a
+         * black renderer surface).
+         */
+        private var processInstanceAlive = false
     }
 
     // ========== Lifecycle ==========
@@ -196,8 +225,18 @@ class MainActivity : AppCompatActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         lastKnownUrl = savedInstanceState?.getString(STATE_LAST_KNOWN_URL)
+        restoredFromProcessDeath = savedInstanceState != null && !processInstanceAlive
+        processInstanceAlive = true
 
         enableEdgeToEdge()
+
+        // File uploads (<input type=file>): the picker result is routed back
+        // to the chrome client, which answers the pending WebView callback.
+        fileChooserLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            chromeClient?.onFileChooserResult(result.data, result.resultCode)
+        }
 
         // Create the fullscreen overlay container eagerly so the same
         // instance is shared between the Compose tree and NexaWebChromeClient.
@@ -222,11 +261,15 @@ class MainActivity : AppCompatActivity() {
                 val appSnackbarHostState = remember { SnackbarHostState() }
                 val composableScope = rememberCoroutineScope()
 
-                LaunchedEffect(requestedRoute) {
-                    requestedRoute?.let { route ->
-                        navController.navigate(route) { launchSingleTop = true }
-                        requestedRoute = null
-                    }
+                LaunchedEffect(requestedRoute, currentRoute) {
+                    val route = requestedRoute ?: return@LaunchedEffect
+                    // Deep links arriving while splash is on the stack must not
+                    // push here: the splash→browser transition pops everything
+                    // above splash. The effect restarts once the browser route is
+                    // active and delivers the pending route then.
+                    if (currentRoute == null || currentRoute == ROUTE_SPLASH) return@LaunchedEffect
+                    navController.navigate(route) { launchSingleTop = true }
+                    requestedRoute = null
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -328,9 +371,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (savedInstanceState == null) {
-            handleIntent(intent)
-        }
+        // Run on every onCreate: intents must survive recreation after
+        // process death, not just the first launch.
+        handleIntent(intent)
     }
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -349,18 +392,48 @@ class MainActivity : AppCompatActivity() {
                 val downloadSnackbarTitle = stringResource(R.string.browser_download_snackbar_title)
                 val downloadSnackbarAction = stringResource(R.string.details)
                 val adaptiveInfo = rememberAdaptiveLayoutInfo()
-                val useSideNavigation = !adaptiveInfo.isCompact
+                val useSideNavigation = adaptiveInfo.useSideNavigation
                 val navigationState = state.toNavBarState()
-                var urlFieldValue by rememberSaveable(
-                    navigationState.urlText,
-                    stateSaver = TextFieldValue.Saver,
-                ) {
+
+                // Video download sniffer: appears on pages of supported video
+                // platforms until dismissed for the current page load. A new
+                // page load (navigation or refresh) changes the key, so a
+                // dismissal never survives a refresh or navigation.
+                val videoDownloadButtonEnabled by appPreferences.videoDownloadButton
+                    .collectAsStateWithLifecycle(initialValue = null as Boolean?)
+                var snifferDismissMode by rememberSaveable { mutableStateOf(false) }
+                var dismissedSnifferKey by rememberSaveable { mutableStateOf<String?>(null) }
+                val snifferUrl = state.topSearchBarText
+                val snifferKey = "${state.pageLoadId}:$snifferUrl"
+                val snifferVisible = videoDownloadButtonEnabled == true &&
+                    state.toolbarVisible &&
+                    snifferUrl.isNotBlank() &&
+                    SharePlatformDetector.detect(snifferUrl) != SharePlatform.VIDEO &&
+                    dismissedSnifferKey != snifferKey
+
+                LaunchedEffect(state.pageLoadId, snifferUrl) {
+                    snifferDismissMode = false
+                }
+                // NOT keyed on urlText: a redirect/SPA URL update must not
+                // replace text the user is typing. Sync happens below while
+                // the bar is hidden.
+                var urlFieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
                     mutableStateOf(
                         TextFieldValue(
                             text = navigationState.urlText,
                             selection = TextRange(0, navigationState.urlText.length),
                         )
                     )
+                }
+                // Re-sync the field with the page URL only while the bar is
+                // not visible-for-editing; while it is open the typed text wins.
+                LaunchedEffect(navigationState.urlText) {
+                    if (!state.urlBarVisible) {
+                        urlFieldValue = TextFieldValue(
+                            text = navigationState.urlText,
+                            selection = TextRange(0, navigationState.urlText.length),
+                        )
+                    }
                 }
 
                 fun showDownloadSnackbar() {
@@ -383,6 +456,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 BackHandler(enabled = backEnabled) {
+                    // Fullscreen video: back exits fullscreen first, never
+                    // navigates history or finishes the activity.
+                    if (chromeClient?.isFullscreen == true) {
+                        chromeClient?.onHideCustomView()
+                        return@BackHandler
+                    }
                     var canGoBack = false
                     safeWebViewOperation { wv ->
                         canGoBack = wv.canGoBack()
@@ -467,6 +546,14 @@ class MainActivity : AppCompatActivity() {
                                     isRefreshing = isRefreshing,
                                     pullDistancePx = pullDistancePx,
                                 )
+
+                                // Simple error state over the page area.
+                                if (state.pageLoadError) {
+                                    BrowserLoadErrorOverlay(
+                                        onRetry = ::startBrowserRefresh,
+                                        onBackToHome = ::navigateToHome,
+                                    )
+                                }
                             }
                         }
 
@@ -506,7 +593,34 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
 
-                    BrowserStatusBarScrim()
+                    AnimatedVisibility(
+                        visible = snifferVisible,
+                        enter = fadeIn() + slideInVertically { it },
+                        exit = fadeOut() + slideOutVertically { it },
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    ) {
+                        BrowserDownloadSnifferButton(
+                            dismissMode = snifferDismissMode,
+                            onClick = {
+                                if (snifferDismissMode) {
+                                    dismissedSnifferKey = snifferKey
+                                    snifferDismissMode = false
+                                } else {
+                                    launchVideoDownloadSheet(snifferUrl)
+                                }
+                            },
+                            onLongClick = { snifferDismissMode = !snifferDismissMode },
+                            modifier = Modifier.padding(
+                                end = 16.dp,
+                                bottom = (if (!useSideNavigation && state.toolbarVisible) 76.dp else 16.dp) +
+                                    if (snackbarHostState.currentSnackbarData != null) SNACKBAR_CLEARANCE else 0.dp,
+                            ),
+                        )
+                    }
+
+                    if (state.toolbarVisible) {
+                        BrowserStatusBarScrim()
+                    }
 
                     imageDialogDataUrl?.let { dataUrl ->
                         Base64ImageDialog(
@@ -550,6 +664,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Composable
+    private fun BoxScope.BrowserLoadErrorOverlay(
+        onRetry: () -> Unit,
+        onBackToHome: () -> Unit,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = stringResource(R.string.page_load_error_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.page_load_error_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(onClick = onRetry) {
+                    Text(text = stringResource(R.string.retry))
+                }
+                TextButton(onClick = onBackToHome) {
+                    Text(text = stringResource(R.string.page_load_error_home))
+                }
+            }
+        }
+    }
+
+    @Composable
     private fun BoxScope.BrowserStatusBarScrim() {
         Spacer(
             modifier = Modifier
@@ -568,7 +721,10 @@ class MainActivity : AppCompatActivity() {
 
         when (val s = state) {
             SplashUiState.Loading -> LoadingScreen()
-            SplashUiState.NoInternet -> NoInternetScreen(onRetry = splashViewModel::onRetryClicked)
+            SplashUiState.NoInternet -> NoInternetScreen(
+                onRetry = splashViewModel::onRetryClicked,
+                onProceedAnyway = splashViewModel::onProceedAnywayClicked,
+            )
             SplashUiState.Onboarding -> OnboardingScreen(
                 onFinish = splashViewModel::onOnboardingFinished,
                 vm = onboardingViewModel,
@@ -611,10 +767,20 @@ class MainActivity : AppCompatActivity() {
         val currentOnRefreshComplete by rememberUpdatedState(onRefreshComplete)
         val currentOnDownloadStarted by rememberUpdatedState(onDownloadStarted)
 
+        // Pull-to-refresh bridge: mutable gesture state + latest callbacks in
+        // one remembered holder that survives recomposition. The touch
+        // listener is installed once in the factory and reads this holder, so
+        // recomposition never resets an in-progress gesture.
+        val pullBridge = remember { PullToRefreshTouchBridge() }
+
         AndroidView(
             factory = { ctx ->
                 webView?.let { existingWebView ->
                     (existingWebView.parent as? ViewGroup)?.removeView(existingWebView)
+                    // A new composition entry owns a new bridge holder; attach
+                    // the retained WebView's listener to it (installed once,
+                    // never mid-gesture).
+                    existingWebView.installPullToRefreshTouchBridge(pullBridge)
                     return@AndroidView existingWebView
                 }
 
@@ -628,11 +794,7 @@ class MainActivity : AppCompatActivity() {
                     // ── WebView configuration ─────────────────────────
                     WebViewConfigurator.configure(this)
 
-                    installPullToRefreshTouchBridge(
-                        isRefreshing = { currentIsRefreshing },
-                        onPullDistanceChange = { currentOnPullDistanceChange(it) },
-                        onPullRefresh = { currentOnPullRefresh() },
-                    )
+                    installPullToRefreshTouchBridge(pullBridge)
 
                     // ── Long-press → Compose context menu via state ──
                     setOnLongClickListener {
@@ -668,7 +830,7 @@ class MainActivity : AppCompatActivity() {
                         pageStartedCallback = { _, url -> updateLastKnownUrl(url) },
                         pageFinishedCallback = { _, url -> updateLastKnownUrl(url) },
                         urlUpdatedCallback = ::updateLastKnownUrl,
-                        mainFrameLoadErrorCallback = { hasMainFrameLoadError = it },
+                        onPageLoadErrorEvent = { browserViewModel.onPageLoadError() },
                     )
 
                     // ── WebChromeClient ───────────────────────────────
@@ -681,36 +843,68 @@ class MainActivity : AppCompatActivity() {
                         onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
                         onFullscreenExit = { browserViewModel.onFullscreenExit() },
                         onProgressComplete = { currentOnRefreshComplete() },
+                        fileChooserLauncher = ::launchFileChooser,
                     )
                     webChromeClient = chromeClient
 
                     // ── Initial load / state restore ──────────────────
-                    // Locale changes recreate the Activity. Restoring the
-                    // full WebView state after that can leave a black renderer
-                    // surface, so persist the URL explicitly and reload it.
-                    val initialUrl = lastKnownUrl ?: HOME_URL
-                    if (URLUtil.isValidUrl(initialUrl)) {
-                        updateLastKnownUrl(initialUrl)
-                        loadUrl(initialUrl)
+                    // Process death: restore the full history stack. Plain
+                    // recreation (e.g. locale change): reload the URL, since
+                    // restoring the full WebView state after that can leave a
+                    // black renderer surface.
+                    val webViewState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
+                    val restoredHistory = if (restoredFromProcessDeath && webViewState != null) {
+                        try {
+                            restoreState(webViewState)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "WebView state restore failed: ${e.message}", e)
+                            null
+                        }
+                    } else {
+                        null
+                    }
+                    if (restoredHistory != null) {
+                        // The restored entry must pass the same safe-URL check.
+                        if (isSafeLoadableUrl(url)) {
+                            updateLastKnownUrl(url)
+                        } else {
+                            clearHistory()
+                            updateLastKnownUrl(HOME_URL)
+                            loadUrl(HOME_URL)
+                        }
+                    } else {
+                        val initialUrl = lastKnownUrl ?: HOME_URL
+                        if (isSafeLoadableUrl(initialUrl)) {
+                            updateLastKnownUrl(initialUrl)
+                            loadUrl(initialUrl)
+                        } else {
+                            // Never start blank: fall back to home.
+                            updateLastKnownUrl(HOME_URL)
+                            loadUrl(HOME_URL)
+                        }
                     }
                 }
             },
             modifier = Modifier.fillMaxSize(),
             update = { view ->
-                view.installPullToRefreshTouchBridge(
-                    isRefreshing = { currentIsRefreshing },
-                    onPullDistanceChange = { currentOnPullDistanceChange(it) },
-                    onPullRefresh = { currentOnPullRefresh() },
-                )
+                // Only refresh callbacks here: the touch listener stays
+                // installed once, so an in-progress pull gesture is never
+                // reset by recomposition.
+                pullBridge.isRefreshing = { currentIsRefreshing }
+                pullBridge.onPullDistanceChange = { currentOnPullDistanceChange(it) }
+                pullBridge.onPullRefresh = { currentOnPullRefresh() }
                 view.bindDownloadListener(
                     onDownloadStarted = { currentOnDownloadStarted() },
                 )
-                (view.webChromeClient as? NexaWebChromeClient)?.updateCallbacks(
-                    onProgressChangedEvent = { browserViewModel.onProgressChanged(it) },
-                    onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
-                    onFullscreenExit = { browserViewModel.onFullscreenExit() },
-                    onProgressComplete = { currentOnRefreshComplete() },
-                )
+                (view.webChromeClient as? NexaWebChromeClient)?.let { client ->
+                    client.updateCallbacks(
+                        onProgressChangedEvent = { browserViewModel.onProgressChanged(it) },
+                        onFullscreenEnter = { browserViewModel.onFullscreenEnter() },
+                        onFullscreenExit = { browserViewModel.onFullscreenExit() },
+                        onProgressComplete = { currentOnRefreshComplete() },
+                    )
+                    client.updateFileChooserLauncher(::launchFileChooser)
+                }
             },
         )
 
@@ -740,12 +934,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ── WebView pause/resume tied to lifecycle ────────────────
+        // Note: pauseTimers()/resumeTimers() are intentionally NOT used —
+        // they are process-global and would freeze every WebView in the
+        // process, not just this one.
         LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
             webView?.onResume()
-            webView?.resumeTimers()
         }
         LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
-            webView?.pauseTimers()
             webView?.onPause()
         }
     }
@@ -764,44 +959,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun WebView.installPullToRefreshTouchBridge(
-        isRefreshing: () -> Boolean,
-        onPullDistanceChange: (Float) -> Unit,
-        onPullRefresh: () -> Unit,
-    ) {
-        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-        val density = resources.displayMetrics.density
-        val triggerDistance = BROWSER_REFRESH_TRIGGER_DP * density
+    /**
+     * Holder for the pull-to-refresh gesture: the mutable mid-gesture state
+     * plus the latest callbacks. Lives in a `remember { }` outside the
+     * AndroidView update lambda, so reinstalling/recomposing never resets a
+     * gesture in progress and callbacks always point at the current
+     * composition.
+     */
+    private class PullToRefreshTouchBridge {
+        var isRefreshing: () -> Boolean = { false }
+        var onPullDistanceChange: (Float) -> Unit = {}
+        var onPullRefresh: () -> Unit = {}
+
         var downY = 0f
         var adjustedPullDistance = 0f
         var isPulling = false
         var webViewGestureCancelled = false
+    }
+
+    private fun WebView.installPullToRefreshTouchBridge(bridge: PullToRefreshTouchBridge) {
+        val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        val density = resources.displayMetrics.density
+        val triggerDistance = BROWSER_REFRESH_TRIGGER_DP * density
 
         setOnTouchListener { _, event ->
-            if (isRefreshing()) return@setOnTouchListener false
+            if (bridge.isRefreshing()) return@setOnTouchListener false
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downY = event.rawY
-                    adjustedPullDistance = 0f
-                    isPulling = false
-                    webViewGestureCancelled = false
+                    bridge.downY = event.rawY
+                    bridge.adjustedPullDistance = 0f
+                    bridge.isPulling = false
+                    bridge.webViewGestureCancelled = false
                     false
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val dragDistance = event.rawY - downY
+                    val dragDistance = event.rawY - bridge.downY
                     val canPull = !canScrollVertically(-1) && dragDistance > touchSlop
-                    if (isPulling || canPull) {
-                        if (!webViewGestureCancelled) {
+                    if (bridge.isPulling || canPull) {
+                        if (!bridge.webViewGestureCancelled) {
                             cancelActiveWebViewGesture(event)
-                            webViewGestureCancelled = true
+                            bridge.webViewGestureCancelled = true
                         }
-                        isPulling = true
-                        adjustedPullDistance = (dragDistance - touchSlop).coerceAtLeast(0f) * 0.5f
-                        onPullDistanceChange(
+                        bridge.isPulling = true
+                        bridge.adjustedPullDistance =
+                            (dragDistance - touchSlop).coerceAtLeast(0f) * 0.5f
+                        bridge.onPullDistanceChange(
                             calculatePullToRefreshOffset(
-                                adjustedDistancePulled = adjustedPullDistance,
+                                adjustedDistancePulled = bridge.adjustedPullDistance,
                                 thresholdPx = triggerDistance,
                             )
                         )
@@ -813,12 +1019,12 @@ class MainActivity : AppCompatActivity() {
 
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
-                    if (isPulling) {
-                        val shouldRefresh = adjustedPullDistance > triggerDistance
-                        isPulling = false
-                        adjustedPullDistance = 0f
-                        onPullDistanceChange(0f)
-                        if (shouldRefresh) onPullRefresh()
+                    if (bridge.isPulling) {
+                        val shouldRefresh = bridge.adjustedPullDistance > triggerDistance
+                        bridge.isPulling = false
+                        bridge.adjustedPullDistance = 0f
+                        bridge.onPullDistanceChange(0f)
+                        if (shouldRefresh) bridge.onPullRefresh()
                         true
                     } else {
                         false
@@ -854,6 +1060,17 @@ class MainActivity : AppCompatActivity() {
         val currentUrl = webView?.url
         updateLastKnownUrl(currentUrl)
         lastKnownUrl?.let { outState.putString(STATE_LAST_KNOWN_URL, it) }
+        // Full history stack for process-death restoration. Nested bundle so
+        // WebView's own keys can't collide with Compose/NavHost state.
+        webView?.let { wv ->
+            try {
+                val webViewState = Bundle()
+                wv.saveState(webViewState)
+                outState.putBundle(STATE_WEB_VIEW, webViewState)
+            } catch (e: Exception) {
+                Log.w(TAG, "WebView saveState failed: ${e.message}", e)
+            }
+        }
     }
 
     // ========== WebView helpers ==========
@@ -864,6 +1081,42 @@ class MainActivity : AppCompatActivity() {
             ?.takeUnless { it.isBlank() || it.equals("about:blank", ignoreCase = true) }
             ?: return
         lastKnownUrl = normalizedUrl
+    }
+
+    /**
+     * Safe-URL check for startup/restore loads. Only plain http(s) pages are
+     * allowed — same policy as the URL bar — so a persisted javascript:,
+     * data: or file: URL is never loaded automatically.
+     */
+    private fun isSafeLoadableUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        if (!URLUtil.isValidUrl(url)) return false
+        val scheme = Uri.parse(url).scheme?.lowercase() ?: return false
+        return scheme == "http" || scheme == "https"
+    }
+
+    /** Launches the system picker for `<input type=file>` uploads. */
+    private fun launchFileChooser(chooserIntent: Intent): Boolean {
+        return try {
+            fileChooserLauncher.launch(chooserIntent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "No app available to pick files", e)
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch file chooser: ${e.message}", e)
+            false
+        }
+    }
+
+    /** Opens the normal download sheet for [url] via the share flow. */
+    private fun launchVideoDownloadSheet(url: String) {
+        startActivity(
+            Intent(this, ShareActivity::class.java)
+                .setAction(Intent.ACTION_SEND)
+                .setTypeAndNormalize("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, url)
+        )
     }
 
     private fun cleanUpWebView() {
@@ -936,22 +1189,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshCurrentPage() {
         safeWebViewOperation { wv ->
-            val targetUrl = wv.url
-                ?.takeUnless { it.isBlank() || it.equals("about:blank", ignoreCase = true) }
-                ?: lastKnownUrl
-                ?: HOME_URL
-            if (URLUtil.isValidUrl(targetUrl)) {
-                updateLastKnownUrl(targetUrl)
-                wv.post { wv.loadUrl(targetUrl) }
-            }
-            hasMainFrameLoadError = false
-        }
-    }
-
-    private fun navigateBack() {
-        safeWebViewOperation { wv ->
-            if (wv.canGoBack()) {
-                wv.goBack()
+            val currentUrl = wv.url
+            val hasLoadedPage = !currentUrl.isNullOrBlank() &&
+                !currentUrl.equals("about:blank", ignoreCase = true)
+            if (hasLoadedPage) {
+                // A page is already loaded: reload() preserves proper reload
+                // semantics (cache validation, POST handling).
+                wv.reload()
+            } else {
+                // Initial/about:blank state: fall back to an explicit load.
+                val targetUrl = lastKnownUrl ?: HOME_URL
+                if (URLUtil.isValidUrl(targetUrl)) {
+                    updateLastKnownUrl(targetUrl)
+                    wv.post { wv.loadUrl(targetUrl) }
+                }
             }
         }
     }
@@ -1002,9 +1253,18 @@ class MainActivity : AppCompatActivity() {
     private fun observeAppLanguage() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Single locale observer for this activity. AppCompatDelegate
+                // auto-restores stored locales (autoStoreLocales), so only
+                // apply a tag that genuinely differs from the one already
+                // applied — avoids a redundant setApplicationLocales and the
+                // duplicate activity recreation it triggers.
                 appPreferences.languageTag
                     .distinctUntilChanged()
-                    .collect(AppLanguageManager::setLanguageTag)
+                    .collect { tag ->
+                        if (AppLanguageManager.currentLanguage() != AppLanguageManager.fromTag(tag)) {
+                            AppLanguageManager.setLanguageTag(tag)
+                        }
+                    }
             }
         }
     }
@@ -1030,17 +1290,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        when {
-            isDownloadIntent(intent) -> launchDownloadsPage()
-            hasNotificationAction(intent) -> handleNotificationAction(intent)
-        }
+        if (isDownloadIntent(intent)) launchDownloadsPage()
     }
 
     private fun isDownloadIntent(intent: Intent): Boolean =
         intent.action == DownloadService.ACTION_OPEN_DOWNLOADS
-
-    private fun hasNotificationAction(intent: Intent): Boolean =
-        intent.hasExtra("action")
 
     private fun launchDownloadsPage() {
         requestedRoute = ROUTE_DOWNLOADS
@@ -1048,11 +1302,5 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchSettingsPage() {
         requestedRoute = ROUTE_SETTINGS
-    }
-
-    private fun handleNotificationAction(intent: Intent) {
-        val action = intent.getStringExtra("action")
-        Log.d(TAG, "Notification action received: $action")
-        navigateToHome()
     }
 }

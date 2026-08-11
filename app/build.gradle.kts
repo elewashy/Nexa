@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.aboutlibraries)
+    alias(libs.plugins.aboutlibraries.android)
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -42,8 +44,8 @@ android {
         applicationId = "com.elewashy.nexa"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.1.0"
+        versionCode = 6
+        versionName = "1.2.0"
         
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -91,6 +93,13 @@ android {
         checkReleaseBuilds = true
         abortOnError = true
         warningsAsErrors = false
+    }
+
+    testOptions {
+        // JVM unit tests exercise production classes that touch framework
+        // stubs (android.util.Log, MimeTypeMap, …). Return default values
+        // instead of throwing "not mocked". Test-only; no production effect.
+        unitTests.isReturnDefaultValues = true
     }
 
     androidResources {
@@ -200,5 +209,25 @@ dependencies {
     // Loading placeholders
     implementation(libs.compose.shimmer)
 
+    // Open source licenses
+    implementation(libs.aboutlibraries.compose.core)
+    implementation(libs.aboutlibraries.compose.m3)
+
+    // Image loading (contributor avatars)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp.android)
+
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
+    // android.jar does not provide org.json on the JVM unit test classpath
+    // (needed by VideoVersionParser tests).
+    testImplementation(libs.org.json)
+}
+
+aboutLibraries {
+    library {
+        duplicationMode = com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
+        duplicationRule = com.mikepenz.aboutlibraries.plugin.DuplicateRule.EXACT
+    }
 }

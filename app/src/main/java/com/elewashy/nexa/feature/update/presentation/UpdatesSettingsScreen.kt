@@ -138,6 +138,9 @@ fun UpdatesSettingsScreen(
                                 val filtersResult = viewModel.updateAllFilters()
                                 when (appUpdateResult) {
                                     UpdatesSettingsViewModel.CheckUpdateResult.UpdateAvailable -> onUpdateClick()
+                                    is UpdatesSettingsViewModel.CheckUpdateResult.RateLimited -> {
+                                        snackbarHostState.showSnackbar(appUpdateResult.message)
+                                    }
                                     UpdatesSettingsViewModel.CheckUpdateResult.Failed -> {
                                         snackbarHostState.showSnackbar(
                                             if (filtersResult.success) filtersUpdatedSuccessfully else filtersUpdateFailed

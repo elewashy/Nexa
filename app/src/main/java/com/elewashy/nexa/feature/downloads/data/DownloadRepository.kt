@@ -24,6 +24,31 @@ interface DownloadRepository {
     val downloads: StateFlow<List<DownloadItem>>
 
     /**
+     * One-time user-visible warning, non-null while a download was started
+     * with notifications disabled (the user would otherwise get no feedback).
+     */
+    val notificationsWarning: StateFlow<String?>
+
+    /** Dismisses [notificationsWarning]; it will not reappear for this process. */
+    fun dismissNotificationsWarning()
+
+    /**
+     * Called by the foreground service from `Service.onTimeout` when the system
+     * exhausts the dataSync foreground-service quota. Active downloads are
+     * paused, the user is notified, and the service leaves the foreground.
+     */
+    fun handleForegroundTimeout()
+
+    /**
+     * Stops the service host when there is no genuinely ACTIVE work
+     * (DOWNLOADING/PENDING) and no start in flight. Paused work does NOT keep
+     * the service running — it must not hold a dataSync FGS (6h quota), and a
+     * resume action restarts the service on demand. Used after terminal status
+     * changes and sticky restarts so the service doesn't linger.
+     */
+    fun stopServiceIfIdle()
+
+    /**
      * Signals the repository that the foreground service has started and is
      * ready to receive `startForeground` calls. Called once from
      * `DownloadService.onCreate`. Idempotent.

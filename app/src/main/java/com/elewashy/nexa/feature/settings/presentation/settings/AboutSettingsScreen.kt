@@ -40,14 +40,20 @@ import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SettingsListItem
 import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
+import compose.icons.fontawesomeicons.brands.Github
 import compose.icons.fontawesomeicons.brands.Telegram
 
 private const val TELEGRAM_URL = "https://t.me/NexaaApp"
+private const val GITHUB_REPO_URL = "https://github.com/elewashy/Nexa"
+private const val GITHUB_ISSUES_URL = "https://github.com/elewashy/Nexa/issues/new/choose"
+private const val DEVELOPER_PROFILE_URL = "https://github.com/elewashy"
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AboutSettingsScreen(
     onBackClick: () -> Unit,
+    onContributorsClick: () -> Unit,
+    onLicensesClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
@@ -112,6 +118,18 @@ fun AboutSettingsScreen(
                         tint = MaterialTheme.colorScheme.secondary,
                     )
                 }
+                IconButton(
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, GITHUB_REPO_URL.toUri()))
+                    },
+                ) {
+                    Icon(
+                        imageVector = FontAwesomeIcons.Brands.Github,
+                        contentDescription = stringResource(R.string.github),
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
             }
 
             OutlinedCard(
@@ -143,7 +161,27 @@ fun AboutSettingsScreen(
                     headlineContent = stringResource(R.string.report_issue),
                     supportingContent = stringResource(R.string.report_issue_description),
                     onClick = {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, TELEGRAM_URL.toUri()))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, GITHUB_ISSUES_URL.toUri()))
+                    },
+                )
+                SettingsListItem(
+                    modifier = Modifier.fillMaxWidth(),
+                    headlineContent = stringResource(R.string.contributors),
+                    supportingContent = stringResource(R.string.contributors_description),
+                    onClick = onContributorsClick,
+                )
+                SettingsListItem(
+                    modifier = Modifier.fillMaxWidth(),
+                    headlineContent = stringResource(R.string.opensource_licenses),
+                    supportingContent = stringResource(R.string.opensource_licenses_description),
+                    onClick = onLicensesClick,
+                )
+                SettingsListItem(
+                    modifier = Modifier.fillMaxWidth(),
+                    headlineContent = stringResource(R.string.developer),
+                    supportingContent = stringResource(R.string.developer_description),
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, DEVELOPER_PROFILE_URL.toUri()))
                     },
                 )
             }

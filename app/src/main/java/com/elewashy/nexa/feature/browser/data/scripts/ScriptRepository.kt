@@ -61,14 +61,22 @@ class ScriptRepository @Inject constructor(
     fun inject(webView: WebView?, type: ScriptType) {
         webView ?: return
 
+        // Captured on the calling (UI) thread; the async path below must not
+        // inject into a page that navigated away while the fetch was running.
+        val targetUrl = webView.url
+
         val now = System.currentTimeMillis()
         val currentBase64 = cachedBase64Map[type]
         val lastAttemptTime = lastAttemptTimeMap[type] ?: 0L
         
         if (currentBase64 != null) {
-            evaluateInWebView(webView, currentBase64, type.jsMarker)
+            evaluateInWebView(webView, currentBase64, type.jsMarker, targetUrl)
 
-            if (sessionRefreshed.putIfAbsent(type, true) == null &&
+            // sessionRefreshed is only set after a successful fetch (see
+            // cacheScriptFromDisk); reading it here means a fetch skipped
+            // by cooldown or lost to a transient failure still retries
+            // later in this session.
+            if (sessionRefreshed[type] != true &&
                 now - lastAttemptTime > RETRY_COOLDOWN_MS
             ) {
                 scope.launch(ioDispatcher) { fetchAndCacheScriptBackground(type) }
@@ -76,12 +84,16 @@ class ScriptRepository @Inject constructor(
             return
         }
 
-        // Suspend and await cache validation or network fetch
-        scope.launch {
+        // Suspend and await cache validation or network fetch. Runs on IO —
+        // this path touches disk and network, not CPU.
+        scope.launch(ioDispatcher) {
             val base64 = getOrFetchScript(type)
-            if (base64 != null) {
-                evaluateInWebView(webView, base64, type.jsMarker)
+            if (base64 == null) {
+                // Fetch failed: leave sessionRefreshed/markers unset so the
+                // next inject retries instead of assuming this session is done.
+                return@launch
             }
+            evaluateInWebView(webView, base64, type.jsMarker, targetUrl)
         }
     }
 
@@ -115,7 +127,7 @@ class ScriptRepository @Inject constructor(
                     val base64 = Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
                     cachedBase64Map[type] = base64
                     lastFetchTimeMap[type] = System.currentTimeMillis()
-                    if (sessionRefreshed.putIfAbsent(type, true) == null &&
+                    if (sessionRefreshed[type] != true &&
                         now - lastAttempt > RETRY_COOLDOWN_MS
                     ) {
                         scope.launch(ioDispatcher) { fetchAndCacheScriptBackground(type) }
@@ -175,9 +187,14 @@ class ScriptRepository @Inject constructor(
         return base64
     }
 
-    private fun evaluateInWebView(webView: WebView, base64Script: String, jsMarker: String) {
+    private fun evaluateInWebView(webView: WebView, base64Script: String, jsMarker: String, forUrl: String?) {
         webView.post {
             try {
+                // The fetch is async; if the WebView navigated between the
+                // fetch and this evaluation, the script belongs to a stale
+                // page — skip it and let the next page load re-inject.
+                if (webView.url != forUrl) return@post
+
                 val executionCode = """
                     (function() {
                         if (window.$jsMarker) return;

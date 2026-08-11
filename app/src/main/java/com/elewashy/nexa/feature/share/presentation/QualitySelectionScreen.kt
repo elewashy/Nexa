@@ -71,10 +71,10 @@ fun QualitySelectionScreen(
     audioQualities: List<VideoQuality>,
     videoQualities: List<VideoQuality>,
     isLoading: Boolean,
+    modifier: Modifier = Modifier,
     sizeLoading: Boolean = false,
     onDownload: (VideoQuality) -> Unit,
     onCancel: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val allQualities = remember(videoQualities, audioQualities) { videoQualities + audioQualities }

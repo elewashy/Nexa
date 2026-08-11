@@ -6,9 +6,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.compose.ui.graphics.toArgb
+import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.ui.theme.AppThemeMode
-import com.elewashy.nexa.ui.theme.DefaultThemeColor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -30,6 +29,10 @@ class DataStoreAppPreferences @Inject constructor(
         prefs[KEY_THEME_MODE] ?: AppThemeMode.SYSTEM
     }
 
+    override val hasStoredThemeMode: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs.contains(KEY_THEME_MODE)
+    }
+
     override val dynamicColor: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_DYNAMIC_COLOR] ?: true
     }
@@ -43,7 +46,7 @@ class DataStoreAppPreferences @Inject constructor(
     }
 
     override val selectedThemeColor: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_SELECTED_THEME_COLOR] ?: DefaultThemeColor.toArgb()
+        prefs[KEY_SELECTED_THEME_COLOR] ?: DEFAULT_THEME_COLOR_ARGB
     }
 
     override val onboardingCompleted: Flow<Boolean> = dataStore.data.map { prefs ->
@@ -60,6 +63,10 @@ class DataStoreAppPreferences @Inject constructor(
 
     override val showUpdateDialogOnLaunch: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH] ?: true
+    }
+
+    override val videoDownloadButton: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_VIDEO_DOWNLOAD_BUTTON] ?: true
     }
 
     override suspend fun setThemeMode(mode: Int) {
@@ -100,6 +107,10 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { it[KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH] = enabled }
     }
 
+    override suspend fun setVideoDownloadButton(enabled: Boolean) {
+        dataStore.edit { it[KEY_VIDEO_DOWNLOAD_BUTTON] = enabled }
+    }
+
     private companion object {
         val KEY_THEME_MODE = intPreferencesKey("theme_mode")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
@@ -110,5 +121,6 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_LANGUAGE_TAG = stringPreferencesKey("language_tag")
         val KEY_AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
         val KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH = booleanPreferencesKey("show_update_dialog_on_launch")
+        val KEY_VIDEO_DOWNLOAD_BUTTON = booleanPreferencesKey("video_download_button")
     }
 }

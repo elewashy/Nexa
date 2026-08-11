@@ -8,6 +8,7 @@ import com.elewashy.nexa.core.network.HttpClientProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.Request
 import java.io.File
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -56,8 +57,8 @@ class BrowserResourceRepository @Inject constructor(
                             BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
                         }
                         HTTP_OK -> {
-                            val body = response.body.string()
-                            if (body.isBlank()) {
+                            val body = response.body.bytes()
+                            if (body.isEmpty()) {
                                 saveCheckedAt(id)
                                 BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
                             } else {
@@ -91,17 +92,18 @@ class BrowserResourceRepository @Inject constructor(
         }
     }
 
-    private fun writeIfChanged(id: BrowserResourceId, text: String): Boolean {
+    private fun writeIfChanged(id: BrowserResourceId, newBytes: ByteArray): Boolean {
         val file = fileFor(id)
-        val current = readCachedText(id)
-        if (current == text) {
+        // Compare streaming SHA-256 digests; loading multi-megabyte filter
+        // lists into strings twice per check wastes memory and GC time.
+        if (file.exists() && sha256(file) == sha256(newBytes)) {
             saveCheckedAt(id)
             return false
         }
 
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(text)
+        tmp.writeBytes(newBytes)
         if (file.exists()) file.delete()
         if (!tmp.renameTo(file)) {
             tmp.copyTo(file, overwrite = true)
@@ -111,10 +113,34 @@ class BrowserResourceRepository @Inject constructor(
         return true
     }
 
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).toHex()
+
+    private fun sha256(file: File): String? = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().toHex()
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to digest ${file.name}; treating as changed", e)
+        null
+    }
+
+    private fun ByteArray.toHex(): String = joinToString(separator = "") { "%02x".format(it) }
+
     private fun isDue(id: BrowserResourceId): Boolean {
-        if (id.owner == BrowserResourceOwner.Nexa) return true
         val lastCheckedAt = prefs.getLong(key(id, KEY_CHECKED_AT), 0L)
-        return System.currentTimeMillis() - lastCheckedAt >= id.updateIntervalMs
+        // Nexa-owned resources declare interval 0 ("every run"); clamp every
+        // resource to at least one hour so conditional checks don't hit the
+        // remote host on each launch.
+        val interval = maxOf(id.updateIntervalMs, MIN_CHECK_INTERVAL_MS)
+        return System.currentTimeMillis() - lastCheckedAt >= interval
     }
 
     private fun saveMetadata(id: BrowserResourceId, etag: String?, lastModified: String?) {
@@ -140,5 +166,6 @@ class BrowserResourceRepository @Inject constructor(
         const val KEY_CHECKED_AT = "checked_at"
         const val HTTP_OK = 200
         const val HTTP_NOT_MODIFIED = 304
+        const val MIN_CHECK_INTERVAL_MS = 60 * 60 * 1000L
     }
 }

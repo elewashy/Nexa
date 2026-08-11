@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
 import android.util.Log
+import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import kotlinx.coroutines.*
@@ -57,9 +58,14 @@ class DownloadEngine(
 
     // ── Shared OkHttp client ────────────────────────────────────────────
     // Optimized for high-throughput parallel downloads:
-    //  - Large connection pool (32 connections) for many concurrent segments
+    //  - Large connection pool (96 connections) for many concurrent segments
     //  - Generous timeouts for large files on unstable networks
     //  - Custom dispatcher with high max-requests to avoid queuing
+    //
+    // Intentionally NOT derived from HttpClientProvider: this client replaces
+    // the dispatcher and connection pool (the exact resources a derived client
+    // would share) and close() shuts them down, which would corrupt a shared
+    // client. A dedicated instance keeps the tuning isolated.
 
     private val httpClient: OkHttpClient by lazy {
         val dispatcher = Dispatcher().apply {
@@ -140,10 +146,12 @@ class DownloadEngine(
      * If the maximum concurrent downloads are already running, this download
      * will wait for a permit from the semaphore before starting.
      *
-     * @param item  The [DownloadItem] describing the file to download.
-     *              This instance is shared — the engine mutates it directly.
+     * @param item         The [DownloadItem] describing the file to download.
+     *                     This instance is shared — the engine mutates it directly.
+     * @param initialProbe Optional probe result already fetched upstream
+     *                     (filename resolution). Reused so the URL is probed once.
      */
-    fun enqueue(item: DownloadItem) {
+    fun enqueue(item: DownloadItem, initialProbe: HttpProber.ProbeResult? = null) {
         if (activeTasks.containsKey(item.id)) {
             Log.w(TAG, "Download ${item.id} already active, ignoring enqueue")
             return
@@ -151,7 +159,7 @@ class DownloadEngine(
 
         Log.d(TAG, "Enqueueing: ${item.fileName} (id=${item.id})")
 
-        val task = createTask(item)
+        val task = createTask(item, initialProbe = initialProbe)
         activeTasks[item.id] = task
 
         val completion = CompletableDeferred<Unit>()
@@ -278,13 +286,32 @@ class DownloadEngine(
     /**
      * Re-creates a task for resuming a download that was restored from persistence
      * (e.g., after service restart). The task won't start until [resume] is called.
+     *
+     * @param restoredSegments Persisted segment state from the previous process,
+     *                         verified on-disk before the task resumes from it.
      */
-    fun restoreTask(item: DownloadItem) {
+    fun restoreTask(item: DownloadItem, restoredSegments: List<PersistedSegment> = emptyList()) {
         if (activeTasks.containsKey(item.id)) return
 
-        val task = createTask(item)
+        val task = createTask(item, restoredSegments = restoredSegments)
         activeTasks[item.id] = task
-        Log.d(TAG, "Restored task: ${item.fileName} (id=${item.id})")
+        Log.d(TAG, "Restored task: ${item.fileName} (id=${item.id}, " +
+                "segments=${restoredSegments.size})")
+    }
+
+    /**
+     * Snapshot of the task's current segment state for persistence.
+     * Empty when the task is unknown or has no bounded segments yet.
+     *
+     * [itemStatus] gates the restored-state fallback inside the task: only
+     * still-resumable items (DOWNLOADING/PAUSED) may fall back to their
+     * persisted segments — a fresh PENDING task has no resume state and must
+     * not resurrect stale segments from an unrelated earlier download.
+     */
+    fun snapshotSegments(downloadId: Long, itemStatus: DownloadStatus): List<PersistedSegment> {
+        val task = activeTasks[downloadId] ?: return emptyList()
+        val resumable = itemStatus == DownloadStatus.DOWNLOADING || itemStatus == DownloadStatus.PAUSED
+        return task.snapshotSegments(allowRestoredFallback = resumable)
     }
 
     /**
@@ -320,7 +347,11 @@ class DownloadEngine(
     /**
      * Creates a [DownloadTask] wired to this engine's callbacks.
      */
-    private fun createTask(item: DownloadItem): DownloadTask {
+    private fun createTask(
+        item: DownloadItem,
+        initialProbe: HttpProber.ProbeResult? = null,
+        restoredSegments: List<PersistedSegment> = emptyList()
+    ): DownloadTask {
         return DownloadTask(
             item = item,
             client = httpClient,
@@ -343,7 +374,9 @@ class DownloadEngine(
                         activeTasks.remove(task.item.id)
                     }
                 }
-            }
+            },
+            initialProbe = initialProbe,
+            restoredSegments = restoredSegments
         )
     }
 

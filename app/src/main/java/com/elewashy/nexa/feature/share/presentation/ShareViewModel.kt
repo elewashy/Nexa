@@ -1,9 +1,12 @@
 package com.elewashy.nexa.feature.share.presentation
 
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.elewashy.nexa.R
@@ -13,9 +16,11 @@ import com.elewashy.nexa.core.notifications.NotificationChannels
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.share.data.SharePlatformDetector
 import com.elewashy.nexa.feature.share.data.VideoExtractorRepository
+import com.elewashy.nexa.feature.share.domain.model.MediaLabel
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,6 +92,8 @@ class ShareViewModel @Inject constructor(
                 }
 
                 fetchFileSizesAsync(qualities, referer = url)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error extracting shared video", e)
                 closeWithMessage(appContext.getString(R.string.share_error, e.message ?: appContext.getString(R.string.unknown_error)))
@@ -98,7 +105,7 @@ class ShareViewModel @Inject constructor(
         val urlsToFetch = qualities
             .filter {
                 it.size == null
-                        && !it.url.startsWith(PREFIX_CONVERT)
+                        && !it.url.startsWith(MediaLabel.CONVERT_PREFIX)
                         && it.getDisplayLabels().metadata == null
             }
             .map { it.url }
@@ -131,11 +138,18 @@ class ShareViewModel @Inject constructor(
     }
 
     fun onQualitySelected(quality: VideoQuality) {
-        if (quality.url.startsWith(PREFIX_CONVERT)) {
+        if (quality.url.startsWith(MediaLabel.CONVERT_PREFIX)) {
             startConversion(quality)
         } else {
-            startDownload(quality)
-            closeWithMessage(appContext.getString(R.string.download_started))
+            // Only claim "Download started" when the service really started —
+            // otherwise the tap-to-download fallback notification is the signal.
+            if (startDownload(quality)) {
+                closeWithMessage(appContext.getString(R.string.download_started))
+            } else {
+                // Fallback notification posted — tell the user the download is
+                // queued and how to start it.
+                closeWithMessage(appContext.getString(R.string.download_queued_tap_to_start))
+            }
         }
     }
 
@@ -144,29 +158,33 @@ class ShareViewModel @Inject constructor(
         emitClose()
     }
 
-    private fun parseVideoQuality(quality: String, videoUrl: String): VideoQuality = when {
-        quality.startsWith(PREFIX_AUDIO) -> VideoQuality(
-            quality = quality.removePrefix(PREFIX_AUDIO),
-            url = videoUrl,
-            type = VideoQuality.MediaType.AUDIO,
-            hasWatermark = false,
-        )
-        quality.startsWith(PREFIX_WATERMARK) -> VideoQuality(
-            quality = quality.removePrefix(PREFIX_WATERMARK),
-            url = videoUrl,
-            type = VideoQuality.MediaType.VIDEO,
-            hasWatermark = true,
-        )
-        else -> VideoQuality(
-            quality = quality,
-            url = videoUrl,
-            type = VideoQuality.MediaType.VIDEO,
-            hasWatermark = false,
-        )
+    private fun parseVideoQuality(rawLabel: String, videoUrl: String): VideoQuality {
+        val (kind, label) = MediaLabel.parse(rawLabel)
+        return when (kind) {
+            MediaLabel.Kind.AUDIO -> VideoQuality(
+                quality = label,
+                url = videoUrl,
+                type = VideoQuality.MediaType.AUDIO,
+                hasWatermark = false,
+            )
+            MediaLabel.Kind.WATERMARKED_VIDEO -> VideoQuality(
+                quality = label,
+                url = videoUrl,
+                type = VideoQuality.MediaType.VIDEO,
+                hasWatermark = true,
+            )
+            MediaLabel.Kind.CONVERSION,
+            MediaLabel.Kind.VIDEO -> VideoQuality(
+                quality = label,
+                url = videoUrl,
+                type = VideoQuality.MediaType.VIDEO,
+                hasWatermark = false,
+            )
+        }
     }
 
     private fun startConversion(quality: VideoQuality) {
-        val resourceContent = quality.url.removePrefix(PREFIX_CONVERT)
+        val resourceContent = quality.url.removePrefix(MediaLabel.CONVERT_PREFIX)
         val referer = uiState.value.sharedUrl
         val feedbackMessage = appContext.getString(R.string.converting_quality_message, quality.quality)
 
@@ -193,7 +211,12 @@ class ShareViewModel @Inject constructor(
         closeWithMessage(feedbackMessage)
     }
 
-    private fun startDownload(quality: VideoQuality, referer: String? = uiState.value.sharedUrl) {
+    /**
+     * Returns `true` when the download service actually started. `false` means
+     * the start was refused and the tap-to-download fallback notification was
+     * posted instead — callers must not claim the download is running.
+     */
+    private fun startDownload(quality: VideoQuality, referer: String? = uiState.value.sharedUrl): Boolean {
         val fileName = generateFileName(quality, referer)
         val (mimeType, forceExtension) = getFileProperties(quality)
         val intent = DownloadService.createStartIntent(
@@ -208,11 +231,70 @@ class ShareViewModel @Inject constructor(
             source = DOWNLOAD_SOURCE,
             forceExtension = forceExtension,
         )
-        appContext.startForegroundService(intent)
+        return try {
+            appContext.startForegroundService(intent)
+            true
+        } catch (e: Exception) {
+            // ANY failure to start the service (most commonly Android 12+
+            // refusing startForegroundService from the background) must not
+            // drop the URL — offer it as a tap-to-download notification instead.
+            Log.e(TAG, "startForegroundService failed", e)
+            postTapToDownloadNotification(intent, fileName)
+            false
+        }
+    }
+
+    /**
+     * Fallback when the foreground download service cannot be started from the
+     * background: leave the URL as a notification the user can tap to start the
+     * download — a notification tap is an FGS-start exemption. Reuses the
+     * downloads notification channel.
+     */
+    private fun postTapToDownloadNotification(startIntent: Intent, fileName: String) {
+        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (!NotificationManagerCompat.from(appContext).areNotificationsEnabled()) {
+            Log.w(TAG, "Cannot offer tap-to-download fallback — notifications are disabled")
+            return
+        }
+        try {
+            NotificationChannels.ensure(
+                notificationManager = manager,
+                id = NotificationChannels.DOWNLOADS,
+                name = appContext.getString(R.string.download_notification_channel_name),
+                importance = NotificationChannels.IMPORTANCE_LOW,
+                description = appContext.getString(R.string.download_notification_channel_description),
+                showBadge = false,
+            )
+            // Stable bounded code (no timestamp seeding — see downloads notification
+            // codes). Offset past CONVERSION_NOTIFICATION_ID AND above
+            // DownloadNotificationManager's item-code range (0..899_999) so the
+            // fallback notifications can never collide with per-item codes.
+            val requestCode =
+                ((fileName.hashCode() and 0x7FFFFFFF) % FALLBACK_NOTIFICATION_ID_RANGE) +
+                    FALLBACK_NOTIFICATION_ID_BASE
+            val notification = NotificationCompat.Builder(appContext, NotificationChannels.DOWNLOADS)
+                .setSmallIcon(R.drawable.ic_stat_download)
+                .setContentTitle(fileName)
+                .setContentText(appContext.getString(R.string.tap_to_start_download))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(
+                    PendingIntent.getService(
+                        appContext,
+                        requestCode,
+                        startIntent,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    )
+                )
+                .build()
+            manager.notify(requestCode, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to post tap-to-download notification", e)
+        }
     }
 
     private fun generateFileName(quality: VideoQuality, referer: String?): String {
-        val platform = SharePlatformDetector.detect(referer).id
+        val platform = uiState.value.platform.ifBlank { PLATFORM_DEFAULT }
         val cleanQuality = quality.quality.replace(" ", "_")
         val extension = if (quality.type == VideoQuality.MediaType.AUDIO) EXTENSION_MP3 else EXTENSION_MP4
         return "${platform}_${cleanQuality}_${System.currentTimeMillis()}$extension"
@@ -275,9 +357,6 @@ class ShareViewModel @Inject constructor(
     private companion object {
         const val TAG = "ShareViewModel"
         const val PLATFORM_DEFAULT = "video"
-        const val PREFIX_CONVERT = "CONVERT:"
-        const val PREFIX_AUDIO = "AUDIO:"
-        const val PREFIX_WATERMARK = "WATERMARK:"
         const val EXTENSION_MP4 = ".mp4"
         const val EXTENSION_MP3 = ".mp3"
         const val MIME_VIDEO_MP4 = "video/mp4"
@@ -286,5 +365,13 @@ class ShareViewModel @Inject constructor(
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         const val CONVERSION_NOTIFICATION_ID = 9999
         const val NOTIFICATION_CHANNEL_ID = NotificationChannels.YOUTUBE_CONVERSION
+
+        /**
+         * Tap-to-download fallback notification IDs: above the download
+         * notification manager's item-code range (0..899_999) and below its
+         * group summary ID (999_999) so they can collide with neither.
+         */
+        const val FALLBACK_NOTIFICATION_ID_BASE = 910_000
+        const val FALLBACK_NOTIFICATION_ID_RANGE = 90_000
     }
 }

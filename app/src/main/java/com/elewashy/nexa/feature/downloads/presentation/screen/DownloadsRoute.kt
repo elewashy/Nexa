@@ -56,6 +56,14 @@ fun DownloadsRoute(
         )
     }
 
+    // One-time warning when a download started while notifications are disabled.
+    // showSnackbar suspends behind any delete-undo snackbar, so they queue cleanly.
+    LaunchedEffect(state.notificationsWarning) {
+        val warning = state.notificationsWarning ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message = warning, duration = SnackbarDuration.Long)
+        viewModel.dismissNotificationsWarning()
+    }
+
     DownloadsScreen(
         downloads = state.downloads,
         snackbarHostState = snackbarHostState,

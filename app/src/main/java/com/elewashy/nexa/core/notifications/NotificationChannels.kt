@@ -2,7 +2,6 @@ package com.elewashy.nexa.core.notifications
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Context
 
 object NotificationChannels {
     const val IMPORTANCE_LOW = 2
@@ -12,34 +11,12 @@ object NotificationChannels {
     const val ADBLOCK = "adblock_channel"
     const val YOUTUBE_CONVERSION = "youtube_conversion"
 
-    fun ensureCoreChannels(context: Context) {
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensure(
-            notificationManager = notificationManager,
-            id = DOWNLOADS,
-            name = "Downloads",
-            importance = IMPORTANCE_LOW,
-            description = "Download progress and status",
-            showBadge = false,
-        )
-        ensure(
-            notificationManager = notificationManager,
-            id = ADBLOCK,
-            name = "AdBlock Updates",
-            importance = IMPORTANCE_LOW,
-            description = "Notifications for AdBlock list updates",
-            showBadge = false,
-        )
-        ensure(
-            notificationManager = notificationManager,
-            id = YOUTUBE_CONVERSION,
-            name = "YouTube Conversion",
-            importance = IMPORTANCE_LOW,
-            description = "YouTube video conversion progress",
-            showBadge = false,
-        )
-    }
-
+    /**
+     * Creates a channel idempotently. Channels are created lazily by each
+     * consumer at first use — never eagerly at app start — so the channel
+     * name is resolved with the locale active at that moment (Android never
+     * renames an existing channel).
+     */
     fun ensure(
         notificationManager: NotificationManager,
         id: String,

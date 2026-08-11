@@ -16,13 +16,20 @@ import kotlinx.coroutines.flow.Flow
  * All writes are suspending; all reads return a cold [Flow] that re-emits on
  * every mutation. Readers must run inside a coroutine scope.
  *
- * Theme cold start intentionally keeps a synchronous SharedPreferences seed in
- * `NexaApp`.
+ * Theme cold start intentionally keeps a synchronous SharedPreferences seed
+ * ([ThemeModeSeed]) that `ui/theme/Theme.kt` reads for the first frame.
  */
 interface AppPreferences {
 
     /** Persisted night-mode selection. Defaults to system theme. */
     val themeMode: Flow<Int>
+
+    /**
+     * True once a theme mode has been explicitly persisted to DataStore.
+     * Lets callers distinguish "never stored" from "stored as SYSTEM" and
+     * bootstrap one-time migrations without clobbering the stored value.
+     */
+    val hasStoredThemeMode: Flow<Boolean>
 
     /** Whether to use Material You dynamic colors from the wallpaper (API 31+). Defaults to true. */
     val dynamicColor: Flow<Boolean>
@@ -47,6 +54,9 @@ interface AppPreferences {
 
     /** Whether to show the update dialog on launch. Defaults to true. */
     val showUpdateDialogOnLaunch: Flow<Boolean>
+
+    /** Whether the in-browser video download button is shown. Defaults to true. */
+    val videoDownloadButton: Flow<Boolean>
 
     /** Updates [themeMode]. */
     suspend fun setThemeMode(mode: Int)
@@ -74,5 +84,8 @@ interface AppPreferences {
 
     /** Updates [showUpdateDialogOnLaunch]. */
     suspend fun setShowUpdateDialogOnLaunch(enabled: Boolean)
+
+    /** Updates [videoDownloadButton]. */
+    suspend fun setVideoDownloadButton(enabled: Boolean)
 
 }

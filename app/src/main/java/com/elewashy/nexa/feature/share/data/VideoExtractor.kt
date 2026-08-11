@@ -1,62 +1,34 @@
 package com.elewashy.nexa.feature.share.data
 
 import android.util.Log
-import com.elewashy.nexa.feature.share.data.platform.FacebookVideoExtractor
-import com.elewashy.nexa.feature.share.data.platform.InstagramVideoExtractor
 import com.elewashy.nexa.feature.share.data.platform.PlatformVideoExtractor
-import com.elewashy.nexa.feature.share.data.platform.ThreadsVideoExtractor
-import com.elewashy.nexa.feature.share.data.platform.TikTokVideoExtractor
-import com.elewashy.nexa.feature.share.data.platform.TwitterVideoExtractor
-import com.elewashy.nexa.feature.share.data.platform.YouTubeVideoExtractor
+import com.elewashy.nexa.feature.share.domain.model.ExtractionResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
- * Routes shared URLs to the platform-specific extractor implementation.
+ * Routes shared URLs to the platform-specific extractor.
  *
- * The public API and [ExtractionResult] type are intentionally preserved so
- * existing call sites do not need to know about the per-platform split.
+ * Redirect-based share links (Threads `/share/`, `t.co`, ...) are unrolled
+ * first so extractors always see the canonical post URL.
  */
-class VideoExtractor(
-    youTubeExtractor: YouTubeExtractor = YouTubeExtractor()
+@Singleton
+internal class VideoExtractor @Inject constructor(
+    extractors: Set<@JvmSuppressWildcards PlatformVideoExtractor>,
+    private val shareLinkResolver: ShareLinkResolver
 ) {
 
-    data class ExtractionResult(
-        val success: Boolean,
-        val platform: String? = null,
-        val videos: Map<String, String> = emptyMap(),
-        val error: String? = null
-    )
-
-    private val youtube = YouTubeVideoExtractor(youTubeExtractor)
-    private val facebook = FacebookVideoExtractor()
-    private val instagram = InstagramVideoExtractor()
-    private val threads = ThreadsVideoExtractor()
-    private val tikTok = TikTokVideoExtractor()
-    private val twitter = TwitterVideoExtractor()
+    private val extractorsByPlatform = extractors.associateBy(PlatformVideoExtractor::platform)
 
     suspend fun extract(url: String): ExtractionResult = withContext(Dispatchers.IO) {
         Log.d(TAG, "Extracting video from: $url")
 
-        val extractor = extractorFor(url)
-            ?: return@withContext ExtractionResult(
-                success = false,
-                error = "Unsupported platform"
-            )
-
-        extractor.extract(url)
-    }
-
-    private fun extractorFor(url: String): PlatformVideoExtractor? {
-        return when (SharePlatformDetector.detect(url)) {
-            SharePlatform.YOUTUBE -> youtube
-            SharePlatform.FACEBOOK -> facebook
-            SharePlatform.INSTAGRAM -> instagram
-            SharePlatform.THREADS -> threads
-            SharePlatform.TIKTOK -> tikTok
-            SharePlatform.TWITTER -> twitter
-            SharePlatform.VIDEO -> null
-        }
+        val resolvedUrl = shareLinkResolver.resolve(url)
+        extractorsByPlatform[SharePlatformDetector.detect(resolvedUrl)]
+            ?.extract(resolvedUrl)
+            ?: ExtractionResult.failure("Unsupported platform")
     }
 
     private companion object {

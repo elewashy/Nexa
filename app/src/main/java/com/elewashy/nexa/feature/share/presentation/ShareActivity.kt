@@ -80,9 +80,16 @@ class ShareActivity : AppCompatActivity() {
     private fun observeAppLanguage() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Only apply a tag that genuinely differs from the one already
+                // applied (AppCompatDelegate auto-restores stored locales), so
+                // collection on start never triggers a redundant recreation.
                 appPreferences.languageTag
                     .distinctUntilChanged()
-                    .collect(AppLanguageManager::setLanguageTag)
+                    .collect { tag ->
+                        if (AppLanguageManager.currentLanguage() != AppLanguageManager.fromTag(tag)) {
+                            AppLanguageManager.setLanguageTag(tag)
+                        }
+                    }
             }
         }
     }

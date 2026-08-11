@@ -29,8 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,6 +36,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -120,56 +119,32 @@ fun BrowserNavBar(
 
         BrowserNavigationProgress(progressPercent = state.progressPercent)
 
-        Row(
+        BrowserNavActions(
+            state = state,
+            vertical = false,
+            dimensions = dimensions,
+            primary = primary,
+            onRefreshClick = onRefreshClick,
+            onLinkClick = onLinkClick,
+            onHomeClick = onHomeClick,
+            onMenuBackClick = onMenuBackClick,
+            onMenuForwardClick = onMenuForwardClick,
+            onMenuShareClick = onMenuShareClick,
+            onDownloadsClick = onDownloadsClick,
+            onSettingsClick = onSettingsClick,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(dimensions.navBarHeight)
                 .padding(horizontal = dimensions.horizontalPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            NavAction(
-                icon = Home,
-                contentDescription = stringResource(R.string.home_btn),
-                tint = primary,
-                visible = state.homeVisible,
-                dimensions = dimensions,
-                onClick = onHomeClick,
-            )
-            NavAction(
-                icon = Refresh,
-                contentDescription = stringResource(R.string.refresh_btn),
-                tint = primary,
-                visible = state.refreshVisible,
-                dimensions = dimensions,
-                onClick = onRefreshClick,
-            )
-            NavAction(
-                icon = Language,
-                contentDescription = stringResource(R.string.search),
-                tint = primary,
-                visible = state.linkButtonVisible,
-                dimensions = dimensions,
-                onClick = onLinkClick,
-            )
-            if (state.moreOptionsVisible) {
-                MoreOptionsAction(
-                    state = state,
-                    primary = primary,
-                    actionSize = dimensions.actionSize,
-                    iconSize = dimensions.iconSize,
-                    onBackClick = onMenuBackClick,
-                    onForwardClick = onMenuForwardClick,
-                    onShareClick = onMenuShareClick,
-                    onDownloadsClick = onDownloadsClick,
-                    onSettingsClick = onSettingsClick,
-                )
-            }
-        }
+        )
     }
 }
 
-/** Left-side adaptive navigation for medium and expanded browser windows. */
+/**
+ * Left-side adaptive navigation for medium and expanded browser windows.
+ * Renders the exact same actions as the compact bottom bar so behavior and
+ * styling stay identical across window sizes; only the axis changes.
+ */
 @Composable
 fun BrowserNavigationRail(
     state: BrowserNavBarState,
@@ -185,105 +160,110 @@ fun BrowserNavigationRail(
 ) {
     if (!state.toolbarVisible) return
 
-    val colors = MaterialTheme.colorScheme
-
-    NavigationRail(
-        modifier = modifier.fillMaxHeight(),
-        containerColor = colors.surfaceContainer,
-        contentColor = colors.onSurface,
+    Surface(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(BROWSER_RAIL_WIDTH),
+        color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        Column(
-            modifier = Modifier.fillMaxHeight(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            NavigationRailAction(
-                icon = Home,
-                label = stringResource(R.string.home_btn),
-                visible = state.homeVisible,
-                onClick = onHomeClick,
-            )
-            NavigationRailAction(
-                icon = Refresh,
-                label = stringResource(R.string.refresh_btn),
-                visible = state.refreshVisible,
-                onClick = onRefreshClick,
-            )
-            NavigationRailAction(
-                icon = Language,
-                label = stringResource(R.string.search),
-                visible = state.linkButtonVisible,
-                onClick = onLinkClick,
-            )
-            if (state.moreOptionsVisible) {
-                MoreOptionsRailItem(
-                    state = state,
-                    onBackClick = onMenuBackClick,
-                    onForwardClick = onMenuForwardClick,
-                    onShareClick = onMenuShareClick,
-                    onDownloadsClick = onDownloadsClick,
-                    onSettingsClick = onSettingsClick,
-                )
-            }
-        }
+        BrowserNavActions(
+            state = state,
+            vertical = true,
+            dimensions = rememberBrowserNavBarDimensions(),
+            primary = MaterialTheme.colorScheme.primary,
+            onRefreshClick = onRefreshClick,
+            onLinkClick = onLinkClick,
+            onHomeClick = onHomeClick,
+            onMenuBackClick = onMenuBackClick,
+            onMenuForwardClick = onMenuForwardClick,
+            onMenuShareClick = onMenuShareClick,
+            onDownloadsClick = onDownloadsClick,
+            onSettingsClick = onSettingsClick,
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(vertical = RAIL_VERTICAL_PADDING),
+        )
     }
 }
 
+/**
+ * Single implementation of the browser actions (home, refresh, search, more)
+ * shared by the compact bottom bar and the large-screen side rail. Browser
+ * controls are actions rather than top-level destinations, so icon buttons are
+ * used instead of NavigationBar/NavigationRail items.
+ */
 @Composable
-private fun NavigationRailAction(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    visible: Boolean,
-) {
-    if (!visible) return
-
-    NavigationRailItem(
-        selected = false,
-        onClick = onClick,
-        icon = { Icon(imageVector = icon, contentDescription = label) },
-        label = { Text(label) },
-    )
-}
-
-@Composable
-private fun MoreOptionsRailItem(
+private fun BrowserNavActions(
     state: BrowserNavBarState,
-    onBackClick: () -> Unit,
-    onForwardClick: () -> Unit,
-    onShareClick: (String) -> Unit,
+    vertical: Boolean,
+    dimensions: BrowserNavBarDimensions,
+    primary: Color,
+    onRefreshClick: () -> Unit,
+    onLinkClick: () -> Unit,
+    onHomeClick: () -> Unit,
+    onMenuBackClick: () -> Unit,
+    onMenuForwardClick: () -> Unit,
+    onMenuShareClick: (String) -> Unit,
     onDownloadsClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(state.toolbarVisible, state.currentUrl) {
-        menuExpanded = false
+    val actions: @Composable () -> Unit = {
+        NavAction(
+            icon = Home,
+            contentDescription = stringResource(R.string.home_btn),
+            tint = primary,
+            visible = state.homeVisible,
+            dimensions = dimensions,
+            onClick = onHomeClick,
+        )
+        NavAction(
+            icon = Refresh,
+            contentDescription = stringResource(R.string.refresh_btn),
+            tint = primary,
+            visible = state.refreshVisible,
+            dimensions = dimensions,
+            onClick = onRefreshClick,
+        )
+        NavAction(
+            icon = Language,
+            contentDescription = stringResource(R.string.search),
+            tint = primary,
+            visible = state.linkButtonVisible,
+            dimensions = dimensions,
+            onClick = onLinkClick,
+        )
+        if (state.moreOptionsVisible) {
+            MoreOptionsAction(
+                state = state,
+                primary = primary,
+                actionSize = dimensions.actionSize,
+                iconSize = dimensions.iconSize,
+                onBackClick = onMenuBackClick,
+                onForwardClick = onMenuForwardClick,
+                onShareClick = onMenuShareClick,
+                onDownloadsClick = onDownloadsClick,
+                onSettingsClick = onSettingsClick,
+            )
+        }
     }
-    Box {
-        NavigationRailItem(
-            selected = false,
-            onClick = { menuExpanded = true },
-            icon = {
-                Icon(
-                    imageVector = MoreHoriz,
-                    contentDescription = stringResource(R.string.more_options),
-                )
-            },
-            label = { Text(stringResource(R.string.more_options)) },
-        )
-        BrowserMoreOptionsMenu(
-            expanded = menuExpanded,
-            state = state,
-            onDismiss = { menuExpanded = false },
-            onBackClick = { menuExpanded = false; onBackClick() },
-            onForwardClick = { menuExpanded = false; onForwardClick() },
-            onShareClick = {
-                menuExpanded = false
-                state.currentUrl?.let(onShareClick)
-            },
-            onDownloadsClick = { menuExpanded = false; onDownloadsClick() },
-            onSettingsClick = { menuExpanded = false; onSettingsClick() },
-        )
+
+    if (vertical) {
+        Column(
+            modifier = modifier,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(RAIL_ACTION_SPACING, Alignment.CenterVertically),
+        ) {
+            actions()
+        }
+    } else {
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            actions()
+        }
     }
 }
 
@@ -541,7 +521,11 @@ fun BrowserNavigationProgress(
     val dimensions = rememberBrowserNavBarDimensions()
     val primary = MaterialTheme.colorScheme.primary
     var lastPercent by remember { mutableIntStateOf(0) }
-    if (progressPercent != null) lastPercent = progressPercent
+    // Written outside composition so the indicator can freeze the last
+    // non-null percent while AnimatedVisibility runs its fade-out.
+    SideEffect {
+        if (progressPercent != null) lastPercent = progressPercent
+    }
     AnimatedVisibility(
         visible = progressPercent != null,
         enter = fadeIn(),
@@ -689,6 +673,9 @@ private fun rememberBrowserNavBarDimensions(): BrowserNavBarDimensions {
 private const val COMPACT_HEIGHT_DP = 600
 private const val EXPANDED_WIDTH_DP = 600
 private val MIN_TOUCH_TARGET = 48.dp
+private val BROWSER_RAIL_WIDTH = 80.dp
+private val RAIL_VERTICAL_PADDING = 16.dp
+private val RAIL_ACTION_SPACING = 8.dp
 private val BrowserMoreMenuWidth = 248.dp
 private val BrowserMoreMenuEdgeMargin = 8.dp
 private val BrowserMoreMenuAnchorSpacing = 8.dp

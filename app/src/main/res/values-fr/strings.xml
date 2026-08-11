@@ -10,6 +10,8 @@
     <string name="refresh_btn">Actualiser</string>
     <string name="home_btn">Accueil</string>
     <string name="downloads">Téléchargements</string>
+    <string name="video_download_button">Bouton de téléchargement vidéo</string>
+    <string name="video_download_button_description">Afficher un bouton de téléchargement lorsqu\'une page d\'une plateforme vidéo prise en charge est ouverte</string>
     <string name="settings">Paramètres</string>
     <string name="more_options">Plus d’options</string>
     <string name="search">Rechercher</string>
@@ -31,6 +33,7 @@
     <string name="no">Non</string>
     <string name="selected">Sélectionné</string>
     <string name="no_internet_connection">Aucune connexion Internet</string>
+    <string name="continue_anyway">Continuer quand même</string>
     <string name="enable_internet">Veuillez activer votre connexion Internet pour continuer.</string>
     <string name="onboarding_welcome_to">Bienvenue sur</string>
     <string name="onboarding_permissions_subtitle">Accordez les autorisations requises pour commencer.</string>
@@ -97,6 +100,7 @@
     <string name="language_arabic">Arabe</string>
     <string name="language_french">Français</string>
     <string name="app_up_to_date">Nexa est à jour</string>
+    <string name="github_rate_limit_reached">Limite de requêtes GitHub atteinte, veuillez réessayer plus tard</string>
     <string name="failed_to_check_updates">Échec de la recherche de mises à jour</string>
     <string name="update_available">Mise à jour disponible</string>
     <string name="checking_for_updates">Recherche de mises à jour…</string>
@@ -116,6 +120,9 @@
     <string name="press_back_again_to_cancel_update">Appuyez à nouveau sur retour pour annuler</string>
     <string name="changelog_download_fail">Échec du téléchargement du journal des modifications</string>
     <string name="no_changelogs_found">Aucun journal des modifications trouvé</string>
+    <string name="update_verification_failed_checksum">Échec de la vérification de la mise à jour : la somme de contrôle SHA-256 ne correspond pas</string>
+    <string name="update_verification_failed_unparseable_checksum">Échec de la vérification de la mise à jour : le fichier de sommes de contrôle ne contient aucune entrée lisible pour l’APK</string>
+    <string name="update_verification_failed_signature">Échec de la vérification de la mise à jour : le certificat de signature de l’APK ne correspond pas à l’application installée</string>
     <string name="show">Afficher</string>
     <string name="dismiss">Ignorer</string>
     <string name="never_show_again">Ne plus afficher</string>
@@ -133,14 +140,24 @@
     <string name="about">À propos</string>
     <string name="about_nexa">À propos d’Nexa</string>
     <string name="nexa_description">Nexa est un navigateur rapide axé sur la confidentialité, conçu pour le streaming de cinéma égyptien et arabe. Il inclut un bloqueur de publicités intégré, un gestionnaire de téléchargements intelligent et une expérience de navigation épurée.</string>
-    <string name="report_issue">Signaler un problème</string>
-    <string name="report_issue_description">Aidez-nous à nous améliorer en signalant des bugs ou des suggestions</string>
+    <string name="report_issue">Problèmes et commentaires</string>
+    <string name="report_issue_description">Signalez des bugs ou partagez des suggestions sur GitHub</string>
+    <string name="contributors">Contributeurs</string>
+    <string name="contributors_description">Les personnes derrière ce projet</string>
+    <string name="opensource_licenses">Licences open source</string>
+    <string name="opensource_licenses_description">Licences des bibliothèques utilisées dans cette application</string>
+    <string name="developer">Développeur</string>
+    <string name="developer_description">Voir le profil GitHub du développeur</string>
+    <string name="no_contributors_found">Aucun contributeur trouvé</string>
+    <string name="contributors_load_failed">Impossible de charger les contributeurs</string>
     <string name="select_quality">Sélectionner la qualité</string>
     <string name="select_quality_subtitle">Choisissez un format à télécharger</string>
     <string name="preparing_quality_options">Préparation des options de qualité</string>
     <string name="quality_options_unavailable">Aucune option de qualité disponible</string>
     <string name="download">Télécharger</string>
     <string name="download_started">Téléchargement démarré</string>
+    <string name="tap_to_start_download">Appuyez pour démarrer le téléchargement</string>
+    <string name="download_queued_tap_to_start">Téléchargement en attente — appuyez sur la notification pour le démarrer</string>
     <string name="cancel_download">Annuler le téléchargement</string>
     <string name="cancel_download_message">Annuler %s ?</string>
     <string name="download_cancelled">Téléchargement annulé</string>
@@ -161,6 +178,7 @@
     <string name="download_starting">Démarrage du téléchargement…</string>
     <string name="browser_download_snackbar_title">Téléchargement du fichier…</string>
     <string name="browser_download_snackbar_subtitle">Consultez la notification pour suivre le téléchargement</string>
+    <string name="file_type_not_downloadable">Ce type de fichier ne peut pas encore être téléchargé</string>
     <string name="details">Détails</string>
     <string name="error_starting_download">Erreur au démarrage du téléchargement : %s</string>
     <string name="enable_unknown_apps_install">Veuillez activer « Installer des applications inconnues », puis touchez de nouveau Installer</string>
@@ -168,6 +186,9 @@
     <string name="install_failed">Échec de l’installation : %s</string>
     <string name="paused_after_repeated_failures">En pause après des échecs répétés</string>
     <string name="download_paused_after_failures_details">Le téléchargement est en pause après plusieurs tentatives échouées. Touchez Reprendre pour réessayer.</string>
+    <string name="download_paused_system_timeout">Mis en pause par le système — la limite de durée des téléchargements en arrière-plan a été atteinte. Touchez Reprendre pour continuer.</string>
+    <string name="storage_permission_required_downloads">L’accès au stockage est requis pour enregistrer les téléchargements. Accordez « Accès à tous les fichiers » à Nexa dans les paramètres système, puis réessayez.</string>
+    <string name="notifications_disabled_warning">Les notifications sont désactivées — vous ne verrez ni la progression ni la fin de vos téléchargements. Activez les notifications pour Nexa afin de les suivre.</string>
     <string name="resume">Reprendre</string>
     <string name="pause">Pause</string>
     <string name="waiting_for_connection">En attente de connexion…</string>
@@ -183,6 +204,8 @@
     <string name="download_complete_size">Téléchargement terminé - %s</string>
     <string name="failed_progress">Échec à %d %%</string>
     <string name="download_failed">Échec du téléchargement</string>
+    <string name="download_finalize_failed">Échec de la finalisation du fichier téléchargé</string>
+    <string name="downloaded_file_missing">Le fichier téléchargé est introuvable</string>
     <string name="file_size_per_second">%s/s</string>
     <string name="download_progress_size">%1$s / %2$s</string>
     <string name="update_download_progress">%1$s / %2$s (%3$s)</string>
@@ -216,6 +239,9 @@
     <string name="no_url_found_in_shared_content">Aucune URL trouvée dans le contenu partagé</string>
     <string name="failed_to_extract_video">Échec de l’extraction de la vidéo</string>
     <string name="share_error">Erreur : %s</string>
+    <string name="page_load_error_title">Impossible de charger la page</string>
+    <string name="page_load_error_message">Vérifiez votre connexion Internet et réessayez.</string>
+    <string name="page_load_error_home">Retour à l\'accueil</string>
 
     <plurals name="selected_count">
         <item quantity="one">%d sélectionné</item>

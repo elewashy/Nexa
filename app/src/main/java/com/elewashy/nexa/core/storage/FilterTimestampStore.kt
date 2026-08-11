@@ -14,7 +14,7 @@ import javax.inject.Singleton
  *
  * Written by [com.elewashy.nexa.feature.splash.domain.usecase.InitializeBlocklistsUseCase]
  * after every successful splash-screen filter refresh, and by
- * [com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel]
+ * [com.elewashy.nexa.feature.update.presentation.UpdatesSettingsViewModel]
  * after a manual refresh from the Updates settings page.
  *
  * Exposes a [StateFlow] so the Updates page re-renders instantly without
@@ -33,10 +33,6 @@ class FilterTimestampStore @Inject constructor(
     /** Returns the stored timestamp, or 0 if never saved. */
     fun read(): Long = prefs.getLong(KEY_LAST_UPDATE, 0L)
 
-    /** Returns true if at least [intervalMs] have elapsed since [read]. */
-    fun isDue(intervalMs: Long = INTERVAL_6H_MS): Boolean =
-        System.currentTimeMillis() - read() >= intervalMs
-
     /** Persists [now] and emits to [lastUpdate]. */
     fun save(now: Long = System.currentTimeMillis()) {
         prefs.edit { putLong(KEY_LAST_UPDATE, now) }
@@ -46,6 +42,5 @@ class FilterTimestampStore @Inject constructor(
     companion object {
         const val PREFS_NAME = "FilterUpdateTimes"
         const val KEY_LAST_UPDATE = "unifiedLastUpdate"
-        const val INTERVAL_6H_MS = 6 * 60 * 60 * 1000L
     }
 }

@@ -8,6 +8,9 @@
         <exclude domain="file" path="app_cfg.dat" />
         <exclude domain="file" path="ad_hosts.txt" />
         <exclude domain="file" path="valid_links.txt" />
+        <!-- Restoring a staged update APK would bypass download-time verification. -->
+        <exclude domain="file" path="update/" />
+        <exclude domain="file" path="datastore/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="DownloadPrefs.xml" />
@@ -16,5 +19,7 @@
         <exclude domain="file" path="app_cfg.dat" />
         <exclude domain="file" path="ad_hosts.txt" />
         <exclude domain="file" path="valid_links.txt" />
+        <exclude domain="file" path="update/" />
+        <exclude domain="file" path="datastore/" />
     </device-transfer>
 </data-extraction-rules>

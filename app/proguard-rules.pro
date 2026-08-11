@@ -49,7 +49,6 @@
 # Keep all model classes used with Gson (field names must be preserved)
 -keep class com.elewashy.nexa.feature.downloads.domain.model.** { *; }
 -keep class com.elewashy.nexa.feature.splash.domain.model.** { *; }
--keep class com.elewashy.nexa.feature.settings.filterupdates.domain.model.** { *; }
 -keep class com.elewashy.nexa.feature.share.domain.model.** { *; }
 
 # ================================
@@ -166,13 +165,13 @@
 # ================================
 # Optimization Settings
 # ================================
+# Note: -optimizationpasses is ignored by R8; -overloadaggressively and
+# -mergeinterfacesaggressively were removed because they produce fragile
+# bytecode (name collisions / merged interfaces breaking reflection).
 
--optimizationpasses 7
 -dontskipnonpubliclibraryclasses
 -allowaccessmodification
 -repackageclasses ''
--mergeinterfacesaggressively
--overloadaggressively
 
 # ================================
 # Strip Logging in Release Builds

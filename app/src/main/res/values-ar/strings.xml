@@ -10,6 +10,8 @@
     <string name="refresh_btn">تحديث</string>
     <string name="home_btn">الرئيسية</string>
     <string name="downloads">التنزيلات</string>
+    <string name="video_download_button">زر تنزيل الفيديو</string>
+    <string name="video_download_button_description">عرض زر التنزيل عند فتح صفحة من منصة فيديو مدعومة</string>
     <string name="settings">الإعدادات</string>
     <string name="more_options">المزيد من الخيارات</string>
     <string name="search">بحث</string>
@@ -31,6 +33,7 @@
     <string name="no">لا</string>
     <string name="selected">محدد</string>
     <string name="no_internet_connection">لا يوجد اتصال بالإنترنت</string>
+    <string name="continue_anyway">المتابعة على أي حال</string>
     <string name="enable_internet">يرجى تفعيل اتصال الإنترنت للمتابعة.</string>
     <string name="onboarding_welcome_to">مرحبًا بك في</string>
     <string name="onboarding_permissions_subtitle">امنح الأذونات المطلوبة للبدء.</string>
@@ -97,6 +100,7 @@
     <string name="language_arabic">العربية</string>
     <string name="language_french">الفرنسية</string>
     <string name="app_up_to_date">Nexa محدّث</string>
+    <string name="github_rate_limit_reached">تم بلوغ الحد الأقصى للطلبات على GitHub، يرجى المحاولة لاحقًا</string>
     <string name="failed_to_check_updates">فشل التحقق من التحديثات</string>
     <string name="update_available">يتوفر تحديث</string>
     <string name="checking_for_updates">جارٍ التحقق من التحديثات…</string>
@@ -116,6 +120,9 @@
     <string name="press_back_again_to_cancel_update">اضغط رجوع مرة أخرى للإلغاء</string>
     <string name="changelog_download_fail">فشل تنزيل سجل التغييرات</string>
     <string name="no_changelogs_found">لم يتم العثور على سجلات التغييرات</string>
+    <string name="update_verification_failed_checksum">فشل التحقق من التحديث: مجموع SHA-256 غير متطابق</string>
+    <string name="update_verification_failed_unparseable_checksum">فشل التحقق من التحديث: ملف المجموع الاختباري لا يحتوي على إدخال قابل للقراءة لملف APK</string>
+    <string name="update_verification_failed_signature">فشل التحقق من التحديث: شهادة توقيع APK لا تطابق التطبيق المثبّت</string>
     <string name="show">عرض</string>
     <string name="dismiss">تجاهل</string>
     <string name="never_show_again">عدم الإظهار مرة أخرى</string>
@@ -133,14 +140,24 @@
     <string name="about">حول</string>
     <string name="about_nexa">حول Nexa</string>
     <string name="nexa_description">Nexa متصفح سريع يركز على الخصوصية ومصمم لبث السينما المصرية والعربية. يتضمن مانع إعلانات مدمجًا ومدير تنزيلات ذكيًا وتجربة تصفح نظيفة.</string>
-    <string name="report_issue">الإبلاغ عن مشكلة</string>
-    <string name="report_issue_description">ساعدنا على التحسين بالإبلاغ عن الأخطاء أو الاقتراحات</string>
+    <string name="report_issue">المشاكل والملاحظات</string>
+    <string name="report_issue_description">أبلغ عن الأخطاء أو شارك الاقتراحات على GitHub</string>
+    <string name="contributors">المساهمون</string>
+    <string name="contributors_description">الأشخاص الذين يقفون وراء هذا المشروع</string>
+    <string name="opensource_licenses">التراخيص مفتوحة المصدر</string>
+    <string name="opensource_licenses_description">تراخيص المكتبات المستخدمة في هذا التطبيق</string>
+    <string name="developer">المطوّر</string>
+    <string name="developer_description">عرض ملف المطوّر على GitHub</string>
+    <string name="no_contributors_found">لم يتم العثور على مساهمين</string>
+    <string name="contributors_load_failed">تعذّر تحميل قائمة المساهمين</string>
     <string name="select_quality">اختر الجودة</string>
     <string name="select_quality_subtitle">اختر صيغة للتنزيل</string>
     <string name="preparing_quality_options">جارٍ تجهيز خيارات الجودة</string>
     <string name="quality_options_unavailable">لا توجد خيارات جودة متاحة</string>
     <string name="download">تنزيل</string>
     <string name="download_started">بدأ التنزيل</string>
+    <string name="tap_to_start_download">اضغط لبدء التنزيل</string>
+    <string name="download_queued_tap_to_start">التنزيل في قائمة الانتظار — اضغط على الإشعار لبدئه</string>
     <string name="cancel_download">إلغاء التنزيل</string>
     <string name="cancel_download_message">إلغاء %s؟</string>
     <string name="download_cancelled">تم إلغاء التنزيل</string>
@@ -161,6 +178,7 @@
     <string name="download_starting">بدء التنزيل…</string>
     <string name="browser_download_snackbar_title">جارٍ تنزيل الملف…</string>
     <string name="browser_download_snackbar_subtitle">راجع الإشعار لمعرفة حالة التنزيل</string>
+    <string name="file_type_not_downloadable">لا يمكن تنزيل هذا النوع من الملفات بعد</string>
     <string name="details">التفاصيل</string>
     <string name="error_starting_download">خطأ في بدء التنزيل: %s</string>
     <string name="enable_unknown_apps_install">يرجى تفعيل "تثبيت التطبيقات غير المعروفة" ثم الضغط على تثبيت مرة أخرى</string>
@@ -168,6 +186,9 @@
     <string name="install_failed">فشل التثبيت: %s</string>
     <string name="paused_after_repeated_failures">متوقف مؤقتًا بعد إخفاقات متكررة</string>
     <string name="download_paused_after_failures_details">تم إيقاف التنزيل مؤقتًا بعد عدة محاولات فاشلة. اضغط استئناف لإعادة المحاولة.</string>
+    <string name="download_paused_system_timeout">أوقفه النظام مؤقتًا — تم بلوغ الحد الزمني للتنزيل في الخلفية. اضغط على استئناف للمتابعة.</string>
+    <string name="storage_permission_required_downloads">إذن التخزين مطلوب لحفظ التنزيلات. امنح Nexa إذن "الوصول إلى جميع الملفات" في إعدادات النظام، ثم أعد المحاولة.</string>
+    <string name="notifications_disabled_warning">الإشعارات معطّلة — لن تتمكن من رؤية تقدم التنزيل أو اكتماله. فعّل الإشعارات لتطبيق Nexa لمتابعة تنزيلاتك.</string>
     <string name="resume">استئناف</string>
     <string name="pause">إيقاف مؤقت</string>
     <string name="waiting_for_connection">في انتظار الاتصال…</string>
@@ -183,6 +204,8 @@
     <string name="download_complete_size">اكتمل التنزيل - %s</string>
     <string name="failed_progress">فشل عند %d%%</string>
     <string name="download_failed">فشل التنزيل</string>
+    <string name="download_finalize_failed">تعذّر إكمال الملف الذي تم تنزيله</string>
+    <string name="downloaded_file_missing">الملف الذي تم تنزيله مفقود</string>
     <string name="file_size_per_second">%s/ث</string>
     <string name="download_progress_size">%1$s / %2$s</string>
     <string name="update_download_progress">%1$s / %2$s (%3$s)</string>
@@ -216,6 +239,9 @@
     <string name="no_url_found_in_shared_content">لم يتم العثور على رابط في المحتوى المشترك</string>
     <string name="failed_to_extract_video">فشل استخراج الفيديو</string>
     <string name="share_error">خطأ: %s</string>
+    <string name="page_load_error_title">تعذَّر تحميل الصفحة</string>
+    <string name="page_load_error_message">تحقَّق من اتصالك بالإنترنت وحاول مرة أخرى.</string>
+    <string name="page_load_error_home">العودة إلى الرئيسية</string>
 
     <plurals name="selected_count">
         <item quantity="zero">لم يتم تحديد أي عنصر</item>

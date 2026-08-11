@@ -16,13 +16,16 @@ import javax.inject.Singleton
 /**
  * Reactive and imperative access to the device's internet connectivity state.
  *
- * Replaces the free-function `checkForInternet(context)` in `util/NetworkUtils.kt`
- * (kept during the phased migration; will be removed once all call-sites migrate).
- *
  * Exposes:
- *  - [isOnline] for one-shot synchronous checks (same semantics as the legacy helper)
- *  - [online] as a cold [Flow] that emits on every connectivity transition; ideal for
- *    UI states that should react to the network coming and going.
+ *  - [isOnline] for one-shot synchronous checks
+ *  - [hasAnyNetwork] to distinguish "no radio network at all" from "network
+ *    present but not (yet) validated" (e.g. captive portals)
+ *  - [online] as a cold [Flow] that emits on every connectivity transition;
+ *    ideal for UI states that should react to the network coming and going.
+ *
+ * "Online" requires [NetworkCapabilities.NET_CAPABILITY_VALIDATED]: a Wi-Fi
+ * network behind a captive portal has transport but no actual internet, and
+ * must not read as online.
  *
  * The [Flow] uses a [ConnectivityManager.NetworkCallback] with a capabilities-filtered
  * [NetworkRequest] so offline→online transitions are observed precisely, without
@@ -34,6 +37,9 @@ interface NetworkMonitor {
 
     /** One-shot synchronous check. Prefer [online] for lifecycle-aware UI. */
     fun isOnline(): Boolean
+
+    /** True when any active network exists, validated or not. */
+    fun hasAnyNetwork(): Boolean
 }
 
 @Singleton
@@ -47,10 +53,13 @@ class ConnectivityNetworkMonitor @Inject constructor(
     override fun isOnline(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        // VALIDATED filters out captive portals and networks that claim
+        // internet access but cannot actually reach it.
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
+
+    override fun hasAnyNetwork(): Boolean = connectivityManager.activeNetwork != null
 
     override val online: Flow<Boolean> = channelFlow {
         // Emit current state immediately so subscribers don't have to wait for a
@@ -78,25 +87,11 @@ class ConnectivityNetworkMonitor @Inject constructor(
 
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             .build()
 
         connectivityManager.registerNetworkCallback(request, callback)
 
         awaitClose { connectivityManager.unregisterNetworkCallback(callback) }
     }.distinctUntilChanged()
-}
-
-/**
- * Convenience bridge for call-sites that need an immediate connectivity check.
- *
- * Prefer injecting [NetworkMonitor] over calling this directly.
- */
-@Suppress("DEPRECATION")
-fun checkForInternet(context: Context): Boolean {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    val network = cm.activeNetwork ?: return false
-    val caps = cm.getNetworkCapabilities(network) ?: return false
-    return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
 }

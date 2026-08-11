@@ -1,14 +1,18 @@
 package com.elewashy.nexa.feature.update.presentation
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.elewashy.nexa.R
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.storage.FilterTimestampStore
 import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
 import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
 import com.elewashy.nexa.feature.browser.data.scripts.ScriptRepository
+import com.elewashy.nexa.feature.update.data.GitHubRateLimitedException
 import com.elewashy.nexa.feature.update.domain.ManagerUpdateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +23,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class UpdatesSettingsViewModel @Inject constructor(
+    @param:ApplicationContext private val appContext: Context,
     private val managerUpdateRepository: ManagerUpdateRepository,
     private val appPreferences: AppPreferences,
     private val adBlockRepository: AdBlockRepository,
@@ -46,6 +51,12 @@ class UpdatesSettingsViewModel @Inject constructor(
             } else {
                 CheckUpdateResult.UpToDate
             }
+        } catch (e: GitHubRateLimitedException) {
+            // GitHub 403/429 (unauthenticated limit). Surface a friendly,
+            // actionable message instead of a generic failure.
+            CheckUpdateResult.RateLimited(
+                appContext.getString(R.string.github_rate_limit_reached)
+            )
         } catch (e: Exception) {
             CheckUpdateResult.Failed
         }
@@ -81,9 +92,12 @@ class UpdatesSettingsViewModel @Inject constructor(
         val success: Boolean = adBlockSuccess && validLinksSuccess && scriptsSuccess
     }
 
-    enum class CheckUpdateResult {
-        UpdateAvailable,
-        UpToDate,
-        Failed,
+    sealed interface CheckUpdateResult {
+        data object UpdateAvailable : CheckUpdateResult
+        data object UpToDate : CheckUpdateResult
+        data object Failed : CheckUpdateResult
+
+        /** GitHub rejected the check with 403/429; [message] is user-facing. */
+        data class RateLimited(val message: String) : CheckUpdateResult
     }
 }

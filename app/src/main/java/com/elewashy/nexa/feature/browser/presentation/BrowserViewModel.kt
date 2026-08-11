@@ -3,6 +3,7 @@ package com.elewashy.nexa.feature.browser.presentation
 import android.net.Uri
 import android.webkit.URLUtil
 import androidx.lifecycle.ViewModel
+import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebViewClient
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,12 +42,27 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
     /**
      * One-shot navigation events emitted by [onUrlCommitted].
      * The Activity consumes each emission exactly once and calls
-     * the WebView's `loadUrl()`. Using a [Channel] (capacity = CONFLATED)
-     * ensures no emission is lost even if the observer is momentarily
-     * unavailable, and that a rapid double-tap only triggers one load.
+     * the WebView's `loadUrl()`. The [Channel] is CONFLATED on
+     * purpose — last-wins: if several commits arrive before the
+     * observer drains them, only the most recent URL is loaded, so
+     * a rapid double-tap collapses into a single navigation.
      */
     private val _navigationEvent = Channel<String>(Channel.CONFLATED)
     val navigationEvent = _navigationEvent.receiveAsFlow()
+
+    private companion object {
+        /** Minimum progress increment worth re-rendering the bar. */
+        private const val PROGRESS_STEP = 5
+
+        /**
+         * host:port(/path) with a numeric port. Requires a dotted host so
+         * time-like inputs such as "12:30" stay searches.
+         */
+        private val HOST_WITH_PORT_PATTERN = Regex(
+            "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+:\\d{1,5}(/\\S*)?$",
+            RegexOption.IGNORE_CASE
+        )
+    }
 
     // ── Page lifecycle events (from NexaWebViewClient) ───────────────
 
@@ -55,7 +71,12 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
             it.copy(
                 progress = ProgressState.Loading(0),
                 toolbarVisible = !isImmersiveHost,
-                topSearchBarText = url ?: ""
+                topSearchBarText = url ?: "",
+                // History affordances intentionally NOT reset here — they
+                // keep their previous values until onPageFinished refreshes
+                // them, so the buttons don't flicker on every load.
+                pageLoadError = false,
+                pageLoadId = it.pageLoadId + 1
             )
         }
     }
@@ -66,7 +87,11 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
             val current = it.progress
             when {
                 percent >= 100 -> it.copy(progress = ProgressState.Hidden)
-                current is ProgressState.Loading && current.percent == percent -> it
+                // Coarsen to ~5% steps to reduce state churn. Backward jumps
+                // (a new navigation starting) always pass through.
+                current is ProgressState.Loading &&
+                    percent >= current.percent &&
+                    percent - current.percent < PROGRESS_STEP -> it
                 else -> it.copy(progress = ProgressState.Loading(percent))
             }
         }
@@ -99,6 +124,11 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
         _uiState.update { it.copy(topSearchBarText = url ?: "") }
     }
 
+    /** Main-frame load failed (WebViewClient error event). */
+    fun onPageLoadError() {
+        _uiState.update { it.copy(pageLoadError = true) }
+    }
+
     // ── Fullscreen events (from NexaWebChromeClient) ─────────────────
 
     /** Fullscreen custom view shown: hide toolbar, keep screen on. */
@@ -106,9 +136,16 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
         _uiState.update { it.copy(toolbarVisible = false, keepScreenOn = true) }
     }
 
-    /** Fullscreen custom view hidden: show toolbar, release screen. */
+    /** Fullscreen custom view hidden: release the screen and restore the
+     *  toolbar — unless the current page is an immersive host, which keeps
+     *  it hidden. */
     fun onFullscreenExit() {
-        _uiState.update { it.copy(toolbarVisible = true, keepScreenOn = false) }
+        _uiState.update {
+            it.copy(
+                toolbarVisible = !NexaWebViewClient.isImmersiveUrl(it.topSearchBarText),
+                keepScreenOn = false
+            )
+        }
     }
 
     // ── URL bar navigation ──────────────────────────────────────────
@@ -118,13 +155,30 @@ class BrowserViewModel @Inject constructor() : ViewModel() {
         if (trimmed.isBlank()) return
 
         val url = when {
-            URLUtil.isValidUrl(trimmed) -> trimmed
+            isSafeLoadableUrl(trimmed) -> trimmed
+            // host:port(/path) is a URL, not a scheme-like search term —
+            // must run before the generic ':' check below.
+            HOST_WITH_PORT_PATTERN.matches(trimmed) -> "https://$trimmed"
+            // Scheme-like input (javascript:, data:, file:, …) must never be
+            // loaded or blindly upgraded to https — search for it instead.
+            trimmed.contains(':') -> "https://www.google.com/search?q=${Uri.encode(trimmed)}"
             trimmed.contains('.') && !trimmed.contains(' ') -> "https://$trimmed"
             else -> "https://www.google.com/search?q=${Uri.encode(trimmed)}"
         }
 
         _uiState.update { it.copy(topSearchBarText = url, urlBarVisible = false) }
         _navigationEvent.trySend(url)
+    }
+
+    /**
+     * Only plain http(s) URLs may be loaded. [URLUtil.isValidUrl] also
+     * accepts javascript:, data: and file: URLs, which would let the URL
+     * bar execute script or read local files.
+     */
+    private fun isSafeLoadableUrl(input: String): Boolean {
+        if (!URLUtil.isValidUrl(input)) return false
+        val scheme = Uri.parse(input).scheme?.lowercase() ?: return false
+        return scheme == "http" || scheme == "https"
     }
 
     // ── Toolbar toggles ────────────────────────────────────────────

@@ -14,29 +14,42 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.splash.presentation.SplashViewModel
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.icons.WifiOff
 
 /**
  * No-internet screen shown when the device is offline during startup.
  *
- * Clean Material3 design: icon, title, description, and a retry button.
- * No unnecessary animations or complexity.
+ * Clean Material3 design: icon, title, description, a retry button and a
+ * "continue anyway" affordance so zero connectivity is not a dead end —
+ * the app can proceed on cached resources.
  *
  * @param onRetry Callback when the retry button is clicked.
+ * @param onProceedAnyway Callback to continue offline. When null (the current
+ *   MainActivity call site does not wire it), the activity-scoped
+ *   [SplashViewModel] is resolved so the affordance still works.
  */
 @Composable
 fun NoInternetScreen(
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onProceedAnyway: (() -> Unit)? = null,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
+    // hiltViewModel() resolves the activity-scoped ViewModel here, so this
+    // yields the same instance MainActivity holds via `by viewModels()`.
+    val proceedAnyway = onProceedAnyway
+        ?: hiltViewModel<SplashViewModel>()::onProceedAnywayClicked
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -82,6 +95,10 @@ fun NoInternetScreen(
 
                 Button(onClick = onRetry) {
                     Text(text = stringResource(R.string.retry))
+                }
+
+                TextButton(onClick = proceedAnyway) {
+                    Text(text = stringResource(R.string.continue_anyway))
                 }
             }
         }

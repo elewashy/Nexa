@@ -11,13 +11,11 @@
          writes to the public Downloads/Nexa directory. MediaStore.Downloads only exposes
          a sequential OutputStream, which cannot support parallel multi-segment writes. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <!-- Required: app installs downloaded APK updates via ACTION_VIEW + FileProvider,
          gated by canRequestPackageInstalls() at runtime. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES"/>
 
     <application
         android:name=".NexaApp"
@@ -45,9 +43,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Transparent overlay activity for handling shared links -->
+        <!-- Transparent overlay activity for handling shared links.
+             configChanges keeps rotation/layout/dark-mode/font changes from
+             recreating the activity and re-running the full video extraction. -->
         <activity
             android:name=".feature.share.presentation.ShareActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale"
             android:exported="true"
             android:theme="@style/Theme.nexa.Translucent"
             android:excludeFromRecents="true"

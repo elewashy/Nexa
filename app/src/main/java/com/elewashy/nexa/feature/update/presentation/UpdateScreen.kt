@@ -7,7 +7,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +43,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import androidx.paging.compose.collectAsLazyPagingItems
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.format.LocalizedFormatters
 import com.elewashy.nexa.feature.update.presentation.UpdateViewModel.State
@@ -66,7 +64,6 @@ fun UpdateScreen(
     val context = LocalContext.current
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    val changelogs = viewModel.changelogs.collectAsLazyPagingItems()
 
     var backPressedOnce by remember { mutableStateOf(false) }
     val pressBackAgainMsg = stringResource(R.string.press_back_again_to_cancel_update)
@@ -220,7 +217,7 @@ fun UpdateScreen(
             }
 
             ChangelogList(
-                changelogs = changelogs,
+                state = viewModel.changelogsState,
                 modifier = Modifier.fillMaxSize(),
             )
         }

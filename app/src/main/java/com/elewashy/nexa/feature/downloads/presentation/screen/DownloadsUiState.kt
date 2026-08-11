@@ -15,13 +15,16 @@ import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
  * @property isMultiSelectMode   Whether long-press selection mode is active.
  * @property cancelDialogItem    Non-null while the single-item cancel dialog is shown.
  * @property deleteSnackbarQueue Pending undo snackbars for recently deleted items.
+ * @property notificationsWarning One-time warning when a download starts while
+ *                                notifications are disabled; null once dismissed.
  */
 data class DownloadsUiState(
     val downloads: List<DownloadItem> = emptyList(),
     val selectedItems: Set<Long> = emptySet(),
     val isMultiSelectMode: Boolean = false,
     val cancelDialogItem: DownloadItem? = null,
-    val deleteSnackbarQueue: List<PendingDeleteSnackbar> = emptyList()
+    val deleteSnackbarQueue: List<PendingDeleteSnackbar> = emptyList(),
+    val notificationsWarning: String? = null
 ) {
     val showCancelDialog: Boolean get() = cancelDialogItem != null
 }

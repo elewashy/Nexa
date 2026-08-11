@@ -30,4 +30,12 @@ sealed interface SettingsDestination {
     data object About : SettingsDestination {
         override val route = "settings/about"
     }
+
+    data object Contributors : SettingsDestination {
+        override val route = "settings/about/contributors"
+    }
+
+    data object Licenses : SettingsDestination {
+        override val route = "settings/about/licenses"
+    }
 }

@@ -2,14 +2,13 @@ package com.elewashy.nexa.feature.settings.presentation.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.compose.ui.graphics.toArgb
 import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguage
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
+import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.settings.data.ThemeRepository
 import com.elewashy.nexa.ui.theme.AppTheme
-import com.elewashy.nexa.ui.theme.DefaultThemeColor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,8 +44,11 @@ class SettingsViewModel @Inject constructor(
     val highRefreshRate: StateFlow<Boolean> = appPreferences.highRefreshRate
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val videoDownloadButton: StateFlow<Boolean> = appPreferences.videoDownloadButton
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     val selectedThemeColor: StateFlow<Int> = appPreferences.selectedThemeColor
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DefaultThemeColor.toArgb())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_THEME_COLOR_ARGB)
 
     val highRefreshRateSupported: Boolean = refreshRateManager.isHighRefreshRateSupported()
 
@@ -58,8 +60,16 @@ class SettingsViewModel @Inject constructor(
             appPreferences.languageTag
                 .distinctUntilChanged()
                 .collect { tag ->
-                    _currentLanguage.value = AppLanguageManager.fromTag(tag)
-                    AppLanguageManager.setLanguageTag(tag)
+                    val language = AppLanguageManager.fromTag(tag)
+                    _currentLanguage.value = language
+                    // AppCompatDelegate already auto-restores stored locales
+                    // (autoStoreLocales), so only apply a tag that genuinely
+                    // differs from the one already applied — avoids a redundant
+                    // setApplicationLocales and the activity recreation it
+                    // triggers on every ViewModel creation.
+                    if (AppLanguageManager.currentLanguage() != language) {
+                        AppLanguageManager.setLanguageTag(tag)
+                    }
                 }
         }
     }
@@ -80,10 +90,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.setHighRefreshRate(enabled) }
     }
 
+    fun setVideoDownloadButton(enabled: Boolean) {
+        viewModelScope.launch { appPreferences.setVideoDownloadButton(enabled) }
+    }
+
     fun setSelectedThemeColor(color: Int) {
         viewModelScope.launch {
             appPreferences.setSelectedThemeColor(color)
-            appPreferences.setDynamicColor(color == DefaultThemeColor.toArgb())
+            appPreferences.setDynamicColor(color == DEFAULT_THEME_COLOR_ARGB)
         }
     }
 

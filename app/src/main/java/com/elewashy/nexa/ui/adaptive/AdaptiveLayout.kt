@@ -41,7 +41,11 @@ data class AdaptiveLayoutInfo(
 ) {
     val widthClass: WindowWidthSizeClass get() = windowSizeClass.widthSizeClass
     val heightClass: WindowHeightSizeClass get() = windowSizeClass.heightSizeClass
-    val useSideNavigation: Boolean = isExpanded || (isMedium && isLandscape) || isTvLike
+    /**
+     * Material 3 navigation-suite default: compact widths use a bottom bar,
+     * medium and expanded widths use a side rail.
+     */
+    val useSideNavigation: Boolean = !isCompact
     val useTwoPane: Boolean = isExpanded && widthDp >= 900
 }
 

@@ -34,6 +34,17 @@ class SplashViewModel @Inject constructor(
         checkNetworkAndProceed()
     }
 
+    /**
+     * Continues despite zero connectivity: cached resources carry the app,
+     * and background refreshes catch up once a network returns. Reuses the
+     * same continuation path as the online flow with `online = false` so the
+     * update check is skipped.
+     */
+    fun onProceedAnywayClicked() {
+        _uiState.value = SplashUiState.Loading
+        proceedAfterNetworkCheck(online = false)
+    }
+
     fun onOnboardingFinished() {
         _uiState.value = SplashUiState.Loading
         viewModelScope.launch {
@@ -44,27 +55,38 @@ class SplashViewModel @Inject constructor(
     }
 
     private fun checkNetworkAndProceed() {
-        if (!networkMonitor.isOnline()) {
+        val online = networkMonitor.isOnline()
+
+        // Only hard-block when there is no network at all. Unvalidated
+        // networks (captive portals) and transient outages proceed on cached
+        // resources; background refreshes catch up once connectivity returns.
+        if (!online && !networkMonitor.hasAnyNetwork()) {
             _uiState.value = SplashUiState.NoInternet
             return
         }
 
-        // Non-blocking update check — runs in background, result observed on browser screen
-        viewModelScope.launch {
-            if (prefs.autoUpdateCheck.first()) {
-                try { managerUpdateRepository.refresh() } catch (_: Exception) {}
-            }
-        }
+        proceedAfterNetworkCheck(online)
+    }
 
-        // Proceed immediately
+    private fun proceedAfterNetworkCheck(online: Boolean) {
         viewModelScope.launch {
             val onboarded = prefs.onboardingCompleted.first()
-            if (onboarded) {
-                initializeBlocklists()
-                _uiState.value = SplashUiState.Ready
-            } else {
+            if (!onboarded) {
+                // No background update check before onboarding consent.
                 _uiState.value = SplashUiState.Onboarding
+                return@launch
             }
+
+            // Non-blocking update check — runs in background, result observed on
+            // the browser screen. Only when actually online.
+            if (online && prefs.autoUpdateCheck.first()) {
+                viewModelScope.launch {
+                    try { managerUpdateRepository.refresh() } catch (_: Exception) {}
+                }
+            }
+
+            initializeBlocklists()
+            _uiState.value = SplashUiState.Ready
         }
     }
 }

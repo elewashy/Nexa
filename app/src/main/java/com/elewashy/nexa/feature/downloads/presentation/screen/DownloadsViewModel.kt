@@ -2,14 +2,18 @@ package com.elewashy.nexa.feature.downloads.presentation.screen
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import com.elewashy.nexa.feature.downloads.domain.usecase.CancelDownloadUseCase
+import com.elewashy.nexa.feature.downloads.domain.usecase.DismissNotificationsWarningUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.ObserveDownloadsUseCase
+import com.elewashy.nexa.feature.downloads.domain.usecase.ObserveNotificationsWarningUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.PauseDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.ResumeDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.RetryDownloadUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,10 +41,13 @@ import javax.inject.Inject
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
     observeDownloads: ObserveDownloadsUseCase,
+    observeNotificationsWarning: ObserveNotificationsWarningUseCase,
+    private val dismissNotificationsWarningUseCase: DismissNotificationsWarningUseCase,
     private val pauseDownload: PauseDownloadUseCase,
     private val resumeDownload: ResumeDownloadUseCase,
     private val cancelDownload: CancelDownloadUseCase,
-    private val retryDownload: RetryDownloadUseCase
+    private val retryDownload: RetryDownloadUseCase,
+    @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DownloadsUiState())
@@ -69,6 +76,33 @@ class DownloadsViewModel @Inject constructor(
                     )
                 }
             }
+        }
+        viewModelScope.launch {
+            observeNotificationsWarning().collect { warning ->
+                _uiState.update { it.copy(notificationsWarning = warning) }
+            }
+        }
+    }
+
+    fun dismissNotificationsWarning() {
+        dismissNotificationsWarningUseCase()
+    }
+
+    /**
+     * Commits any deletions still waiting on their undo snackbar. Without this,
+     * clearing the VM (navigation, config change beyond backstack retention)
+     * would silently resurrect the "deleted" items on the next visit.
+     * `viewModelScope` is already cancelled here — commit on the application
+     * scope instead so the repository commands are not lost.
+     */
+    override fun onCleared() {
+        if (pendingDeletes.isEmpty()) return
+        val items = pendingDeletes.values
+            .flatMap { it.items }
+            .distinctBy { it.id }
+        pendingDeletes.clear()
+        applicationScope.launch {
+            items.forEach { item -> cancelDownload(item.id) }
         }
     }
 

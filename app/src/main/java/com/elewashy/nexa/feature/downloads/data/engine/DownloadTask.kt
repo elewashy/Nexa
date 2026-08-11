@@ -1,12 +1,14 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
 import android.util.Log
+import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -33,14 +35,72 @@ class DownloadTask(
     val item: DownloadItem,
     private val client: OkHttpClient,
     private val onProgress: (DownloadTask) -> Unit = {},
-    private val onStatusChange: (DownloadTask, DownloadStatus) -> Unit = { _, _ -> }
+    private val onStatusChange: (DownloadTask, DownloadStatus) -> Unit = { _, _ -> },
+    /** Probe result fetched upstream (filename resolution) — reused instead of probing again. */
+    private var initialProbe: HttpProber.ProbeResult? = null,
+    /** Segment state persisted before the last process death, if any. */
+    private val restoredSegments: List<PersistedSegment> = emptyList()
 ) {
     companion object {
         private const val TAG = "DownloadTask"
 
+        /**
+         * Locale-independent failure sentinels stored in
+         * [DownloadItem.errorMessage]. The task has no Context, so these are
+         * resolved to localized strings at the single display site
+         * (DownloadNotificationManager).
+         */
+        const val ERROR_FINALIZE_FAILED = "ERR_DOWNLOAD_FINALIZE_FAILED"
+        const val ERROR_FILE_MISSING = "ERR_DOWNLOADED_FILE_MISSING"
+
         /** Minimum interval between progress updates to avoid UI flooding. */
         private const val PROGRESS_THROTTLE_MS = 250L
+
+        /** In-progress data lives in a `.part` file and is renamed on completion. */
+        const val PART_SUFFIX = ".part"
+
+        /**
+         * Pure core of the persisted-segment restore: verifies that [restoredSegments]
+         * form contiguous, non-overlapping coverage of `[0, totalBytes)` with sane
+         * per-segment progress, then maps them to fresh [DownloadSegment]s.
+         * Returns null when the state is absent or inconsistent (caller must
+         * restart cleanly). Unit-testable without a live task.
+         */
+        internal fun rebuildSegmentsFromState(
+            restoredSegments: List<PersistedSegment>,
+            totalBytes: Long
+        ): List<DownloadSegment>? {
+            if (restoredSegments.isEmpty() || totalBytes <= 0) return null
+
+            val sorted = restoredSegments.sortedBy { it.startByte }
+            var expectedStart = 0L
+            for (state in sorted) {
+                if (state.endByte == Long.MAX_VALUE) return null
+                val length = state.endByte - state.startByte + 1
+                // Contiguous, non-overlapping coverage of [0, totalBytes)
+                if (state.startByte != expectedStart || length <= 0) return null
+                if (state.endByte >= totalBytes) return null
+                if (state.downloadedBytes < 0 || state.downloadedBytes > length) return null
+                expectedStart = state.endByte + 1
+            }
+            if (expectedStart != totalBytes) return null
+
+            return sorted.mapIndexed { index, state ->
+                val length = state.endByte - state.startByte + 1
+                val done = state.completed || state.downloadedBytes >= length
+                DownloadSegment(
+                    id = index,
+                    startByte = state.startByte,
+                    endByte = state.endByte,
+                    downloadedBytes = if (done) length else state.downloadedBytes,
+                    status = if (done) SegmentStatus.COMPLETED else SegmentStatus.PENDING
+                )
+            }
+        }
     }
+
+    /** Partial file path — the public filename is only touched on completion. */
+    private val partFilePath: String get() = item.filePath + PART_SUFFIX
 
     // ── State ───────────────────────────────────────────────────────────
 
@@ -94,6 +154,16 @@ class DownloadTask(
     /** Timestamp of last time actual bytes were received (for stall detection). */
     @Volatile private var lastBytesReceivedTime = 0L
 
+    /** Set by [cancel]; finalization checks it so a racing cancel cannot orphan files. */
+    @Volatile private var cancelled = false
+
+    /**
+     * Last successful segment snapshot. [snapshotSegments] must never block the
+     * caller (it runs on the main thread during service detach), so on lock
+     * contention it returns this instead of waiting on [segmentsMutex].
+     */
+    @Volatile private var lastGoodSegmentSnapshot: List<PersistedSegment> = emptyList()
+
     // ===================================================================
     //  Public API
     // ===================================================================
@@ -107,6 +177,7 @@ class DownloadTask(
      *                     are independent.
      */
     fun start(parentScope: CoroutineScope) {
+        cancelled = false
         val supervisorJob = SupervisorJob(parentScope.coroutineContext[Job])
         taskScope = CoroutineScope(supervisorJob + Dispatchers.IO)
 
@@ -143,10 +214,15 @@ class DownloadTask(
         taskScope?.cancel()
         taskScope = null
 
-        // Mark remaining segments as paused
-        segments.forEach { seg ->
-            if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
-                seg.status = SegmentStatus.PAUSED
+        // Mark remaining segments as paused (under the mutex — dynamic splitting
+        // can append entries while this runs)
+        runBlocking {
+            segmentsMutex.withLock {
+                segments.forEach { seg ->
+                    if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
+                        seg.status = SegmentStatus.PAUSED
+                    }
+                }
             }
         }
 
@@ -158,11 +234,13 @@ class DownloadTask(
      * Resumes the download from where it left off.
      * Only segments with remaining bytes are restarted.
      *
-     * If segments are empty (e.g., after service restart + restore from persistence),
-     * the download is re-probed and re-segmented, starting from scratch but the
-     * file will be overwritten (this is safe because segment state wasn't persisted).
+     * If segments are empty (e.g., after service restart + restore from
+     * persistence), [resumeAfterRestart] verifies the persisted segment state
+     * against the on-disk .part file before resuming; anything inconsistent
+     * triggers a clean restart.
      */
     fun resume(parentScope: CoroutineScope) {
+        cancelled = false
         Log.d(TAG, "Resuming: ${item.fileName} " +
                 "(segments=${segments.size}, downloaded=${item.downloadedBytes})")
 
@@ -174,6 +252,11 @@ class DownloadTask(
         // Save downloaded bytes before any reset — needed for range re-probe
         val pausedAtBytes = item.downloadedBytes
 
+        // Read the segment list under the mutex — dynamic splitting mutates it.
+        val hasRemaining = runBlocking {
+            segmentsMutex.withLock { segments.any { it.hasRemainingBytes } }
+        }
+
         val supervisorJob = SupervisorJob(parentScope.coroutineContext[Job])
         taskScope = CoroutineScope(supervisorJob + Dispatchers.IO)
 
@@ -183,7 +266,7 @@ class DownloadTask(
             try {
                 when {
                     // Case 1: We have segments with remaining bytes (normal pause/resume)
-                    segments.isNotEmpty() && segments.any { it.hasRemainingBytes } -> {
+                    segments.isNotEmpty() && hasRemaining -> {
                         resumeSegments(pausedAtBytes)
                     }
                     // Case 2: No segments but partial file exists (app restart with progress)
@@ -192,7 +275,14 @@ class DownloadTask(
                                 "(${item.downloadedBytes}/${item.totalBytes} bytes)")
                         resumeAfterRestart()
                     }
-                    // Case 3: No segments, no progress — full fresh download
+                    // Case 3: All segments complete, zero bytes left (e.g. a failed
+                    // finalization rename). Re-run finalization — a full re-download
+                    // would waste every byte already on disk.
+                    segments.isNotEmpty() && !hasRemaining -> {
+                        Log.d(TAG, "All segments complete, retrying finalization: ${item.fileName}")
+                        handleAllSegmentsCompleted()
+                    }
+                    // Case 4: No segments, no progress — full fresh download
                     else -> {
                         Log.d(TAG, "No segments or progress, starting fresh: ${item.fileName}")
                         executeDownload()
@@ -213,12 +303,15 @@ class DownloadTask(
     /**
      * Cancels the download permanently and deletes the partial file.
      *
-     * File deletion is done **synchronously** on the calling thread to avoid
-     * being lost if a coroutine scope is cancelled (e.g., service destruction
-     * shortly after the last download is cancelled).
+     * File close/delete runs on the cleanup scope's IO dispatcher — never on
+     * the calling (main) thread, which would jank the UI on large files.
      */
     fun cancel(cleanupScope: CoroutineScope? = null) {
         Log.d(TAG, "Cancelling: ${item.fileName}")
+
+        // Flag first — a completion rename racing this cancel must see it and
+        // delete the just-renamed final file instead of orphaning it.
+        cancelled = true
 
         // Cancel active OkHttp calls FIRST — this interrupts blocking stream.read()
         // so segments stop within milliseconds instead of waiting for timeout.
@@ -228,13 +321,12 @@ class DownloadTask(
         taskScope?.cancel()
         taskScope = null
 
-        // Close and delete the file SYNCHRONOUSLY.
-        // We cannot rely on async deletion — if the service is being destroyed
-        // (e.g., this was the last download), the engineScope coroutine would be
-        // cancelled before the delete runs, leaving orphaned files on disk.
         val writer = fileWriter
         fileWriter = null
-        writer?.deleteFile()
+        val scope = cleanupScope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch(Dispatchers.IO) {
+            writer?.deleteFile()
+        }
 
         updateStatus(DownloadStatus.CANCELLED)
     }
@@ -286,8 +378,13 @@ class DownloadTask(
         val headers = buildHeaderMap()
 
         // ── Step 1: Probe the server ─────────────────────────────────────
-        Log.d(TAG, "Probing: ${item.url}")
-        val probeResult = HttpProber.probe(client, item.url, headers)
+        // Reuse the upstream probe (filename resolution) when available so the
+        // URL is only hit once — GET fallbacks can burn one-time signed URLs.
+        val probeResult = initialProbe ?: run {
+            Log.d(TAG, "Probing: ${item.url}")
+            HttpProber.probe(client, item.url, headers)
+        }
+        initialProbe = null
 
         val totalSize = probeResult.contentLength
         supportsRanges = probeResult.supportsRanges
@@ -308,8 +405,11 @@ class DownloadTask(
             nextSegmentId = segments.size
         }
 
-        // ── Step 3: Pre-allocate file ────────────────────────────────────
-        val writer = SegmentFileWriter(item.filePath, totalSize)
+        // ── Step 3: Pre-allocate the .part file ──────────────────────────
+        // Fresh start — never build on stale bytes (unknown-size downloads get
+        // no pre-allocation truncation, so leftovers would survive the rename).
+        File(partFilePath).delete()
+        val writer = SegmentFileWriter(partFilePath, totalSize)
         fileWriter = writer
 
         if (totalSize > 0) {
@@ -345,9 +445,11 @@ class DownloadTask(
     /**
      * Resumes a download after the app was restarted (segments lost from memory).
      *
-     * Re-probes the server to check range support. If ranges are supported,
-     * creates a single segment from [item.downloadedBytes] to [item.totalBytes],
-     * preserving the partially downloaded file. If not, has to restart from scratch.
+     * Resume is only attempted when the persisted per-segment state is present
+     * AND the on-disk .part file is consistent with it — segments complete out
+     * of order, so assuming [0..downloadedBytes] is contiguous would resume
+     * into zero-filled holes. Any missing/inconsistent state falls back to a
+     * clean restart.
      */
     private suspend fun resumeAfterRestart() {
         val headers = buildHeaderMap()
@@ -364,8 +466,7 @@ class DownloadTask(
                 Log.w(TAG, "File size changed on server " +
                         "(was ${item.totalBytes}, now ${probeResult.contentLength}). " +
                         "Starting fresh.")
-                item.downloadedBytes = 0
-                executeDownload()
+                restartCleanly()
                 return
             }
             item.totalBytes = probeResult.contentLength
@@ -374,41 +475,44 @@ class DownloadTask(
         if (!supportsRanges) {
             // Server doesn't support ranges — must restart from scratch
             Log.w(TAG, "Server doesn't support ranges. Starting fresh: ${item.fileName}")
-            item.downloadedBytes = 0
-            executeDownload()
+            restartCleanly()
             return
         }
 
-        // Verify the partial file still exists on disk
-        val file = java.io.File(item.filePath)
-        if (!file.exists()) {
+        // Verify the partial (.part) file still exists on disk
+        val partFile = File(partFilePath)
+        if (!partFile.exists()) {
             Log.w(TAG, "Partial file missing. Starting fresh: ${item.fileName}")
-            item.downloadedBytes = 0
-            executeDownload()
+            restartCleanly()
             return
         }
 
-        // Track base bytes so progress aggregation is correct
-        baseDownloadedBytes = item.downloadedBytes
+        val rebuilt = rebuildSegmentsFromPersistedState(partFile)
+        if (rebuilt == null) {
+            Log.w(TAG, "Persisted segment state missing or inconsistent — " +
+                    "restarting cleanly: ${item.fileName}")
+            restartCleanly()
+            return
+        }
 
-        // Create multiple segments for the remaining byte range (parallel downloads)
-        val remainingStart = item.downloadedBytes
-        val remainingEnd = item.totalBytes - 1
-        val resumeSegments = SegmentPlan.createSegmentsForRange(remainingStart, remainingEnd)
+        // Segments carry their own progress; no base-byte offset needed
+        baseDownloadedBytes = 0
+        item.downloadedBytes = rebuilt.sumOf { it.effectiveDownloadedBytes }
 
         segmentsMutex.withLock {
             segments.clear()
-            segments.addAll(resumeSegments)
-            nextSegmentId = resumeSegments.size
+            segments.addAll(rebuilt)
+            nextSegmentId = rebuilt.size
         }
 
         // Open file writer without pre-allocation (file already exists)
-        val writer = SegmentFileWriter(item.filePath, item.totalBytes)
+        val writer = SegmentFileWriter(partFilePath, item.totalBytes)
         fileWriter = writer
 
-        val remainingKb = (remainingEnd - remainingStart + 1) / 1024
-        Log.d(TAG, "Resuming from byte ${item.downloadedBytes} / ${item.totalBytes} " +
-                "(${remainingKb}KB remaining, ${resumeSegments.size} segments)")
+        val remainingBytes = rebuilt.sumOf { it.remainingBytes }
+        Log.d(TAG, "Resuming from verified segment state: ${item.fileName} " +
+                "(${item.downloadedBytes}/${item.totalBytes} bytes, " +
+                "${remainingBytes / 1024}KB remaining, ${rebuilt.size} segments)")
 
         lastSpeedCalcTime = System.currentTimeMillis()
 
@@ -417,9 +521,81 @@ class DownloadTask(
         } catch (e: RangeNotSupportedException) {
             Log.w(TAG, "Server doesn't actually support ranges on restart-resume, falling back: ${item.fileName}")
             supportsRanges = false
-            item.downloadedBytes = 0
-            baseDownloadedBytes = 0
-            executeDownload()
+            restartCleanly()
+        }
+    }
+
+    /**
+     * Rebuilds in-memory segments from the persisted state, verifying that the
+     * .part file can actually back them. Returns null when the state is absent
+     * or inconsistent (caller must restart cleanly).
+     */
+    private fun rebuildSegmentsFromPersistedState(partFile: File): List<DownloadSegment>? {
+        if (restoredSegments.isEmpty() || item.totalBytes <= 0) return null
+
+        // The pre-allocated .part file must still cover every persisted byte range
+        if (partFile.length() < item.totalBytes) {
+            Log.w(TAG, "Part file too short (${partFile.length()} < ${item.totalBytes})")
+            return null
+        }
+        return rebuildSegmentsFromState(restoredSegments, item.totalBytes)
+    }
+
+    /**
+     * Discards unverifiable progress and starts over. Deletes the stale .part
+     * file so pre-allocation never builds on top of zero-holes.
+     */
+    private suspend fun restartCleanly() {
+        item.downloadedBytes = 0
+        baseDownloadedBytes = 0
+        segmentsMutex.withLock { segments.clear() }
+        File(partFilePath).delete()
+        executeDownload()
+    }
+
+    /**
+     * Point-in-time snapshot of segment state for persistence. Segments are
+     * captured individually because they complete out of order — a plain
+     * downloadedBytes counter cannot describe which ranges are actually on disk.
+     *
+     * Contract:
+     *  - Non-blocking: runs on the main thread during service detach, so lock
+     *    contention falls back to [lastGoodSegmentSnapshot] instead of waiting.
+     *  - Restored fallback: in-memory segments are EMPTY for a task restored
+     *    from persistence but not yet resumed. Persisting that empty list would
+     *    wipe the resume state, so fall back to the restored segments (they are
+     *    only used when they cover the current file size). Gated by
+     *    [allowRestoredFallback] — the engine only enables it for items that
+     *    are still resumable (DOWNLOADING/PAUSED).
+     */
+    fun snapshotSegments(allowRestoredFallback: Boolean = true): List<PersistedSegment> {
+        if (item.totalBytes <= 0) return emptyList()
+
+        if (!segmentsMutex.tryLock()) {
+            return lastGoodSegmentSnapshot
+        }
+        return try {
+            val current = segments.map { seg ->
+                PersistedSegment(
+                    startByte = seg.startByte,
+                    endByte = seg.endByte,
+                    downloadedBytes = seg.effectiveDownloadedBytes,
+                    completed = seg.status == SegmentStatus.COMPLETED
+                )
+            }
+            if (current.isNotEmpty()) {
+                lastGoodSegmentSnapshot = current
+                current
+            } else if (allowRestoredFallback &&
+                restoredSegments.isNotEmpty() &&
+                restoredSegments.all { it.endByte < item.totalBytes }
+            ) {
+                restoredSegments
+            } else {
+                current
+            }
+        } finally {
+            segmentsMutex.unlock()
         }
     }
 
@@ -430,7 +606,7 @@ class DownloadTask(
         val headers = buildHeaderMap()
         val writer = fileWriter ?: run {
             // Re-create file writer if it was closed
-            val w = SegmentFileWriter(item.filePath, item.totalBytes)
+            val w = SegmentFileWriter(partFilePath, item.totalBytes)
             fileWriter = w
             w
         }
@@ -478,14 +654,17 @@ class DownloadTask(
             }
         }
 
-        // Reset retry counts for paused/failed segments
-        segments.forEach { seg ->
-            if (seg.status == SegmentStatus.PAUSED || seg.status == SegmentStatus.FAILED) {
-                seg.retryCount = 0
-                seg.status = SegmentStatus.PENDING
-                // For non-range servers, we keep seg.downloadedBytes as-is.
-                // SegmentDownloader will skip the already-downloaded bytes
-                // from the response stream, preserving progress.
+        // Reset retry counts for paused/failed segments (under the mutex —
+        // dynamic splitting mutates the list)
+        segmentsMutex.withLock {
+            segments.forEach { seg ->
+                if (seg.status == SegmentStatus.PAUSED || seg.status == SegmentStatus.FAILED) {
+                    seg.retryCount = 0
+                    seg.status = SegmentStatus.PENDING
+                    // For non-range servers, we keep seg.downloadedBytes as-is.
+                    // SegmentDownloader will skip the already-downloaded bytes
+                    // from the response stream, preserving progress.
+                }
             }
         }
 
@@ -666,8 +845,15 @@ class DownloadTask(
         if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return
         lastProgressTime = now
 
-        // Aggregate downloaded bytes from all segments + pre-existing bytes
-        val totalDownloaded = baseDownloadedBytes + segments.sumOf { it.effectiveDownloadedBytes }
+        // Aggregate downloaded bytes from all segments + pre-existing bytes.
+        // Snapshot the list under the mutex — dynamic splitting appends entries.
+        // On contention just skip this tick; the next one picks the state up.
+        val segmentSnapshot: List<DownloadSegment> = if (segmentsMutex.tryLock()) {
+            try { segments.toList() } finally { segmentsMutex.unlock() }
+        } else {
+            return
+        }
+        val totalDownloaded = baseDownloadedBytes + segmentSnapshot.sumOf { it.effectiveDownloadedBytes }
         item.downloadedBytes = totalDownloaded
 
         // Calculate speed — 1-second window
@@ -706,8 +892,12 @@ class DownloadTask(
         taskScope?.cancel()
         taskScope = null
 
-        // Mark all active segments as paused
-        segments.forEach { seg ->
+        // Mark all active segments as paused (snapshot under the mutex —
+        // dynamic splitting mutates the list)
+        val snapshot = runBlocking {
+            segmentsMutex.withLock { segments.toList() }
+        }
+        snapshot.forEach { seg ->
             if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
                 seg.status = SegmentStatus.PAUSED
             }
@@ -718,7 +908,7 @@ class DownloadTask(
         item.downloadSpeedBytesPerSecond = 0
 
         Log.d(TAG, "Network lost — auto-pausing: ${item.fileName} " +
-                "(${segments.count { it.hasRemainingBytes }} segments paused)")
+                "(${snapshot.count { it.hasRemainingBytes }} segments paused)")
 
         updateStatus(DownloadStatus.PAUSED)
     }
@@ -742,8 +932,18 @@ class DownloadTask(
      * Called when all segments have completed successfully.
      */
     private suspend fun handleAllSegmentsCompleted() {
+        // A cancel can race the completion rename — bail before finalizing so
+        // cancel's own cleanup owns the file state.
+        if (cancelled) {
+            Log.d(TAG, "Cancelled before finalization: ${item.fileName}")
+            return
+        }
+
         // Aggregate actual bytes from segments + base bytes from previous session
-        val actualDownloaded = baseDownloadedBytes + segments.sumOf { it.effectiveDownloadedBytes }
+        // (snapshot under the mutex — dynamic splitting mutates the list)
+        val actualDownloaded = baseDownloadedBytes + segmentsMutex.withLock {
+            segments.sumOf { it.effectiveDownloadedBytes }
+        }
 
         if (item.totalBytes > 0) {
             item.downloadedBytes = item.totalBytes
@@ -758,10 +958,54 @@ class DownloadTask(
 
         // Close the file writer
         fileWriter?.close()
+        fileWriter = null
+
+        if (!finalizeRenamedFile()) return
 
         updateStatus(DownloadStatus.COMPLETED)
         Log.d(TAG, "Download completed: ${item.fileName} " +
                 "(${actualDownloaded / 1024}KB)")
+    }
+
+    /**
+     * Promotes the finished `.part` file to its public name. Only after a
+     * successful rename is the download considered complete, so the media
+     * scanner and file pickers never observe a half-written file.
+     *
+     * Cancellation is checked before AND after the rename: if a cancel wins
+     * the race while the rename is in flight, the just-renamed final file is
+     * deleted so it is not orphaned (cancel's own cleanup only knows about the
+     * `.part` path).
+     */
+    private fun finalizeRenamedFile(): Boolean {
+        if (cancelled) {
+            File(partFilePath).delete()
+            return false
+        }
+
+        val partFile = File(partFilePath)
+        val finalFile = File(item.filePath)
+        if (partFile.exists()) {
+            if (finalFile.exists()) finalFile.delete()
+            if (!partFile.renameTo(finalFile)) {
+                Log.e(TAG, "Failed to rename part file to ${item.filePath}")
+                item.errorMessage = ERROR_FINALIZE_FAILED
+                updateStatus(DownloadStatus.FAILED)
+                return false
+            }
+            if (cancelled) {
+                // Cancel landed during the rename — remove the orphaned final file.
+                finalFile.delete()
+                File(partFilePath).delete()
+                return false
+            }
+        } else if (!finalFile.exists()) {
+            Log.e(TAG, "Download output missing at completion: ${item.filePath}")
+            item.errorMessage = ERROR_FILE_MISSING
+            updateStatus(DownloadStatus.FAILED)
+            return false
+        }
+        return true
     }
 
     /**

@@ -19,7 +19,8 @@ data class DownloadItem(
     var failureCount: Int = 0, // Number of times this download has failed
     var downloadSpeedBytesPerSecond: Long = 0, // Current download speed in bytes per second
     var etaSeconds: Long = -1, // Estimated time remaining in seconds, -1 if unknown
-    var wasWaitingForNetwork: Boolean = false // Flag to track if download was paused due to network loss
+    var wasWaitingForNetwork: Boolean = false, // Flag to track if download was paused due to network loss
+    var errorMessage: String? = null // User-facing reason when the download fails (shown in the failure notification)
 ) {
     val progress: Int
         get() = when {

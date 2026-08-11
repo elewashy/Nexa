@@ -3,6 +3,7 @@ package com.elewashy.nexa.feature.splash.domain.usecase
 import android.util.Log
 import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.core.common.IoDispatcher
+import com.elewashy.nexa.core.storage.FilterTimestampStore
 import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
 import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -35,6 +36,7 @@ class InitializeBlocklistsUseCase @Inject constructor(
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
     private val adBlockRepository: AdBlockRepository,
     private val validLinkRepository: ValidLinkRepository,
+    private val filterTimestampStore: FilterTimestampStore,
 ) {
 
     operator fun invoke() {
@@ -48,6 +50,7 @@ class InitializeBlocklistsUseCase @Inject constructor(
                     adBlockRepository.refreshDueAdBlockLists()
                 } catch (e: Exception) {
                     Log.e(TAG, "AdBlocker update failed: ${e.message}", e)
+                    false
                 }
             }
             val validLinksUpdate = async {
@@ -55,11 +58,16 @@ class InitializeBlocklistsUseCase @Inject constructor(
                     validLinkRepository.updateValidLinks()
                 } catch (e: Exception) {
                     Log.e(TAG, "ValidLinkRepository update failed: ${e.message}", e)
+                    false
                 }
             }
 
-            adBlockerUpdate.await()
-            validLinksUpdate.await()
+            val adBlockSuccess = adBlockerUpdate.await()
+            val validLinksSuccess = validLinksUpdate.await()
+
+            if (adBlockSuccess && validLinksSuccess) {
+                filterTimestampStore.save()
+            }
 
             Log.d(TAG, "Blocklists initialized successfully")
         }

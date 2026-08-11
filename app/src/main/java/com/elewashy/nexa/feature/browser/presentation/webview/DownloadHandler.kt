@@ -48,6 +48,12 @@ object DownloadHandler {
             val finalUrl = url
             val downloadUri = finalUrl.toUri()
             val scheme = downloadUri.scheme?.lowercase()
+            if (scheme == "blob") {
+                // blob: payloads need a blob reader that isn't wired up yet;
+                // say so instead of claiming the link is invalid.
+                Toast.makeText(context, context.getString(R.string.file_type_not_downloadable), Toast.LENGTH_LONG).show()
+                return
+            }
             if (scheme != "http" && scheme != "https" || downloadUri.host.isNullOrBlank()) {
                 Toast.makeText(context, context.getString(R.string.invalid_link), Toast.LENGTH_LONG).show()
                 return

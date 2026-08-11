@@ -100,6 +100,20 @@ fun SettingsNavigation(
         composable(SettingsDestination.About.route) {
             AboutSettingsScreen(
                 onBackClick = navController::popBackStack,
+                onContributorsClick = { navController.navigateToSettingsDestination(SettingsDestination.Contributors) },
+                onLicensesClick = { navController.navigateToSettingsDestination(SettingsDestination.Licenses) },
+            )
+        }
+
+        composable(SettingsDestination.Contributors.route) {
+            ContributorsSettingsScreen(
+                onBackClick = navController::popBackStack,
+            )
+        }
+
+        composable(SettingsDestination.Licenses.route) {
+            LicensesSettingsScreen(
+                onBackClick = navController::popBackStack,
             )
         }
     }

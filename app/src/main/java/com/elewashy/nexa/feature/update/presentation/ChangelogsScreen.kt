@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.paging.compose.collectAsLazyPagingItems
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.update.presentation.components.ChangelogList
 import com.elewashy.nexa.ui.icons.ArrowBack
@@ -27,7 +26,6 @@ fun ChangelogsScreen(
     viewModel: ChangelogsViewModel = hiltViewModel(),
 ) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
-    val changelogs = viewModel.changelogs.collectAsLazyPagingItems()
 
     Scaffold(
         topBar = {
@@ -47,7 +45,7 @@ fun ChangelogsScreen(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
         ChangelogList(
-            changelogs = changelogs,
+            state = viewModel.uiState,
             modifier = Modifier.padding(paddingValues),
         )
     }

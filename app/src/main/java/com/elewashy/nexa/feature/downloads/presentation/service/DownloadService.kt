@@ -3,7 +3,6 @@ package com.elewashy.nexa.feature.downloads.presentation.service
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 
@@ -119,7 +118,15 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            // Sticky restart with no pending command — stop unless something is
+            // genuinely ACTIVE (DOWNLOADING/PENDING) or a start is in flight.
+            // Paused-only work must not hold a dataSync FGS behind a phantom
+            // Preparing notification; resuming restarts the service on demand.
+            repository.stopServiceIfIdle()
+            return START_STICKY
+        }
+        when (intent.action) {
             ACTION_START_DOWNLOAD  -> handleStartDownload(intent)
             ACTION_PAUSE_DOWNLOAD  -> handleControlIntent(intent, Control.PAUSE)
             ACTION_RESUME_DOWNLOAD -> handleControlIntent(intent, Control.RESUME)
@@ -139,15 +146,16 @@ class DownloadService : Service() {
     /**
      * Called by the system when the [android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC]
      * foreground service has exhausted its 6-hour daily quota (Android 15+).
-     * We must call [stopSelf] promptly — the system throws a fatal
-     * [android.app.RemoteServiceException] if we don't.
+     * We must leave the foreground and call [stopSelf] promptly — the system
+     * throws a fatal [android.app.RemoteServiceException] if we don't.
      */
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onTimeout(startId: Int) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            Log.w(TAG, "dataSync FGS quota exhausted — stopping service (startId=$startId)")
-            stopSelf(startId)
-        }
+        Log.w(TAG, "dataSync FGS quota exhausted (startId=$startId) — pausing downloads")
+        // Pauses active downloads, posts explanatory notifications, and demotes
+        // the service out of the foreground; downloads stay resumable.
+        repository.handleForegroundTimeout()
+        stopSelf(startId)
     }
 
     // ===================================================================

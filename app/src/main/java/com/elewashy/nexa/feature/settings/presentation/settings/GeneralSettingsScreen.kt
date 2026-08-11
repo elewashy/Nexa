@@ -31,7 +31,9 @@ import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.settings.ExpressiveListIcon
 import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SettingsListItem
+import com.elewashy.nexa.ui.components.settings.SwitchSettingsItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
+import com.elewashy.nexa.ui.icons.Download
 import com.elewashy.nexa.ui.icons.Language
 import com.elewashy.nexa.ui.icons.Palette
 import com.elewashy.nexa.ui.icons.Speed
@@ -46,6 +48,7 @@ fun GeneralSettingsScreen(
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val highRefreshRate by viewModel.highRefreshRate.collectAsStateWithLifecycle()
+    val videoDownloadButton by viewModel.videoDownloadButton.collectAsStateWithLifecycle()
     val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
 
     val scrollState = rememberScrollState()
@@ -126,6 +129,25 @@ fun GeneralSettingsScreen(
                     supportingContent = stringResource(R.string.customize_theme_description),
                     leadingContent = { ExpressiveListIcon(icon = Palette) },
                     onClick = onCustomizeThemeClick,
+                )
+            }
+
+            ListSection(
+                modifier = Modifier.widthIn(max = adaptiveInfo.listMaxWidth),
+                title = stringResource(R.string.downloads),
+                leadingContent = {
+                    Icon(
+                        Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            ) {
+                SwitchSettingsItem(
+                    headlineContent = stringResource(R.string.video_download_button),
+                    supportingContent = stringResource(R.string.video_download_button_description),
+                    checked = videoDownloadButton,
+                    onCheckedChange = viewModel::setVideoDownloadButton,
                 )
             }
 
