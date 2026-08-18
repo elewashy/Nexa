@@ -26,6 +26,7 @@ import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
 import com.elewashy.nexa.feature.downloads.data.notification.DownloadNotificationManager
 import com.elewashy.nexa.feature.downloads.data.persistence.DownloadPersistence
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
+import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadRequest
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
@@ -105,11 +106,13 @@ class DownloadRepositoryImpl @Inject constructor(
     private val reservedUrls = mutableSetOf<String>()
 
     /**
-     * Filenames reserved by downloads that are not yet terminal. `uniqueName()`
-     * only sees the filesystem: two concurrent creations can resolve the same
-     * name before either `.part` file exists, ending up sharing one `.part`
-     * path (corruption). Reservations close that window; released when an item
-     * reaches a terminal state (the file then exists on disk or is deleted).
+     * Filenames reserved by downloads that can still claim that name.
+     * `uniqueName()` only sees the filesystem: two concurrent creations can
+     * resolve the same name before either `.part` file exists, ending up
+     * sharing one `.part` path (corruption). Reservations close that window.
+     * Released when the name can no longer be claimed: COMPLETED (the final
+     * file on disk now guards it) or removal/cancellation. Kept while FAILED —
+     * a retry reuses [DownloadItem.filePath] without re-resolving the name.
      * Main thread only.
      */
     private val reservedFileNames = mutableSetOf<String>()
@@ -147,6 +150,15 @@ class DownloadRepositoryImpl @Inject constructor(
     private var flushJob: Job? = null
 
     /**
+     * Automatic retry for FAILED downloads. Transient failures (server
+     * hiccups, unreachable resume probes, mid-stream resets) are retried on a
+     * backoff schedule before the download is left failed for manual action.
+     * Both maps are main-thread only (all mutations happen on Main.immediate).
+     */
+    private val autoRetryCounts = mutableMapOf<Long, Int>()
+    private val autoRetryJobs = mutableMapOf<Long, Job>()
+
+    /**
      * Timestamp of last notification update — throttled to avoid Android's
      * notification rate limit (5/sec). Repository emissions still fire at full rate.
      */
@@ -181,6 +193,16 @@ class DownloadRepositoryImpl @Inject constructor(
     /** Set as soon as the init coroutine is launched — the gate completes later. */
     private var initStarted = false
 
+    /**
+     * True once persisted state has been loaded into [downloadItems]. Flushes
+     * are gated on this: a detach/periodic flush that runs before the async
+     * load finishes would otherwise write an EMPTY snapshot over the state
+     * file (sticky service restart + stopServiceIfIdle → detach) and wipe
+     * the entire download history.
+     */
+    @Volatile
+    private var stateLoaded = false
+
     @Synchronized
     private fun ensureInitialised() {
         if (initStarted) return
@@ -190,6 +212,7 @@ class DownloadRepositoryImpl @Inject constructor(
                 withContext(Dispatchers.IO) {
                     loadDownloadState()
                 }
+                stateLoaded = true
                 withContext(Dispatchers.Main.immediate) {
                     // Promote to foreground only when restored work is genuinely
                     // ACTIVE — a sticky restart with only paused work must not
@@ -267,10 +290,13 @@ class DownloadRepositoryImpl @Inject constructor(
         // Final flush to disk — snapshot items AND segments together here on the
         // main thread so they stay consistent, then do the Gson serialization
         // and disk write on IO (never on the caller/main thread). The app scope
-        // outlives the service, so the flush survives onDestroy.
-        val snapshot = takeStateSnapshot()
-        appScope.launch(Dispatchers.IO) {
-            persistence.forceFlush(snapshot.items, snapshot.segments)
+        // outlives the service, so the flush survives onDestroy. Skipped when
+        // state never loaded — flushing an empty map would wipe the file.
+        if (stateLoaded) {
+            val snapshot = takeStateSnapshot()
+            appScope.launch(Dispatchers.IO) {
+                persistence.forceFlush(snapshot.items, snapshot.segments, snapshot.seq)
+            }
         }
 
         unregisterNetworkCallback()
@@ -319,6 +345,10 @@ class DownloadRepositoryImpl @Inject constructor(
         // hold a dataSync FGS (6h quota), and resuming them restarts the
         // service on demand via the notification/UI intents.
         if (hasActiveWork()) return
+        // Network-waiting items need the registered connectivity callback to
+        // auto-resume — stopping the service would unregister it and strand
+        // them until a manual resume.
+        if (downloadItems.values.any { it.wasWaitingForNetwork }) return
         Log.d(TAG, "No active work — stopping download service")
         svc.stopSelf()
     }
@@ -396,41 +426,93 @@ class DownloadRepositoryImpl @Inject constructor(
     override suspend fun pause(id: Long) = withContext(Dispatchers.Main.immediate) {
         awaitInitialised()
         downloadItems[id]?.let { item ->
+            // Manual pause supersedes any scheduled automatic retry.
+            cancelAutoRetry(item.id)
             if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.PENDING) {
                 engine.pause(item.id)
                 Log.d(TAG, "Pausing: ${item.fileName}")
             }
         }
+        // The command may have been a no-op (already paused/completed item,
+        // stale notification action) — don't leave a deferred FGS lingering.
+        stopServiceIfIdle()
         Unit
     }
 
     override suspend fun resume(id: Long) = withContext(Dispatchers.Main.immediate) {
         awaitInitialised()
         downloadItems[id]?.let { item ->
+            // A manual resume resets the automatic-retry budget.
+            cancelAutoRetry(item.id)
             if (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED) {
-                if (!hasStorageWritePermission()) {
-                    // Keep the actionable error instead of failing mid-write in the engine
-                    item.errorMessage = context.getString(R.string.storage_permission_required_downloads)
-                    updateStatus(item, DownloadStatus.FAILED)
-                    Log.w(TAG, "Resume blocked — storage permission missing: ${item.fileName}")
-                    return@withContext
+                if (!resumeInternal(item)) {
+                    // Blocked (missing permission) or nothing resumable — the
+                    // service this command started must not be left idle.
+                    stopServiceIfIdle()
                 }
+            } else {
+                stopServiceIfIdle()
+            }
+        } ?: stopServiceIfIdle()
+        Unit
+    }
 
-                item.failureCount = 0
+    /**
+     * Starts/resumes the given item. Caller must be on the main thread and
+     * have checked the item is PAUSED/FAILED. Shared by manual resume and
+     * the automatic-retry scheduler.
+     *
+     * @return `true` when the item is now running or queued to run (possibly
+     *         via a service start that completes asynchronously); `false` when
+     *         nothing was started (missing permission, service not startable
+     *         from the current context) — callers use that to stop an idle
+     *         service or defer a retry instead of stranding the item.
+     */
+    private fun resumeInternal(item: DownloadItem): Boolean {
+        if (!hasStorageWritePermission()) {
+            // Keep the actionable error instead of failing mid-write in the engine
+            item.errorMessage = DownloadTask.ERROR_STORAGE_PERMISSION
+            updateStatus(item, DownloadStatus.FAILED)
+            Log.w(TAG, "Resume blocked — storage permission missing: ${item.fileName}")
+            return false
+        }
 
-                if (engine.hasTask(item.id)) {
-                    engine.resume(item.id)
-                    Log.d(TAG, "Resuming: ${item.fileName}")
-                } else {
-                    // Task not in engine (e.g. restored from persistence) — re-enqueue
-                    // with its persisted segment state so resume is verified on disk.
-                    Log.d(TAG, "Re-enqueueing: ${item.fileName}")
-                    engine.restoreTask(item, persistence.restoredSegments(item.id))
-                    engine.resume(item.id)
-                }
+        if (attachedService == null) {
+            // A download must run under the foreground service or the system
+            // kills it as soon as the app is backgrounded. This happens when
+            // the user resumes from the Downloads screen after the idle
+            // service stopped itself — route through the service, which calls
+            // back into resume() once attached.
+            Log.d(TAG, "Resume routed through service (not attached): ${item.fileName}")
+            return try {
+                context.startForegroundService(
+                    android.content.Intent(context, DownloadService::class.java)
+                        .setAction(DownloadService.ACTION_RESUME_DOWNLOAD)
+                        .putExtra(DownloadService.EXTRA_DOWNLOAD_ID, item.id)
+                )
+                true
+            } catch (e: Exception) {
+                // Android 12+ denies startForegroundService from the background
+                // — the item stays FAILED for the next retry or manual action.
+                Log.e(TAG, "Failed to start service for resume: ${item.fileName}", e)
+                false
             }
         }
-        Unit
+
+        item.failureCount = 0
+        item.errorMessage = null
+
+        if (engine.hasTask(item.id)) {
+            engine.resume(item.id)
+            Log.d(TAG, "Resuming: ${item.fileName}")
+        } else {
+            // Task not in engine (e.g. restored from persistence) — re-enqueue
+            // with its persisted segment state so resume is verified on disk.
+            Log.d(TAG, "Re-enqueueing: ${item.fileName}")
+            engine.restoreTask(item, persistence.restoredSegments(item.id))
+            engine.resume(item.id)
+        }
+        return true
     }
 
     override suspend fun retry(id: Long) = resume(id)
@@ -479,7 +561,9 @@ class DownloadRepositoryImpl @Inject constructor(
                     deleteDownloadedFile(filePath + DownloadTask.PART_SUFFIX)
                 }
 
+                cancelAutoRetry(item.id)
                 persistence.markDirty()
+                flushNow()
                 emit(force = true) // Item removed — structural change, show it now
                 stopServiceIfIdle()
             }
@@ -503,35 +587,37 @@ class DownloadRepositoryImpl @Inject constructor(
             }
             DownloadStatus.DOWNLOADING -> {
                 item.wasWaitingForNetwork = false
+                cancelAutoRetry(item.id)
                 updateStatus(item, DownloadStatus.DOWNLOADING)
             }
             DownloadStatus.PAUSED -> {
+                cancelAutoRetry(item.id)
                 item.downloadSpeedBytesPerSecond = 0
                 updateStatus(item, DownloadStatus.PAUSED)
 
-                // Show appropriate notification based on context
-                when {
-                    item.wasWaitingForNetwork -> {
-                        notifManager?.showNetworkWaitNotification(item)
-                    }
-                    item.failureCount >= 2 -> {
-                        notifManager?.showFailurePauseNotification(item)
-                    }
+                if (item.wasWaitingForNetwork) {
+                    notifManager?.showNetworkWaitNotification(item)
                 }
             }
             DownloadStatus.COMPLETED -> {
+                cancelAutoRetry(item.id)
                 item.downloadSpeedBytesPerSecond = 0
                 item.failureCount = 0
+                // The final file now guards the name on disk — release the
+                // reservation or the set grows with every completed download.
+                reservedFileNames.remove(item.fileName)
                 updateStatus(item, DownloadStatus.COMPLETED)
                 scanMediaFile(item.filePath, item.mimeType)
             }
             DownloadStatus.FAILED -> {
                 updateStatus(item, DownloadStatus.FAILED)
+                scheduleAutoRetry(item)
             }
             DownloadStatus.CANCELLED -> {
                 // CANCELLED is normally handled by cancelInternal().
                 // This path only fires if the engine cancels internally
                 // (e.g., a cancel was requested while still in the queue).
+                cancelAutoRetry(item.id)
                 if (downloadItems.containsKey(item.id)) {
                     item.status = DownloadStatus.CANCELLED
                     downloadItems.remove(item.id)
@@ -547,6 +633,57 @@ class DownloadRepositoryImpl @Inject constructor(
         // Terminal states may have emptied the work queue — stop the service
         // instead of letting a started service linger until process death.
         stopServiceIfIdle()
+    }
+
+    // ===================================================================
+    //  Automatic retry
+    // ===================================================================
+
+    /**
+     * Schedules a retry for a FAILED download on the backoff schedule.
+     * Permanent failures (dead URL, missing file, missing permission) are
+     * left failed immediately. Must run on the main thread.
+     */
+    private fun scheduleAutoRetry(item: DownloadItem) {
+        if (item.errorMessage in NON_RETRYABLE_ERRORS) return
+
+        val attempt = autoRetryCounts.getOrDefault(item.id, 0)
+        if (attempt >= AUTO_RETRY_DELAYS_MS.size) {
+            Log.w(TAG, "Auto-retry budget exhausted for: ${item.fileName}")
+            return
+        }
+
+        autoRetryJobs[item.id]?.cancel()
+        val delayMs = AUTO_RETRY_DELAYS_MS[attempt]
+        autoRetryCounts[item.id] = attempt + 1
+        Log.i(TAG, "Auto-retry ${attempt + 1}/${AUTO_RETRY_DELAYS_MS.size} " +
+                "for ${item.fileName} in ${delayMs / 1000}s")
+
+        autoRetryJobs[item.id] = appScope.launch(Dispatchers.Main.immediate) {
+            delay(delayMs)
+            autoRetryJobs.remove(item.id)
+
+            val current = downloadItems[item.id] ?: return@launch
+            if (current.status != DownloadStatus.FAILED) return@launch
+
+            // resumeInternal routes through the foreground service when it is
+            // not attached, so the retry never runs outside an FGS.
+            Log.i(TAG, "Auto-retrying: ${current.fileName}")
+            current.failureCount = 0
+            if (!resumeInternal(current)) {
+                // Nothing started (service not startable from background, or a
+                // non-retryable error surfaced). Re-arm this attempt instead of
+                // silently burning the budget and stranding the item.
+                autoRetryCounts[current.id] = attempt
+                scheduleAutoRetry(current)
+            }
+        }
+    }
+
+    /** Cancels a pending auto-retry and resets its budget. Main thread only. */
+    private fun cancelAutoRetry(id: Long) {
+        autoRetryJobs.remove(id)?.cancel()
+        autoRetryCounts.remove(id)
     }
 
     // ===================================================================
@@ -595,11 +732,12 @@ class DownloadRepositoryImpl @Inject constructor(
             if (!hasStorageWritePermission()) {
                 Log.w(TAG, "Storage permission missing — download not started: $url")
                 item.status = DownloadStatus.FAILED
-                item.errorMessage = context.getString(R.string.storage_permission_required_downloads)
+                item.errorMessage = DownloadTask.ERROR_STORAGE_PERMISSION
                 downloadItems[downloadId] = item
                 // No engine.enqueue here — a queued task would sit on an
                 // uninitialised writer until the user resumes.
                 persistence.markDirty()
+                flushNow()
                 updateStatus(item, DownloadStatus.FAILED)
                 // Release the URL reservation first (the finally would only run
                 // afterwards) so stopServiceIfIdle can actually stop the service.
@@ -610,6 +748,10 @@ class DownloadRepositoryImpl @Inject constructor(
 
             downloadItems[downloadId] = item
             persistence.markDirty()
+            // Persist the new record immediately: a process kill before the
+            // first periodic flush would otherwise lose it (and the orphan-.part
+            // sweep on next start would delete its in-progress file).
+            flushNow()
 
             // A download is starting while notifications are disabled — without a
             // warning the user would get zero feedback about it. One shot per process.
@@ -701,6 +843,11 @@ class DownloadRepositoryImpl @Inject constructor(
 
         notifManager?.updateNotification(item, downloadItems.values)
         persistence.markDirty()
+        // Terminal states must hit disk immediately — a process kill before
+        // the next periodic flush would otherwise lose completions/failures.
+        if (newStatus == DownloadStatus.COMPLETED || newStatus == DownloadStatus.FAILED) {
+            flushNow()
+        }
         emit(force = true)
     }
 
@@ -823,29 +970,48 @@ class DownloadRepositoryImpl @Inject constructor(
      */
     private data class StateSnapshot(
         val items: List<DownloadItem>,
-        val segments: Map<Long, List<PersistedSegment>>
+        val segments: Map<Long, List<PersistedSegment>>,
+        /** Capture order — lets persistence drop out-of-order (older) writes. */
+        val seq: Long
     )
 
+    /** Main-thread capture counter feeding [StateSnapshot.seq]. */
+    private var snapshotSeq = 0L
+
     private fun takeStateSnapshot(): StateSnapshot {
-        // Segments FIRST, then items: if an item flips to COMPLETED between the
-        // two captures, discard its stale segment snapshot and drop the item —
-        // a completed download must never be persisted as DOWNLOADING with
-        // segments pointing at a `.part` file that was just renamed away.
-        val segmentEntries = mutableListOf<Pair<Long, List<PersistedSegment>>>()
-        val candidates = downloadItems.values.filter {
-            it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.CANCELLED
-        }
-        candidates.forEach { item ->
-            segmentEntries.add(item.id to engine.snapshotSegments(item.id, item.status))
-        }
-        val items = candidates
-            .filter { it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.CANCELLED }
+        // COMPLETED items MUST be persisted — they are the user's download
+        // history. CANCELLED never appears here (cancel removes items from the
+        // map first). Item copies are captured FIRST and every downstream
+        // decision reads the copies: engine tasks mutate live item fields off
+        // the main thread, so reading the live map again for the segment pass
+        // could observe a status that no longer matches the captured items.
+        val items = downloadItems.values
+            .filter { it.status != DownloadStatus.CANCELLED }
             .map { it.copy() }
-        val keptIds = items.mapTo(HashSet()) { it.id }
-        return StateSnapshot(
-            items = items,
-            segments = segmentEntries.filter { it.first in keptIds }.toMap()
-        )
+        val segmentEntries = items
+            .filter {
+                it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.PAUSED
+            }
+            .map { it.id to engine.snapshotSegments(it.id, it.status) }
+        return StateSnapshot(items = items, segments = segmentEntries.toMap(), seq = ++snapshotSeq)
+    }
+
+    /**
+     * Immediate flush for structural changes (item created, terminal status,
+     * removal) — the 2 s periodic flush alone leaves a window where a process
+     * kill loses the change. Gated on [stateLoaded] like every other writer.
+     */
+    private fun flushNow() {
+        if (!stateLoaded) {
+            // Should be rare — command paths await initialisation first. If it
+            // ever fires, it points at a lifecycle race worth investigating.
+            Log.w(TAG, "Flush requested before persisted state loaded — skipped")
+            return
+        }
+        val snapshot = takeStateSnapshot()
+        appScope.launch(Dispatchers.IO) {
+            persistence.forceFlush(snapshot.items, snapshot.segments, snapshot.seq)
+        }
     }
 
     /** Periodically flushes dirty state to disk every 2 seconds. */
@@ -853,11 +1019,17 @@ class DownloadRepositoryImpl @Inject constructor(
         flushJob = appScope.launch {
             while (isActive) {
                 delay(2_000)
+                // Never flush before the persisted state has been loaded — the
+                // in-memory map is empty until then and would wipe the file.
+                if (!stateLoaded) continue
+                // Nothing changed since the last write — skip the main-thread
+                // snapshot entirely instead of copying the whole list for nothing.
+                if (!persistence.isDirty) continue
                 // Snapshot atomically on main BEFORE hopping to IO — copying
                 // items on IO while engine coroutines mutate them tears reads.
                 val snapshot = withContext(Dispatchers.Main.immediate) { takeStateSnapshot() }
                 withContext(Dispatchers.IO) {
-                    persistence.flushIfDirty(snapshot.items, snapshot.segments)
+                    persistence.flushIfDirty(snapshot.items, snapshot.segments, snapshot.seq)
                 }
             }
         }
@@ -1039,6 +1211,19 @@ class DownloadRepositoryImpl @Inject constructor(
 
         /** Statuses that count as "active" for duplicate-URL detection. */
         private val ACTIVE_STATUSES = setOf(DownloadStatus.DOWNLOADING, DownloadStatus.PENDING)
+
+        /** Automatic retry backoff schedule — one attempt per entry. */
+        private val AUTO_RETRY_DELAYS_MS = longArrayOf(3_000L, 15_000L, 60_000L)
+
+        /**
+         * Failures that retrying cannot fix — the download is left failed for
+         * the user immediately instead of burning the retry budget.
+         */
+        private val NON_RETRYABLE_ERRORS = setOf(
+            DownloadTask.ERROR_FILE_MISSING,
+            DownloadTask.ERROR_RESUME_URL_DEAD,
+            DownloadTask.ERROR_STORAGE_PERMISSION
+        )
     }
 
     private fun safeDownloadedFile(path: String): File? {

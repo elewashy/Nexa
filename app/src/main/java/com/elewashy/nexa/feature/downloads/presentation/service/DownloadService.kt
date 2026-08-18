@@ -165,7 +165,11 @@ class DownloadService : Service() {
     private enum class Control { PAUSE, RESUME, CANCEL, REMOVE, RETRY }
 
     private fun handleStartDownload(intent: Intent) {
-        val url = intent.getStringExtra(EXTRA_URL) ?: return
+        val url = intent.getStringExtra(EXTRA_URL) ?: run {
+            // Malformed command — the service this intent started must not linger.
+            repository.stopServiceIfIdle()
+            return
+        }
         val request = DownloadRequest(
             url = url,
             fileName = intent.getStringExtra(EXTRA_FILE_NAME)
@@ -183,7 +187,10 @@ class DownloadService : Service() {
 
     private fun handleControlIntent(intent: Intent, control: Control) {
         val id = intent.getLongExtra(EXTRA_DOWNLOAD_ID, -1L)
-        if (id == -1L) return
+        if (id == -1L) {
+            repository.stopServiceIfIdle()
+            return
+        }
         appScope.launch {
             when (control) {
                 Control.PAUSE  -> repository.pause(id)

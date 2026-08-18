@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.1 - 2026-08-11
+
+### Fixed
+
+- Fixed the download manager losing downloads when the app is closed from recents: completed downloads and paused downloads now survive app restarts.
+- Fixed downloads sometimes restarting from the beginning instead of resuming after an interruption; a temporarily unreachable server no longer discards saved progress.
+
+### Improved
+
+- Failed downloads are now retried automatically (3 attempts over about a minute) before they need a manual retry; permanently broken links are reported clearly instead.
+- Downloads are saved to disk immediately when they start, complete, or fail, instead of waiting for the periodic save.
+- More resilient segment downloads on unstable connections (more retries with longer backoff).
+- Downloads waiting for the network now auto-resume reliably when connectivity returns.
+
+
 ## 1.2.0 - 2026-08-11
 
 ### Added

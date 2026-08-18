@@ -206,6 +206,8 @@
     <string name="download_failed">فشل التنزيل</string>
     <string name="download_finalize_failed">تعذّر إكمال الملف الذي تم تنزيله</string>
     <string name="downloaded_file_missing">الملف الذي تم تنزيله مفقود</string>
+    <string name="download_resume_unreachable">تعذّر الوصول إلى الخادم لاستئناف التنزيل. تقدّمك محفوظ وسيُعاد المحاولة تلقائيًا.</string>
+    <string name="download_resume_url_dead">رابط التنزيل لم يعد متاحًا، لذلك لا يمكن استئنافه.</string>
     <string name="file_size_per_second">%s/ث</string>
     <string name="download_progress_size">%1$s / %2$s</string>
     <string name="update_download_progress">%1$s / %2$s (%3$s)</string>

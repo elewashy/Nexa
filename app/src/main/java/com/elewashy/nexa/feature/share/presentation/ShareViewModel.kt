@@ -372,6 +372,7 @@ class ShareViewModel @Inject constructor(
          * group summary ID (999_999) so they can collide with neither.
          */
         const val FALLBACK_NOTIFICATION_ID_BASE = 910_000
-        const val FALLBACK_NOTIFICATION_ID_RANGE = 90_000
+        // Kept strictly below 999_999 — that ID is the downloads group summary.
+        const val FALLBACK_NOTIFICATION_ID_RANGE = 89_000
     }
 }

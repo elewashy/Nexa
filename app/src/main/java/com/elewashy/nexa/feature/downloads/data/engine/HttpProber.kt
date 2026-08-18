@@ -35,7 +35,9 @@ object HttpProber {
      * @property contentLength   Total file size in bytes, or -1 if unknown.
      * @property supportsRanges  `true` if the server advertised `Accept-Ranges: bytes`.
      *                           May be a lie — actual support is validated at download time.
-     * @property statusCode      HTTP status code from the successful probe.
+     * @property statusCode      HTTP status code from the probe response; may be
+     *                           an error code (4xx/5xx) when the server answered
+     *                           but refused the request. 0 means no response at all.
      * @property contentType     MIME type reported by the server (without parameters), if any.
      * @property fileName        Filename from Content-Disposition or the final URL, if any.
      * @property finalUrl        URL after redirects, if the probe reached the server.
@@ -46,7 +48,14 @@ object HttpProber {
         val statusCode: Int = 0,
         val contentType: String? = null,
         val fileName: String? = null,
-        val finalUrl: String? = null
+        val finalUrl: String? = null,
+        /**
+         * True when the server produced ANY HTTP response (even 4xx/5xx).
+         * False means nothing was reached (timeout, DNS, connection failure) —
+         * callers must treat that as "unknown", not as affirmative information
+         * (e.g. resume must not discard progress based on it).
+         */
+        val reachable: Boolean = false
     )
 
     /**
@@ -70,6 +79,11 @@ object HttpProber {
                 }
             }
 
+        // Last definitive HTTP ERROR response seen (4xx/5xx). Surfaced when no
+        // phase succeeds so callers can distinguish "server said no" (dead URL)
+        // from "nothing answered" (transient network problem).
+        var lastErrorResponse: ProbeResult? = null
+
         // ── Phase 1: HEAD ────────────────────────────────────────────────
         try {
             val headRequest = baseBuilder.build().newBuilder().head().build()
@@ -84,8 +98,11 @@ object HttpProber {
                     // Content-Length is unknown. Falling through to a GET
                     // probe can consume one-time streaming responses
                     // (e.g. audio conversion APIs) and invalidate the URL.
-                    return@withContext extractFromResponse(response)
+                    return@withContext extractFromResponse(response).copy(reachable = true)
                 }
+                // Some CDNs reject HEAD outright (403/405) while serving GETs —
+                // record the code but still fall through to the GET phase.
+                lastErrorResponse = errorProbeResult(response)
             }
         } catch (e: Exception) {
             Log.w(TAG, "HEAD failed: ${e.message}")
@@ -102,17 +119,30 @@ object HttpProber {
                 Log.d(TAG, "GET-Range ${response.code} — $url")
 
                 if (response.isSuccessful || response.code == 206) {
-                    return@withContext extractFromRangeResponse(response)
+                    return@withContext extractFromRangeResponse(response).copy(reachable = true)
                 }
+                // GET is the authoritative phase — its error code wins.
+                lastErrorResponse = errorProbeResult(response)
             }
         } catch (e: Exception) {
             Log.w(TAG, "GET-Range probe failed: ${e.message}")
         }
 
-        // ── Fallback: unknown size, no range support ─────────────────────
+        // ── Fallback ─────────────────────────────────────────────────────
+        lastErrorResponse?.let {
+            Log.w(TAG, "Probe got HTTP ${it.statusCode} for $url — reporting as reachable error")
+            return@withContext it
+        }
         Log.w(TAG, "Probe failed completely for $url, falling back to single-stream")
         ProbeResult()
     }
+
+    /** Minimal [ProbeResult] for an error response — status code + reachability. */
+    private fun errorProbeResult(response: okhttp3.Response): ProbeResult = ProbeResult(
+        statusCode = response.code,
+        finalUrl = response.request.url.toString(),
+        reachable = true
+    )
 
     /**
      * Extracts content-length and range support from a normal response (HEAD or 200 GET).

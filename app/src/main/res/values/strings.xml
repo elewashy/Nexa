@@ -245,6 +245,8 @@
     <string name="download_failed">Download failed</string>
     <string name="download_finalize_failed">Failed to finalize the downloaded file</string>
     <string name="downloaded_file_missing">Downloaded file is missing</string>
+    <string name="download_resume_unreachable">Couldn\'t reach the server to resume. Your progress is saved — it will retry automatically.</string>
+    <string name="download_resume_url_dead">The download link is no longer available, so it can\'t be resumed.</string>
     <string name="file_size_per_second">%s/s</string>
     <string name="download_progress_size">%1$s / %2$s</string>
     <string name="update_download_progress">%1$s / %2$s (%3$s)</string>

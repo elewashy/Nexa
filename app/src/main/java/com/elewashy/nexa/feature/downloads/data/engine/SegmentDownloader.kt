@@ -48,7 +48,7 @@ class SegmentDownloader(
         private const val TAG = "SegmentDownloader"
 
         /** Maximum retries per segment before giving up. */
-        const val MAX_RETRIES = 3
+        const val MAX_RETRIES = 5
 
         /**
          * Buffer size for reading from the network stream.
@@ -147,7 +147,7 @@ class SegmentDownloader(
                         return@withContext
                     }
                     
-                    val delayMs = (1000L * (1 shl (segment.retryCount - 1))).coerceAtMost(4000L)
+                    val delayMs = (1000L * (1 shl (segment.retryCount - 1))).coerceAtMost(8000L)
                     kotlinx.coroutines.delay(delayMs)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -191,9 +191,9 @@ class SegmentDownloader(
                     return@withContext
                 }
 
-                // Exponential backoff: 1s, 2s, 4s
+                // Exponential backoff: 1s, 2s, 4s, 8s, 8s
                 val delayMs = (1000L * (1 shl (segment.retryCount - 1)))
-                    .coerceAtMost(4000L)
+                    .coerceAtMost(8000L)
                 Log.w(TAG, "Segment ${segment.id} retry ${segment.retryCount}/$MAX_RETRIES " +
                         "in ${delayMs}ms: ${e.message}")
                 kotlinx.coroutines.delay(delayMs)

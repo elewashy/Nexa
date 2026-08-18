@@ -225,32 +225,6 @@ class DownloadNotificationManager(
 
     // ── One-shot contextual notifications ──────────────────────────────
 
-    /** Shows notification when download auto-paused after repeated failures. */
-    fun showFailurePauseNotification(item: DownloadItem) {
-        val flags = pendingIntentFlags()
-        val code = notificationCode(item.id)
-        val notification = NotificationCompat.Builder(service, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_pause)
-            .setContentTitle(item.fileName)
-            .setContentText(service.getString(R.string.paused_after_repeated_failures))
-            .setStyle(NotificationCompat.BigTextStyle().bigText(
-                service.getString(R.string.download_paused_after_failures_details)
-            ))
-            .withTimestamp(code)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setContentIntent(activityPendingIntent(code, flags))
-            .addAction(
-                R.drawable.ic_stat_resume, service.getString(R.string.resume),
-                controlPendingIntent(DownloadService.ACTION_RESUME_DOWNLOAD, item.id, 3000, flags)
-            )
-            .setOnlyAlertOnce(true)
-            .setAutoCancel(true)
-            .setGroup(GROUP_KEY)
-            .setSortKey(getSortKey(DownloadStatus.PAUSED))
-            .build()
-        safeNotify(code, notification)
-    }
-
     /** Shows notification when download auto-paused due to network loss. */
     fun showNetworkWaitNotification(item: DownloadItem) {
         val flags = pendingIntentFlags()
@@ -648,10 +622,10 @@ class DownloadNotificationManager(
     }
 
     /**
-     * [DownloadItem.errorMessage] carries either an already-localized message
-     * (set by the repository layer, which holds a Context) or a
-     * locale-independent sentinel from the engine ([DownloadTask] has no
-     * Context) — sentinels are resolved here, the only display site.
+     * [DownloadItem.errorMessage] carries a locale-independent sentinel
+     * ([DownloadTask] and the repository never store localized text) — it is
+     * resolved here, the only display site. Unknown values fall through
+     * verbatim as a defensive last resort.
      */
     private fun resolveErrorMessage(errorMessage: String?): String? =
         when (errorMessage) {
@@ -660,6 +634,12 @@ class DownloadNotificationManager(
                 service.getString(R.string.download_finalize_failed)
             DownloadTask.ERROR_FILE_MISSING ->
                 service.getString(R.string.downloaded_file_missing)
+            DownloadTask.ERROR_RESUME_UNREACHABLE ->
+                service.getString(R.string.download_resume_unreachable)
+            DownloadTask.ERROR_RESUME_URL_DEAD ->
+                service.getString(R.string.download_resume_url_dead)
+            DownloadTask.ERROR_STORAGE_PERMISSION ->
+                service.getString(R.string.storage_permission_required_downloads)
             else -> errorMessage
         }
 

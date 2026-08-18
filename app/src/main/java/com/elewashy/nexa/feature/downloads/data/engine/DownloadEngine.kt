@@ -1,5 +1,6 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
+import android.os.Looper
 import android.util.Log
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
@@ -141,6 +142,21 @@ class DownloadEngine(
     // ===================================================================
 
     /**
+     * The task-registry mutators below are main-thread confined: the
+     * check-then-put guards (e.g. [resume]'s in-flight check) are only race-free
+     * because every caller serialises on the main thread. Enforce the contract
+     * instead of relying on convention — a caller added later that skips the
+     * repository layer would otherwise silently re-open the race.
+     * [restoreTask] and [snapshotSegments] are exempt: they touch only
+     * [ConcurrentHashMap]s and run during init/snapshot passes.
+     */
+    private fun assertMainThread() {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "DownloadEngine mutator called off the main thread"
+        }
+    }
+
+    /**
      * Enqueues and starts a new download.
      *
      * If the maximum concurrent downloads are already running, this download
@@ -152,6 +168,7 @@ class DownloadEngine(
      *                     (filename resolution). Reused so the URL is probed once.
      */
     fun enqueue(item: DownloadItem, initialProbe: HttpProber.ProbeResult? = null) {
+        assertMainThread()
         if (activeTasks.containsKey(item.id)) {
             Log.w(TAG, "Download ${item.id} already active, ignoring enqueue")
             return
@@ -185,7 +202,10 @@ class DownloadEngine(
                 completion.await()
             } finally {
                 if (acquired) downloadSemaphore.release()
-                taskCompletions.remove(item.id)
+                // Identity removal — a late finally from a superseded wrapper
+                // (e.g. pause then immediate resume) must not evict the NEW
+                // wrapper's completion deferred.
+                taskCompletions.remove(item.id, completion)
             }
         }
 
@@ -196,6 +216,7 @@ class DownloadEngine(
      * Pauses an active download.
      */
     fun pause(downloadId: Long) {
+        assertMainThread()
         val task = activeTasks[downloadId]
         if (task == null) {
             Log.w(TAG, "No active task for download $downloadId")
@@ -213,9 +234,20 @@ class DownloadEngine(
      * Resumes a paused or failed download.
      */
     fun resume(downloadId: Long) {
+        assertMainThread()
         val task = activeTasks[downloadId]
         if (task == null) {
             Log.w(TAG, "No task to resume for download $downloadId")
+            return
+        }
+
+        // A resume may already be in flight (double-tap, or an automatic
+        // retry racing a manual resume). Without this guard a second wrapper
+        // job replaces the completion deferred the first job awaits — leaking
+        // its semaphore permit forever — and the task would run its segment
+        // loop twice in parallel.
+        if (taskJobs[downloadId]?.isActive == true) {
+            Log.w(TAG, "Resume already in flight for download $downloadId")
             return
         }
 
@@ -239,7 +271,8 @@ class DownloadEngine(
                 completion.await()
             } finally {
                 if (acquired) downloadSemaphore.release()
-                taskCompletions.remove(downloadId)
+                // Identity removal — see enqueue().
+                taskCompletions.remove(downloadId, completion)
             }
         }
 
@@ -256,6 +289,7 @@ class DownloadEngine(
      * is the first (and only) status that reaches the UI.
      */
     fun cancel(downloadId: Long) {
+        assertMainThread()
         val task = activeTasks.remove(downloadId)
 
         // First: set the definitive CANCELLED status (fires callback immediately)
@@ -275,6 +309,7 @@ class DownloadEngine(
      * Used for completed downloads or "remove from list" actions.
      */
     fun remove(downloadId: Long) {
+        assertMainThread()
         val task = activeTasks.remove(downloadId)
         taskJobs[downloadId]?.cancel()
         taskJobs.remove(downloadId)

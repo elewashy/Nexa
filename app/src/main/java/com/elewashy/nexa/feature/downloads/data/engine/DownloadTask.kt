@@ -53,6 +53,19 @@ class DownloadTask(
         const val ERROR_FINALIZE_FAILED = "ERR_DOWNLOAD_FINALIZE_FAILED"
         const val ERROR_FILE_MISSING = "ERR_DOWNLOADED_FILE_MISSING"
 
+        /**
+         * Resume was attempted but the server could not be reached at all
+         * (timeout/DNS/connection). Progress is intact — retry later, never
+         * restart.
+         */
+        const val ERROR_RESUME_UNREACHABLE = "ERR_RESUME_SERVER_UNREACHABLE"
+
+        /** The server answered with a client error (expired/dead link). */
+        const val ERROR_RESUME_URL_DEAD = "ERR_RESUME_URL_DEAD"
+
+        /** Storage write permission is missing (set by the repository layer). */
+        const val ERROR_STORAGE_PERMISSION = "ERR_STORAGE_PERMISSION_MISSING"
+
         /** Minimum interval between progress updates to avoid UI flooding. */
         private const val PROGRESS_THROTTLE_MS = 250L
 
@@ -293,6 +306,13 @@ class DownloadTask(
             } catch (e: NetworkLostException) {
                 Log.w(TAG, "Network lost during resume: ${item.fileName}")
                 handleNetworkLoss()
+            } catch (e: RangeNotSupportedException) {
+                // Server stopped honoring ranges mid-lifecycle. Same recovery
+                // as resumeAfterRestart: discard the ranged plan and re-probe
+                // from scratch (executeDownload falls back to single-stream).
+                Log.w(TAG, "Ranges no longer supported on resume — restarting cleanly: ${item.fileName}")
+                supportsRanges = false
+                restartCleanly()
             } catch (e: Exception) {
                 Log.e(TAG, "Resume failed: ${item.fileName} — ${e.message}", e)
                 updateStatus(DownloadStatus.FAILED)
@@ -373,6 +393,7 @@ class DownloadTask(
     private suspend fun executeDownload() {
         // Fresh download — no base bytes from a previous session
         baseDownloadedBytes = 0
+        item.errorMessage = null
 
         // Build header map from DownloadItem metadata
         val headers = buildHeaderMap()
@@ -458,6 +479,29 @@ class DownloadTask(
         Log.d(TAG, "Re-probing for resume: ${item.url}")
         val probeResult = HttpProber.probe(client, item.url, headers)
 
+        if (!probeResult.reachable) {
+            // No response at all (timeout, DNS, connection failure). That is
+            // UNKNOWN, not "no ranges" — restarting would throw away verified
+            // progress based on a transient network hiccup. Fail retryable;
+            // the .part file and persisted segments stay intact.
+            Log.w(TAG, "Resume probe unreachable — keeping progress, failing retryable: ${item.fileName}")
+            item.errorMessage = ERROR_RESUME_UNREACHABLE
+            updateStatus(DownloadStatus.FAILED)
+            return
+        }
+
+        if (probeResult.statusCode in 400..499 &&
+            probeResult.statusCode != 408 && probeResult.statusCode != 429
+        ) {
+            // Definitive client error (403/404/410...) — the link is dead.
+            // Re-downloading from zero would just fail (or fetch an error
+            // page); surface it instead.
+            Log.w(TAG, "Resume probe got HTTP ${probeResult.statusCode} — URL is dead: ${item.fileName}")
+            item.errorMessage = ERROR_RESUME_URL_DEAD
+            updateStatus(DownloadStatus.FAILED)
+            return
+        }
+
         supportsRanges = probeResult.supportsRanges
 
         // If server reports a size, validate it matches what we had
@@ -498,6 +542,7 @@ class DownloadTask(
         // Segments carry their own progress; no base-byte offset needed
         baseDownloadedBytes = 0
         item.downloadedBytes = rebuilt.sumOf { it.effectiveDownloadedBytes }
+        item.errorMessage = null
 
         segmentsMutex.withLock {
             segments.clear()
@@ -744,12 +789,11 @@ class DownloadTask(
                 segments.any { it.status == SegmentStatus.FAILED }
             }
             if (anyFailed) {
+                // Report FAILED and let the repository's automatic-retry policy
+                // (bounded backoff, non-retryable classification) decide what
+                // happens next — the engine no longer second-guesses it.
                 item.failureCount++
-                if (item.failureCount >= 2) {
-                    updateStatus(DownloadStatus.PAUSED)
-                } else {
-                    updateStatus(DownloadStatus.FAILED)
-                }
+                updateStatus(DownloadStatus.FAILED)
             }
         }
     }

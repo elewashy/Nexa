@@ -83,6 +83,15 @@ class DownloadPersistence private constructor(
     /** Dirty flag – set by [markDirty], cleared by [flushIfDirty]. */
     private val dirty = AtomicBoolean(false)
 
+    /**
+     * Sequence number of the last snapshot written to disk. Snapshots are
+     * captured sequentially on the main thread but their IO writes run on a
+     * thread pool — lock acquisition order is nondeterministic, so an older
+     * snapshot could otherwise land AFTER a newer one and resurrect removed
+     * items (or regress terminal states).
+     */
+    private val lastWrittenSeq = AtomicLong(0)
+
     /** Segment snapshots keyed by download id, populated by [load]. */
     private var restoredSegmentState: Map<Long, List<PersistedSegment>> = emptyMap()
 
@@ -109,30 +118,36 @@ class DownloadPersistence private constructor(
         dirty.set(true)
     }
 
+    /** Whether a write is pending since the last flush. */
+    val isDirty: Boolean
+        get() = dirty.get()
+
     /**
      * Writes to disk **only if** [markDirty] has been called since the last flush.
      *
      * @param items    current snapshot of download items
      * @param segments per-task segment snapshots (id → segments) to persist alongside the items
+     * @param seq      capture-order token from the caller; writes with a seq older
+     *                 than the last written one are dropped (0 = unsequenced).
      */
     fun flushIfDirty(
         items: Collection<DownloadItem>,
-        segments: Map<Long, List<PersistedSegment>> = emptyMap()
+        segments: Map<Long, List<PersistedSegment>> = emptyMap(),
+        seq: Long = 0
     ) {
-        if (!dirty.compareAndSet(true, false)) return
-        writeToDisk(items, segments)
+        writeToDisk(items, segments, seq, onlyIfDirty = true)
     }
 
     /**
      * Forces an immediate write regardless of the dirty flag.
-     * Use this at service-shutdown boundaries.
+     * Use this at service-shutdown boundaries. [seq] behaves as in [flushIfDirty].
      */
     fun forceFlush(
         items: Collection<DownloadItem>,
-        segments: Map<Long, List<PersistedSegment>> = emptyMap()
+        segments: Map<Long, List<PersistedSegment>> = emptyMap(),
+        seq: Long = 0
     ) {
-        dirty.set(false)
-        writeToDisk(items, segments)
+        writeToDisk(items, segments, seq, onlyIfDirty = false)
     }
 
     /** Segment state restored by [load] for a given download, if any. */
@@ -283,8 +298,22 @@ class DownloadPersistence private constructor(
     @Synchronized
     private fun writeToDisk(
         items: Collection<DownloadItem>,
-        segments: Map<Long, List<PersistedSegment>>
+        segments: Map<Long, List<PersistedSegment>>,
+        seq: Long,
+        onlyIfDirty: Boolean
     ) {
+        // Ordering guard — see [lastWrittenSeq]. Checked before touching the
+        // dirty flag: a dropped stale write must not consume a dirty mark set
+        // by changes newer than the already-written snapshot.
+        if (seq != 0L && seq <= lastWrittenSeq.get()) {
+            Log.w(TAG, "Skipping stale snapshot write (seq=$seq, written=${lastWrittenSeq.get()})")
+            return
+        }
+        if (onlyIfDirty) {
+            if (!dirty.compareAndSet(true, false)) return
+        } else {
+            dirty.set(false)
+        }
         try {
             // Prune completed downloads to prevent unbounded growth.
             // Keep all non-completed items + only the most recent completed ones.
@@ -327,6 +356,7 @@ class DownloadPersistence private constructor(
             }
 
             lastPersistedSegments = merged
+            if (seq != 0L) lastWrittenSeq.set(seq)
             clearLegacyIfNeeded()
         } catch (e: Exception) {
             Log.e(TAG, "Error saving download state", e)
