@@ -5,7 +5,8 @@ import android.util.Log
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -69,9 +70,6 @@ class DownloadPersistence private constructor(
 
         /** Maximum number of completed downloads to persist (prevents unbounded growth). */
         private const val MAX_PERSISTED_COMPLETED = 100
-
-        /** Pre-allocated TypeToken — avoids creating an anonymous class per load() call. */
-        private val ITEM_LIST_TYPE = object : TypeToken<List<DownloadItem>>() {}.type
     }
 
     private val stateFile = File(stateDir, STATE_FILE_NAME)
@@ -235,9 +233,66 @@ class DownloadPersistence private constructor(
         if (stateFile.exists()) {
             val json = stateFile.readText()
             if (json.isBlank()) return null
-            return gson.fromJson(json, SavedState::class.java)
+            return parseSavedState(gson.fromJson(json, JsonObject::class.java))
         }
         return migrateLegacyPrefs()
+    }
+
+    /**
+     * Manual schema parse. R8 strips generic Signature attributes from
+     * private classes in minified builds, so reflectively deserializing
+     * [SavedState] loses the List/Map element types — Gson then fills the
+     * lists with LinkedTreeMaps and the first element cast aborts the whole
+     * load (the exact release-only history loss). Parsing via JsonObject and
+     * concrete element classes is immune to signature stripping.
+     */
+    private fun parseSavedState(root: JsonObject?): SavedState? {
+        root ?: return null
+        return SavedState().apply {
+            // A malformed primitive must degrade to 0, never throw — throwing
+            // here would quarantine the whole document for one bad field.
+            val lastIdElement = root.get("lastId")
+            lastId = if (lastIdElement != null && lastIdElement.isJsonPrimitive) {
+                try {
+                    lastIdElement.asLong.coerceAtLeast(0L)
+                } catch (e: Exception) {
+                    0L
+                }
+            } else {
+                0L
+            }
+            items = parseItems(root.get("items"))
+            segments = parseSegments(root.get("segments"))
+        }
+    }
+
+    private fun parseItems(element: JsonElement?): List<DownloadItem>? {
+        val array = element?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+        return array.mapNotNull { el ->
+            try {
+                gson.fromJson(el, DownloadItem::class.java)
+            } catch (e: Exception) {
+                Log.w(TAG, "Skipping unparseable download item: ${e.message}")
+                null
+            }
+        }
+    }
+
+    private fun parseSegments(element: JsonElement?): Map<Long, List<PersistedSegment>>? {
+        val obj = element?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        val map = mutableMapOf<Long, List<PersistedSegment>>()
+        for ((key, value) in obj.entrySet()) {
+            val id = key.toLongOrNull() ?: continue
+            val array = value.takeIf { it.isJsonArray }?.asJsonArray ?: continue
+            map[id] = array.mapNotNull { el ->
+                try {
+                    gson.fromJson(el, PersistedSegment::class.java)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+        return map
     }
 
     /**
@@ -269,7 +324,7 @@ class DownloadPersistence private constructor(
         val json = prefs.getString(LEGACY_KEY_ITEMS, null) ?: return null
 
         return try {
-            val items: List<DownloadItem> = gson.fromJson(json, ITEM_LIST_TYPE)
+            val items = parseItems(gson.fromJson(json, JsonElement::class.java)) ?: emptyList()
             legacyPendingClear = true
             Log.d(TAG, "Migrating ${items.size} items from legacy SharedPreferences storage")
             SavedState().apply {

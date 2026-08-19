@@ -407,6 +407,18 @@ class DownloadTask(
         }
         initialProbe = null
 
+        // Definitive client error from the probe — the URL is dead. Fail fast
+        // instead of burning segment retries (and auto-retry cycles) on it.
+        if (probeResult.reachable &&
+            probeResult.statusCode in 400..499 &&
+            probeResult.statusCode != 408 && probeResult.statusCode != 429
+        ) {
+            Log.w(TAG, "Probe got HTTP ${probeResult.statusCode} — URL is dead: ${item.fileName}")
+            item.errorMessage = ERROR_RESUME_URL_DEAD
+            updateStatus(DownloadStatus.FAILED)
+            return
+        }
+
         val totalSize = probeResult.contentLength
         supportsRanges = probeResult.supportsRanges
         item.totalBytes = totalSize
@@ -498,6 +510,17 @@ class DownloadTask(
             // page); surface it instead.
             Log.w(TAG, "Resume probe got HTTP ${probeResult.statusCode} — URL is dead: ${item.fileName}")
             item.errorMessage = ERROR_RESUME_URL_DEAD
+            updateStatus(DownloadStatus.FAILED)
+            return
+        }
+
+        if (probeResult.statusCode !in 200..299) {
+            // Reachable but refused (5xx, 408, 429...) — transient. Keep the
+            // verified progress and fail retryable; restarting would discard
+            // it for a server that is merely overloaded right now.
+            Log.w(TAG, "Resume probe got HTTP ${probeResult.statusCode} — " +
+                    "transient refusal, failing retryable: ${item.fileName}")
+            item.errorMessage = ERROR_RESUME_UNREACHABLE
             updateStatus(DownloadStatus.FAILED)
             return
         }

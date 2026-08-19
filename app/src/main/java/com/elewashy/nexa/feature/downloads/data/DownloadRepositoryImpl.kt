@@ -113,9 +113,17 @@ class DownloadRepositoryImpl @Inject constructor(
      * Released when the name can no longer be claimed: COMPLETED (the final
      * file on disk now guards it) or removal/cancellation. Kept while FAILED —
      * a retry reuses [DownloadItem.filePath] without re-resolving the name.
-     * Main thread only.
+     * Re-populated from persisted state at init. Main thread only.
      */
     private val reservedFileNames = mutableSetOf<String>()
+
+    /**
+     * Ids whose resume was routed through `startForegroundService` but whose
+     * intent has not been handled yet. [stopServiceIfIdle] must not stop the
+     * service inside that window — the queued RESUME intent needs it attached.
+     * Main thread only.
+     */
+    private val routedResumes = mutableSetOf<Long>()
 
     // ── Delegates ──────────────────────────────────────────────────────
 
@@ -220,8 +228,23 @@ class DownloadRepositoryImpl @Inject constructor(
                     if (attachedService != null && hasActiveWork()) {
                         notifManager?.startForegroundImmediately(attachedService!!)
                     }
+                    // Restored records re-reserve their filenames: a restored
+                    // item whose .part is gone must not lose its name to a new
+                    // download — resuming it later would collide on the .part.
+                    downloadItems.values.forEach { item ->
+                        if (item.status != DownloadStatus.COMPLETED) {
+                            reservedFileNames.add(item.fileName)
+                        }
+                    }
                     notifManager?.updateSummary(downloadItems.values)
                     startPeriodicFlush()
+                    // Recover retryable failures from the previous session.
+                    // Retries that could not start the foreground service from
+                    // the background are left failed (no re-arm loop); a new
+                    // session is their wake point.
+                    downloadItems.values
+                        .filter { it.status == DownloadStatus.FAILED }
+                        .forEach { scheduleAutoRetry(it) }
                     emit(force = true)
                 }
                 Log.d(TAG, "DownloadRepository initialised")
@@ -341,6 +364,9 @@ class DownloadRepositoryImpl @Inject constructor(
         // reservations land synchronously in start()'s entry section, so this
         // check is race-free with new starts.
         if (reservedUrls.isNotEmpty()) return
+        // A routed resume intent is queued but not handled yet — the service
+        // it targets must survive until then.
+        if (routedResumes.isNotEmpty()) return
         // Only genuinely ACTIVE work keeps the service: paused items must not
         // hold a dataSync FGS (6h quota), and resuming them restarts the
         // service on demand via the notification/UI intents.
@@ -441,6 +467,7 @@ class DownloadRepositoryImpl @Inject constructor(
 
     override suspend fun resume(id: Long) = withContext(Dispatchers.Main.immediate) {
         awaitInitialised()
+        routedResumes.remove(id)
         downloadItems[id]?.let { item ->
             // A manual resume resets the automatic-retry budget.
             cancelAutoRetry(item.id)
@@ -484,6 +511,7 @@ class DownloadRepositoryImpl @Inject constructor(
             // service stopped itself — route through the service, which calls
             // back into resume() once attached.
             Log.d(TAG, "Resume routed through service (not attached): ${item.fileName}")
+            routedResumes.add(item.id)
             return try {
                 context.startForegroundService(
                     android.content.Intent(context, DownloadService::class.java)
@@ -494,6 +522,7 @@ class DownloadRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 // Android 12+ denies startForegroundService from the background
                 // — the item stays FAILED for the next retry or manual action.
+                routedResumes.remove(item.id)
                 Log.e(TAG, "Failed to start service for resume: ${item.fileName}", e)
                 false
             }
@@ -671,11 +700,11 @@ class DownloadRepositoryImpl @Inject constructor(
             Log.i(TAG, "Auto-retrying: ${current.fileName}")
             current.failureCount = 0
             if (!resumeInternal(current)) {
-                // Nothing started (service not startable from background, or a
-                // non-retryable error surfaced). Re-arm this attempt instead of
-                // silently burning the budget and stranding the item.
-                autoRetryCounts[current.id] = attempt
-                scheduleAutoRetry(current)
+                // Service not startable from the background (Android 12+).
+                // Leave the item failed — the next session's init sweep or a
+                // manual resume retries it. Re-arming here would loop forever
+                // against the background-start restriction.
+                Log.w(TAG, "Auto-retry deferred to next session (background): ${current.fileName}")
             }
         }
     }

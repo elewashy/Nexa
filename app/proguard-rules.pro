@@ -131,6 +131,13 @@
 # Stored as JSON via Gson — field names must survive obfuscation
 -keep class com.elewashy.nexa.feature.downloads.data.engine.DownloadSegment { *; }
 
+# Gson document schema: fields are written reflectively by toJson and read by
+# the manual JsonObject parse. Keeping them guarantees the serialized field
+# names stay stable across minified versions, so state files written by an
+# older release remain readable after an upgrade.
+-keep class com.elewashy.nexa.feature.downloads.data.persistence.DownloadPersistence$SavedState { *; }
+-keep class com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment { *; }
+
 # ================================
 # Hilt / Dagger (Dependency Injection)
 # ================================

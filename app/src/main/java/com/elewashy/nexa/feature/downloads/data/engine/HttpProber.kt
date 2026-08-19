@@ -121,8 +121,23 @@ object HttpProber {
                 if (response.isSuccessful || response.code == 206) {
                     return@withContext extractFromRangeResponse(response).copy(reachable = true)
                 }
-                // GET is the authoritative phase — its error code wins.
-                lastErrorResponse = errorProbeResult(response)
+                // Some WAFs/CDNs answer 4xx to HEAD *and* ranged GETs while
+                // serving plain GETs — verify with a Range-less GET before
+                // trusting the error code (otherwise a live URL could be
+                // classified dead on resume).
+                if (response.code in 400..499) {
+                    val plainRequest = baseBuilder.build().newBuilder().get().build()
+                    client.newCall(plainRequest).execute().use { plain ->
+                        Log.d(TAG, "Plain GET ${plain.code} — $url")
+                        if (plain.isSuccessful) {
+                            return@withContext extractFromResponse(plain).copy(reachable = true)
+                        }
+                        lastErrorResponse = errorProbeResult(plain)
+                    }
+                } else {
+                    // GET is the authoritative phase — its error code wins.
+                    lastErrorResponse = errorProbeResult(response)
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "GET-Range probe failed: ${e.message}")

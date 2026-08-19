@@ -292,4 +292,87 @@ class DownloadPersistenceTest {
         reloaded.load()
         assertEquals(emptyList<PersistedSegment>(), reloaded.restoredSegments(1))
     }
+
+    // ── snapshot sequencing ─────────────────────────────────────────────
+
+    @Test
+    fun `stale snapshot write is rejected`() {
+        val dir = stateDir()
+        val persistence = DownloadPersistence(dir)
+        persistence.forceFlush(items = listOf(item(1, DownloadStatus.PAUSED)), seq = 2)
+
+        // An OLDER snapshot (item already removed) lands afterwards — it must
+        // not overwrite the newer state.
+        persistence.forceFlush(items = emptyList(), seq = 1)
+
+        val reloaded = DownloadPersistence(dir)
+        assertEquals(1, reloaded.load().size)
+    }
+
+    @Test
+    fun `stale rejection does not consume the dirty flag`() {
+        val dir = stateDir()
+        val persistence = DownloadPersistence(dir)
+        persistence.forceFlush(items = listOf(item(1, DownloadStatus.PAUSED)), seq = 2)
+
+        persistence.markDirty()
+        // Stale write is dropped BEFORE touching the dirty flag...
+        persistence.forceFlush(items = emptyList(), seq = 1)
+        // ...so a later sequenced flushIfDirty still writes.
+        persistence.flushIfDirty(items = listOf(item(2, DownloadStatus.PAUSED)), seq = 3)
+
+        val reloaded = DownloadPersistence(dir)
+        val items = reloaded.load()
+        assertEquals(listOf(2L), items.map { it.id })
+    }
+
+    // ── parser degradation ──────────────────────────────────────────────
+
+    @Test
+    fun `malformed entries degrade instead of aborting the load`() {
+        val dir = stateDir()
+        File(dir, "download_state.json").writeText(
+            """
+            {
+              "lastId": "not-a-number",
+              "items": [
+                {"id": 1, "url": "https://example.com/good.bin", "fileName": "good.bin",
+                 "filePath": "/storage/good.bin", "status": "PAUSED",
+                 "totalBytes": 100, "downloadedBytes": 10},
+                {"id": "bad", "status": "PAUSED"},
+                {"id": 3, "status": {"nested": "object"}}
+              ],
+              "segments": {
+                "abc": [{"startByte": 0, "endByte": 9, "downloadedBytes": 9}],
+                "2": "not-an-array",
+                "1": [{"startByte": 0, "endByte": 99, "downloadedBytes": 10}]
+              }
+            }
+            """.trimIndent()
+        )
+
+        val persistence = DownloadPersistence(dir)
+        val items = persistence.load()
+
+        // Only the well-formed item survives; the bad ones are skipped.
+        assertEquals(listOf(1L), items.map { it.id })
+        assertEquals(listOf(seg(0, 99, 10)), persistence.restoredSegments(1))
+        assertEquals(emptyList<PersistedSegment>(), persistence.restoredSegments(2))
+        // Non-numeric segment keys are dropped, not fatal.
+        assertEquals(emptyList<PersistedSegment>(), persistence.restoredSegments(0))
+        // The malformed lastId degrades to the restored items' max id.
+        assertEquals(1L, persistence.idCounter.get())
+        // Nothing is quarantined — the document was parseable.
+        assertTrue(File(dir, "download_state.json").exists())
+    }
+
+    @Test
+    fun `negative lastId is clamped to zero`() {
+        val dir = stateDir()
+        File(dir, "download_state.json").writeText("""{"lastId": -5, "items": []}""")
+
+        val persistence = DownloadPersistence(dir)
+        persistence.load()
+        assertEquals(0L, persistence.idCounter.get())
+    }
 }

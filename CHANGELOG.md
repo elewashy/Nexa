@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.2 - 2026-08-19
+
+### Fixed
+
+- Fixed the entire download history disappearing after restarting a release build; the download list now loads reliably in minified builds and survives app restarts.
+- Fixed verified download progress being discarded when resuming while the server was temporarily rate-limited or overloaded; progress is now kept and retried.
+- Fixed live links behind certain CDNs/firewalls that block test requests being wrongly reported as dead links.
+
+### Improved
+
+- Dead links now fail immediately when a download starts instead of after repeated retries.
+- Automatic retries no longer loop in the background when the system blocks starting the download service; failed downloads are retried the next time the app is opened.
+- A damaged download list file now skips only its corrupt entries instead of dropping the whole list.
+
+
 ## 1.2.1 - 2026-08-11
 
 ### Fixed
