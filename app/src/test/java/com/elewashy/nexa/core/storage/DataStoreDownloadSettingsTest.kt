@@ -1,6 +1,8 @@
 package com.elewashy.nexa.core.storage
 
+import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.test.core.app.ApplicationProvider
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import java.io.File
@@ -11,8 +13,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import org.junit.rules.TemporaryFolder
 
+@RunWith(RobolectricTestRunner::class)
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class DataStoreDownloadSettingsTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
@@ -67,6 +72,10 @@ class DataStoreDownloadSettingsTest {
             scope = TestScope(UnconfinedTestDispatcher(scope.testScheduler)),
             produceFile = { file },
         )
-        return DataStoreAppPreferences(store)
+        return DataStoreAppPreferences(
+            dataStore = store,
+            context = ApplicationProvider.getApplicationContext<Context>(),
+            appScope = scope,
+        )
     }
 }
