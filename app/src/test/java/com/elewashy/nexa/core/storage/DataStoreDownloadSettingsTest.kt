@@ -8,7 +8,6 @@ import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -69,13 +68,13 @@ class DataStoreDownloadSettingsTest {
     private fun createPreferences(scope: TestScope): DataStoreAppPreferences {
         val file = File(temporaryFolder.root, "download-settings-${System.nanoTime()}.preferences_pb")
         val store = PreferenceDataStoreFactory.create(
-            scope = TestScope(UnconfinedTestDispatcher(scope.testScheduler)),
+            scope = scope.backgroundScope,
             produceFile = { file },
         )
         return DataStoreAppPreferences(
             dataStore = store,
             context = ApplicationProvider.getApplicationContext<Context>(),
-            appScope = scope,
+            appScope = scope.backgroundScope,
         )
     }
 }
