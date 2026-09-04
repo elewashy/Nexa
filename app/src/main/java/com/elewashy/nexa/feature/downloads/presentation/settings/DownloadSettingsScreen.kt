@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -71,8 +72,13 @@ fun DownloadSettingsRoute(
     viewModel: DownloadSettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val loadedState = state
+    if (loadedState == null) {
+        LoadingSettingsScaffold(onBackClick = onBackClick, title = stringResource(R.string.download_settings_title))
+        return
+    }
     DownloadSettingsScreen(
-        state = state,
+        state = loadedState,
         onBackClick = onBackClick,
         onDesignClick = onDesignClick,
         onConcurrentChange = viewModel::setMaxConcurrentDownloads,
@@ -375,6 +381,19 @@ private fun speedLimitLabel(bytesPerSecond: Long): String = when {
     bytesPerSecond % BYTES_PER_MIB == 0L ->
         stringResource(R.string.download_speed_mbps, bytesPerSecond / BYTES_PER_MIB)
     else -> stringResource(R.string.download_speed_kbps, (bytesPerSecond / BYTES_PER_KIB).toInt())
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun LoadingSettingsScaffold(onBackClick: () -> Unit, title: String) {
+    Scaffold(
+        topBar = { AppTopBar(title = title, onBackClick = onBackClick) },
+    ) { padding ->
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentAlignment = Alignment.Center,
+        ) { LoadingIndicator() }
+    }
 }
 
 private enum class SpeedDialog { Options, Custom }

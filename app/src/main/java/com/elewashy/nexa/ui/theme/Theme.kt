@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.storage.ThemeModeSeed
-import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.rememberDynamicColorScheme
@@ -163,12 +162,11 @@ fun NexaTheme(
     val context = LocalContext.current
 
     val prefs = rememberAppPreferences()
-    val useDynamicColor = dynamicColor
-        ?: prefs.dynamicColor.collectAsStateWithLifecycle(initialValue = true).value
-    val usePureBlack = pureBlack
-        ?: prefs.pureBlack.collectAsStateWithLifecycle(initialValue = false).value
-    val seedColor = selectedThemeColor
-        ?: Color(prefs.selectedThemeColor.collectAsStateWithLifecycle(initialValue = DEFAULT_THEME_COLOR_ARGB).value)
+    val seededThemeSettings = remember { ThemeModeSeed.readThemeSettings(context) }
+    val themeSettings by prefs.settings.collectAsStateWithLifecycle(initialValue = seededThemeSettings)
+    val useDynamicColor = dynamicColor ?: themeSettings.dynamicColor
+    val usePureBlack = pureBlack ?: themeSettings.pureBlack
+    val seedColor = selectedThemeColor ?: Color(themeSettings.selectedThemeColor)
 
     val colorScheme = when {
         seedColor == DefaultThemeColor && useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -222,10 +220,10 @@ fun isAppInDarkTheme(): Boolean {
     val prefs = rememberAppPreferences()
     // Synchronous SharedPrefs seed: DataStore is async, so without it the
     // first frame would render with SYSTEM and flash on the first emission.
-    val seededMode = remember { ThemeModeSeed.read(context) }
-    val themeMode by prefs.themeMode.collectAsStateWithLifecycle(initialValue = seededMode)
+    val seededThemeSettings = remember { ThemeModeSeed.readThemeSettings(context) }
+    val themeSettings by prefs.settings.collectAsStateWithLifecycle(initialValue = seededThemeSettings)
 
-    return when (AppTheme.fromPreferenceValue(themeMode)) {
+    return when (AppTheme.fromPreferenceValue(themeSettings.themeMode)) {
         AppTheme.DARK -> true
         AppTheme.LIGHT -> false
         AppTheme.SYSTEM ->

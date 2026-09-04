@@ -23,7 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -86,9 +86,11 @@ fun UpdatesSettingsScreen(
     val hasUpdate by viewModel.hasUpdate.collectAsStateWithLifecycle()
     val managerVersion by viewModel.managerVersion.collectAsStateWithLifecycle()
     val updateReleasedAt by viewModel.updateReleasedAt.collectAsStateWithLifecycle()
-    val autoUpdateCheck by viewModel.autoUpdateCheck.collectAsStateWithLifecycle()
-    val showUpdateDialogOnLaunch by viewModel.showUpdateDialogOnLaunch.collectAsStateWithLifecycle()
+    val preferencesState by viewModel.preferencesState.collectAsStateWithLifecycle()
     val lastFiltersUpdateTime by viewModel.lastFiltersUpdateTime.collectAsStateWithLifecycle()
+
+    val autoUpdateCheck = preferencesState?.autoUpdateCheck
+    val showUpdateDialogOnLaunch = preferencesState?.showUpdateDialogOnLaunch
 
     val filtersUpdatedSuccessfully = stringResource(R.string.filters_updated_successfully)
     val filtersUpdateFailed = stringResource(R.string.filters_update_failed)
@@ -160,10 +162,7 @@ fun UpdatesSettingsScreen(
                     shapes = ButtonDefaults.shapes(),
                 ) {
                     if (isChecking) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                        )
+                        LoadingIndicator(modifier = Modifier.size(20.dp))
                     } else {
                         Icon(
                             imageVector = UpdateFilled,
@@ -285,15 +284,17 @@ fun UpdatesSettingsScreen(
                 SwitchSettingsItem(
                     headlineContent = stringResource(R.string.update_checking_manager),
                     supportingContent = stringResource(R.string.update_checking_manager_description),
-                    checked = autoUpdateCheck,
+                    checked = autoUpdateCheck == true,
+                    enabled = autoUpdateCheck != null,
                     onCheckedChange = { viewModel.setAutoUpdateCheck(it) },
                 )
 
-                AnimatedVisibility(visible = autoUpdateCheck) {
+                AnimatedVisibility(visible = autoUpdateCheck == true) {
                     SwitchSettingsItem(
                         headlineContent = stringResource(R.string.show_update_dialog_on_launch),
                         supportingContent = stringResource(R.string.show_update_dialog_on_launch_description),
-                        checked = showUpdateDialogOnLaunch,
+                        checked = showUpdateDialogOnLaunch == true,
+                        enabled = showUpdateDialogOnLaunch != null,
                         onCheckedChange = { viewModel.setShowUpdateDialogOnLaunch(it) },
                     )
                 }

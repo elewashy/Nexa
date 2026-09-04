@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.elewashy.nexa.R
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.theme.AppTheme
 import com.elewashy.nexa.ui.theme.DefaultThemeColor
 import com.elewashy.nexa.ui.theme.NexaTheme
@@ -114,10 +115,11 @@ fun CustomizeThemeScreen(
     viewModel: SettingsViewModel,
     bottomBar: @Composable () -> Unit = {},
 ) {
-    val theme by viewModel.theme.collectAsStateWithLifecycle()
-    val pureBlack by viewModel.pureBlack.collectAsStateWithLifecycle()
-    val selectedThemeColorInt by viewModel.selectedThemeColor.collectAsStateWithLifecycle()
-    val selectedThemeColor = Color(selectedThemeColorInt)
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val loadedSettings = settings
+    val theme = loadedSettings?.let { AppTheme.fromPreferenceValue(it.themeMode) } ?: AppTheme.SYSTEM
+    val pureBlack = loadedSettings?.pureBlack ?: false
+    val selectedThemeColor = Color(loadedSettings?.selectedThemeColor ?: DefaultThemeColor.toArgb())
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val useSplitLayout = adaptiveInfo.useTwoPane || (adaptiveInfo.isMedium && adaptiveInfo.isLandscape)
     val scrollState = rememberScrollState()
@@ -143,6 +145,10 @@ fun CustomizeThemeScreen(
         bottomBar = bottomBar,
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
+        if (loadedSettings == null) {
+            SettingsLoadingContent(modifier = Modifier.padding(paddingValues))
+            return@Scaffold
+        }
         if (useSplitLayout) {
             Row(
                 modifier = Modifier

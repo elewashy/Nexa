@@ -36,6 +36,7 @@ import com.elewashy.nexa.feature.downloads.presentation.components.descriptionRe
 import com.elewashy.nexa.feature.downloads.presentation.components.labelRes
 import com.elewashy.nexa.ui.components.settings.PhoneDesignSelectorScreen
 import com.elewashy.nexa.ui.components.settings.PhonePreviewFrame
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.icons.AudioFile
 import com.elewashy.nexa.ui.icons.Check
 import com.elewashy.nexa.ui.icons.InsertDriveFile
@@ -48,8 +49,13 @@ fun DownloadLayoutSettingsRoute(
     viewModel: DownloadLayoutViewModel = hiltViewModel(),
 ) {
     val presentation by viewModel.presentation.collectAsStateWithLifecycle()
+    val loadedPresentation = presentation
+    if (loadedPresentation == null) {
+        SettingsLoadingContent()
+        return
+    }
     DownloadLayoutSettingsScreen(
-        selectedLayout = presentation.layout,
+        selectedLayout = loadedPresentation.layout,
         onLayoutSelected = viewModel::setLayout,
         onBackClick = onBackClick,
     )

@@ -4,13 +4,7 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- **Downloads:** Refactored download notifications to use stable per-download IDs, update existing notifications in place, and keep pause, resume, failure, completion, retry, and lifecycle restoration states synchronized with the persisted download state.
-
-## [1.3.0] - 2026-09-04
+## [1.3.0] - Unreleased
 
 ### Added
 
@@ -29,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ### Fixed
 
+- **Settings:** Refactored persisted settings state so settings screens and theme startup render from a shared DataStore-backed source of truth, avoiding temporary default-value flicker while preferences load.
+- **Downloads:** Refactored download notifications to use stable per-download IDs, update existing notifications in place, and keep pause, resume, failure, completion, retry, and lifecycle restoration states synchronized with the persisted download state.
 - Fixed tab closing and bookmark state synchronization.
 - Fixed private browsing data not always being cleared when the browser closed.
 - Fixed excess navigation-bar spacing in the tab overview.

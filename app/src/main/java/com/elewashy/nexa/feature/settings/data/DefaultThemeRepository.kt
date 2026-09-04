@@ -50,9 +50,6 @@ class DefaultThemeRepository @Inject constructor(
     }
 
     override suspend fun setThemeMode(mode: Int) {
-        // Seed first (synchronous, cold-start critical); then DataStore, the
-        // source of truth (suspend; survives caller cancellation via caller's scope).
-        ThemeModeSeed.write(context, mode)
         appPreferences.setThemeMode(mode)
     }
 }

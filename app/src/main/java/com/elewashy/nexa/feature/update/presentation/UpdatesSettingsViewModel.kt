@@ -16,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,11 +37,14 @@ class UpdatesSettingsViewModel @Inject constructor(
     val hasUpdate: StateFlow<Boolean> = managerUpdateRepository.hasUpdate
     val updateReleasedAt = managerUpdateRepository.releasedAt
 
-    val autoUpdateCheck: StateFlow<Boolean> = appPreferences.autoUpdateCheck
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
-    val showUpdateDialogOnLaunch: StateFlow<Boolean> = appPreferences.showUpdateDialogOnLaunch
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val preferencesState: StateFlow<UpdatesPreferencesState?> = appPreferences.settings
+        .map { settings ->
+            UpdatesPreferencesState(
+                autoUpdateCheck = settings.autoUpdateCheck,
+                showUpdateDialogOnLaunch = settings.showUpdateDialogOnLaunch,
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val lastFiltersUpdateTime: StateFlow<Long> = filterTimestampStore.lastUpdate
 
@@ -83,6 +87,11 @@ class UpdatesSettingsViewModel @Inject constructor(
             scriptsSuccess = scriptsSuccess,
         )
     }
+
+    data class UpdatesPreferencesState(
+        val autoUpdateCheck: Boolean,
+        val showUpdateDialogOnLaunch: Boolean,
+    )
 
     data class FilterUpdateResult(
         val adBlockSuccess: Boolean,

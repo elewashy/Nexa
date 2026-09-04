@@ -32,6 +32,7 @@ import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.settings.ExpressiveListIcon
 import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SettingsListItem
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.components.settings.SwitchSettingsItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.Download
@@ -50,10 +51,12 @@ fun GeneralSettingsScreen(
     viewModel: SettingsViewModel,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
-    val highRefreshRate by viewModel.highRefreshRate.collectAsStateWithLifecycle()
-    val videoDownloadButton by viewModel.videoDownloadButton.collectAsStateWithLifecycle()
-    val navigationBarPosition by viewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val loadedSettings = settings
+    val navigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
+        loadedSettings?.browserNavigationBarPosition ?: BrowserNavigationBarPosition.Bottom.storedValue
+    )
     val scrollState = rememberScrollState()
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(
         canScroll = { scrollState.canScrollBackward || scrollState.canScrollForward }
@@ -87,6 +90,10 @@ fun GeneralSettingsScreen(
         containerColor = animatedSurfaceColor,
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
+        if (loadedSettings == null) {
+            SettingsLoadingContent(modifier = Modifier.padding(paddingValues))
+            return@Scaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -123,7 +130,7 @@ fun GeneralSettingsScreen(
                     } else {
                         stringResource(R.string.high_refresh_rate_unsupported)
                     },
-                    checked = highRefreshRate && viewModel.highRefreshRateSupported,
+                    checked = loadedSettings.highRefreshRate && viewModel.highRefreshRateSupported,
                     enabled = viewModel.highRefreshRateSupported,
                     onCheckedChange = viewModel::setHighRefreshRate,
                 )
@@ -149,7 +156,7 @@ fun GeneralSettingsScreen(
                 SwitchSettingsItem(
                     headlineContent = stringResource(R.string.video_download_button),
                     supportingContent = stringResource(R.string.video_download_button_description),
-                    checked = videoDownloadButton,
+                    checked = loadedSettings.videoDownloadButton,
                     onCheckedChange = viewModel::setVideoDownloadButton,
                 )
             }

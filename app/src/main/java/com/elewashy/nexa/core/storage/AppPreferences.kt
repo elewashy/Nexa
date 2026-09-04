@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.Flow
  */
 interface AppPreferences {
 
+    /** Single source-of-truth snapshot for all small persisted user settings. */
+    val settings: Flow<AppSettings>
+
     /** Persisted night-mode selection. Defaults to system theme. */
     val themeMode: Flow<Int>
 

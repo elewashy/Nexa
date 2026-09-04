@@ -37,6 +37,7 @@ import com.elewashy.nexa.feature.downloads.presentation.components.DownloadItemA
 import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutViewModel
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.ui.components.dialogs.ConfirmationDialog
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.icons.Delete
 import java.io.File
 import kotlinx.coroutines.launch
@@ -96,9 +97,15 @@ fun DownloadsRoute(
         viewModel.dismissNotificationsWarning()
     }
 
+    val loadedPresentation = presentation
+    if (loadedPresentation == null) {
+        SettingsLoadingContent()
+        return
+    }
+
     DownloadsScreen(
         downloads = state.downloads,
-        presentation = presentation,
+        presentation = loadedPresentation,
         snackbarHostState = snackbarHostState,
         selectedItems = state.selectedItems,
         isMultiSelectMode = state.isMultiSelectMode,

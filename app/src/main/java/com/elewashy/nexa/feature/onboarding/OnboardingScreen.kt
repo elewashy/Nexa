@@ -72,11 +72,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutSettingsScreen
 import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutViewModel
 import com.elewashy.nexa.feature.settings.presentation.settings.BrowserNavigationPositionScreen
 import com.elewashy.nexa.feature.settings.presentation.settings.CustomizeThemeScreen
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.icons.ArrowForwardFilled
 import com.elewashy.nexa.ui.icons.Check
 import com.elewashy.nexa.ui.icons.FolderOpen
@@ -109,11 +111,16 @@ fun OnboardingScreen(
     var showSkipDialog by remember { mutableStateOf(false) }
     var step by rememberSaveable { mutableStateOf(OnboardingStep.Permissions) }
     val downloadPresentation by downloadLayoutViewModel.presentation.collectAsStateWithLifecycle()
-    val navigationPosition by settingsViewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
+    val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
 
     if (step == OnboardingStep.DownloadLayout) {
+        val loadedPresentation = downloadPresentation
+        if (loadedPresentation == null) {
+            SettingsLoadingContent()
+            return
+        }
         DownloadLayoutSettingsScreen(
-            selectedLayout = downloadPresentation.layout,
+            selectedLayout = loadedPresentation.layout,
             onLayoutSelected = downloadLayoutViewModel::setLayout,
             onBackClick = { step = OnboardingStep.NavigationPosition },
             // The selector's own bottom bar already applies navigation-bar and horizontal insets.
@@ -129,8 +136,13 @@ fun OnboardingScreen(
     }
 
     if (step == OnboardingStep.NavigationPosition) {
+        val loadedSettings = settings
+        if (loadedSettings == null) {
+            SettingsLoadingContent()
+            return
+        }
         BrowserNavigationPositionScreen(
-            selectedPosition = navigationPosition,
+            selectedPosition = BrowserNavigationBarPosition.fromStoredValue(loadedSettings.browserNavigationBarPosition),
             onPositionSelected = settingsViewModel::setBrowserNavigationBarPosition,
             onBackClick = { step = OnboardingStep.Theme },
             bottomBar = {

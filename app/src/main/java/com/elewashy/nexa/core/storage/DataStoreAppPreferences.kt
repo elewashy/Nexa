@@ -1,5 +1,6 @@
 package com.elewashy.nexa.core.storage
 
+import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -13,118 +14,69 @@ import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPositi
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import com.elewashy.nexa.ui.theme.AppThemeMode
+import com.elewashy.nexa.core.common.ApplicationScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * DataStore-backed implementation of [AppPreferences].
- *
- * The [DataStore] instance is supplied by Hilt (see `core.di.StorageModule`) so
- * tests can substitute an in-memory `DataStore<Preferences>` without mocking
- * Android framework classes.
- */
+/** DataStore-backed implementation of [AppPreferences]. */
 @Singleton
 class DataStoreAppPreferences @Inject constructor(
-    private val dataStore: DataStore<Preferences>
+    private val dataStore: DataStore<Preferences>,
+    @param:ApplicationContext private val context: Context,
+    @param:ApplicationScope private val appScope: CoroutineScope,
 ) : AppPreferences {
 
-    override val themeMode: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_THEME_MODE] ?: AppThemeMode.SYSTEM
+    override val settings: Flow<AppSettings> = dataStore.data.map { prefs -> prefs.toAppSettings() }
+        .distinctUntilChanged()
+
+    init {
+        appScope.launch {
+            settings
+                .map { ThemeSeedSnapshot(it.themeMode, it.dynamicColor, it.pureBlack, it.selectedThemeColor) }
+                .distinctUntilChanged()
+                .collect { snapshot -> snapshot.mirrorTo(context) }
+        }
     }
 
-    override val hasStoredThemeMode: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs.contains(KEY_THEME_MODE)
-    }
-
-    override val dynamicColor: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_DYNAMIC_COLOR] ?: true
-    }
-
-    override val pureBlack: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_PURE_BLACK] ?: false
-    }
-
-    override val highRefreshRate: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_HIGH_REFRESH_RATE] ?: true
-    }
-
-    override val selectedThemeColor: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_SELECTED_THEME_COLOR] ?: DEFAULT_THEME_COLOR_ARGB
-    }
-
-    override val onboardingCompleted: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_ONBOARDING_COMPLETED] ?: false
-    }
-
-    override val languageTag: Flow<String?> = dataStore.data.map { prefs ->
-        prefs[KEY_LANGUAGE_TAG]
-    }
-
-    override val autoUpdateCheck: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_AUTO_UPDATE_CHECK] ?: true
-    }
-
-    override val showUpdateDialogOnLaunch: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH] ?: true
-    }
-
-    override val videoDownloadButton: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_VIDEO_DOWNLOAD_BUTTON] ?: true
-    }
-
-    override val browserNavigationBarPosition: Flow<Int> = dataStore.data.map { prefs ->
-        BrowserNavigationBarPosition.fromStoredValue(
-            prefs[KEY_BROWSER_NAVIGATION_BAR_POSITION] ?: BrowserNavigationBarPosition.Bottom.storedValue
-        ).storedValue
-    }
-
-    override val downloadManagerLayout: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0
-    }
-
-    override val maxConcurrentDownloads: Flow<Int> = dataStore.data.map { prefs ->
-        DownloadSettingsDefaults.clampConcurrentDownloads(
-            prefs[KEY_MAX_CONCURRENT_DOWNLOADS]
-                ?: DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS
-        )
-    }
-
-    override val downloadFilterIds: Flow<Set<String>> = dataStore.data.map { prefs ->
-        val knownIds = DownloadFilterCategory.entries.mapTo(HashSet()) { it.storedId }
-        (prefs[KEY_DOWNLOAD_FILTER_IDS] ?: DownloadSettingsDefaults.DEFAULT_FILTER_IDS)
-            .filterTo(linkedSetOf()) { it in knownIds }
-    }
-
-    override val downloadSpeedLimitBytesPerSecond: Flow<Long> = dataStore.data.map { prefs ->
-        DownloadSettingsDefaults.sanitizeSpeedLimit(
-            prefs[KEY_DOWNLOAD_SPEED_LIMIT] ?: DownloadSettingsDefaults.UNLIMITED_SPEED_BYTES_PER_SECOND
-        )
-    }
-
-    override val autoRetryDownloads: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_AUTO_RETRY_DOWNLOADS] ?: true
-    }
-
-    override val visualVideoPresentation: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_VISUAL_VIDEO_PRESENTATION] ?: true
-    }
-
-    override val showDownloadFilterCounts: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] ?: true
-    }
+    override val themeMode: Flow<Int> = settings.map { it.themeMode }.distinctUntilChanged()
+    override val hasStoredThemeMode: Flow<Boolean> = settings.map { it.hasStoredThemeMode }.distinctUntilChanged()
+    override val dynamicColor: Flow<Boolean> = settings.map { it.dynamicColor }.distinctUntilChanged()
+    override val pureBlack: Flow<Boolean> = settings.map { it.pureBlack }.distinctUntilChanged()
+    override val highRefreshRate: Flow<Boolean> = settings.map { it.highRefreshRate }.distinctUntilChanged()
+    override val selectedThemeColor: Flow<Int> = settings.map { it.selectedThemeColor }.distinctUntilChanged()
+    override val onboardingCompleted: Flow<Boolean> = settings.map { it.onboardingCompleted }.distinctUntilChanged()
+    override val languageTag: Flow<String?> = settings.map { it.languageTag }.distinctUntilChanged()
+    override val autoUpdateCheck: Flow<Boolean> = settings.map { it.autoUpdateCheck }.distinctUntilChanged()
+    override val showUpdateDialogOnLaunch: Flow<Boolean> = settings.map { it.showUpdateDialogOnLaunch }.distinctUntilChanged()
+    override val videoDownloadButton: Flow<Boolean> = settings.map { it.videoDownloadButton }.distinctUntilChanged()
+    override val browserNavigationBarPosition: Flow<Int> = settings.map { it.browserNavigationBarPosition }.distinctUntilChanged()
+    override val downloadManagerLayout: Flow<Int> = settings.map { it.downloadManagerLayout }.distinctUntilChanged()
+    override val maxConcurrentDownloads: Flow<Int> = settings.map { it.maxConcurrentDownloads }.distinctUntilChanged()
+    override val downloadFilterIds: Flow<Set<String>> = settings.map { it.downloadFilterIds }.distinctUntilChanged()
+    override val downloadSpeedLimitBytesPerSecond: Flow<Long> = settings.map { it.downloadSpeedLimitBytesPerSecond }.distinctUntilChanged()
+    override val autoRetryDownloads: Flow<Boolean> = settings.map { it.autoRetryDownloads }.distinctUntilChanged()
+    override val visualVideoPresentation: Flow<Boolean> = settings.map { it.visualVideoPresentation }.distinctUntilChanged()
+    override val showDownloadFilterCounts: Flow<Boolean> = settings.map { it.showDownloadFilterCounts }.distinctUntilChanged()
 
     override suspend fun setThemeMode(mode: Int) {
-        dataStore.edit { it[KEY_THEME_MODE] = mode }
+        ThemeModeSeed.mirrorThemeMode(context, mode)
+        dataStore.edit { prefs -> prefs[KEY_THEME_MODE] = mode }
     }
 
     override suspend fun setDynamicColor(enabled: Boolean) {
-        dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled }
+        ThemeModeSeed.mirrorDynamicColor(context, enabled)
+        dataStore.edit { prefs -> prefs[KEY_DYNAMIC_COLOR] = enabled }
     }
 
     override suspend fun setPureBlack(enabled: Boolean) {
-        dataStore.edit { it[KEY_PURE_BLACK] = enabled }
+        ThemeModeSeed.mirrorPureBlack(context, enabled)
+        dataStore.edit { prefs -> prefs[KEY_PURE_BLACK] = enabled }
     }
 
     override suspend fun setHighRefreshRate(enabled: Boolean) {
@@ -132,7 +84,8 @@ class DataStoreAppPreferences @Inject constructor(
     }
 
     override suspend fun setSelectedThemeColor(color: Int) {
-        dataStore.edit { it[KEY_SELECTED_THEME_COLOR] = color }
+        ThemeModeSeed.mirrorSelectedThemeColor(context, color)
+        dataStore.edit { prefs -> prefs[KEY_SELECTED_THEME_COLOR] = color }
     }
 
     override suspend fun setOnboardingCompleted(completed: Boolean) {
@@ -140,9 +93,7 @@ class DataStoreAppPreferences @Inject constructor(
     }
 
     override suspend fun setLanguageTag(tag: String?) {
-        dataStore.edit { prefs ->
-            if (tag == null) prefs.remove(KEY_LANGUAGE_TAG) else prefs[KEY_LANGUAGE_TAG] = tag
-        }
+        dataStore.edit { prefs -> if (tag == null) prefs.remove(KEY_LANGUAGE_TAG) else prefs[KEY_LANGUAGE_TAG] = tag }
     }
 
     override suspend fun setAutoUpdateCheck(enabled: Boolean) {
@@ -158,8 +109,7 @@ class DataStoreAppPreferences @Inject constructor(
     }
 
     override suspend fun setBrowserNavigationBarPosition(position: Int) {
-        val sanitized = BrowserNavigationBarPosition.fromStoredValue(position).storedValue
-        dataStore.edit { it[KEY_BROWSER_NAVIGATION_BAR_POSITION] = sanitized }
+        dataStore.edit { it[KEY_BROWSER_NAVIGATION_BAR_POSITION] = BrowserNavigationBarPosition.fromStoredValue(position).storedValue }
     }
 
     override suspend fun setDownloadManagerLayout(layout: Int) {
@@ -167,9 +117,7 @@ class DataStoreAppPreferences @Inject constructor(
     }
 
     override suspend fun setMaxConcurrentDownloads(value: Int) {
-        dataStore.edit {
-            it[KEY_MAX_CONCURRENT_DOWNLOADS] = DownloadSettingsDefaults.clampConcurrentDownloads(value)
-        }
+        dataStore.edit { it[KEY_MAX_CONCURRENT_DOWNLOADS] = DownloadSettingsDefaults.clampConcurrentDownloads(value) }
     }
 
     override suspend fun setDownloadFilterIds(ids: Set<String>) {
@@ -193,7 +141,53 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { it[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] = show }
     }
 
-    private companion object {
+    private data class ThemeSeedSnapshot(
+        val themeMode: Int,
+        val dynamicColor: Boolean,
+        val pureBlack: Boolean,
+        val selectedThemeColor: Int,
+    ) {
+        fun mirrorTo(context: Context) {
+            ThemeModeSeed.mirrorThemeMode(context, themeMode)
+            ThemeModeSeed.mirrorDynamicColor(context, dynamicColor)
+            ThemeModeSeed.mirrorPureBlack(context, pureBlack)
+            ThemeModeSeed.mirrorSelectedThemeColor(context, selectedThemeColor)
+        }
+    }
+
+    private fun Preferences.toAppSettings(): AppSettings {
+        val knownIds = DownloadFilterCategory.entries.mapTo(HashSet()) { it.storedId }
+        return AppSettings(
+            themeMode = this[KEY_THEME_MODE] ?: AppThemeMode.SYSTEM,
+            hasStoredThemeMode = contains(KEY_THEME_MODE),
+            dynamicColor = this[KEY_DYNAMIC_COLOR] ?: true,
+            pureBlack = this[KEY_PURE_BLACK] ?: false,
+            highRefreshRate = this[KEY_HIGH_REFRESH_RATE] ?: true,
+            selectedThemeColor = this[KEY_SELECTED_THEME_COLOR] ?: DEFAULT_THEME_COLOR_ARGB,
+            onboardingCompleted = this[KEY_ONBOARDING_COMPLETED] ?: false,
+            languageTag = this[KEY_LANGUAGE_TAG],
+            autoUpdateCheck = this[KEY_AUTO_UPDATE_CHECK] ?: true,
+            showUpdateDialogOnLaunch = this[KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH] ?: true,
+            videoDownloadButton = this[KEY_VIDEO_DOWNLOAD_BUTTON] ?: true,
+            browserNavigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
+                this[KEY_BROWSER_NAVIGATION_BAR_POSITION] ?: BrowserNavigationBarPosition.Bottom.storedValue
+            ).storedValue,
+            downloadManagerLayout = this[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0,
+            maxConcurrentDownloads = DownloadSettingsDefaults.clampConcurrentDownloads(
+                this[KEY_MAX_CONCURRENT_DOWNLOADS] ?: DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS
+            ),
+            downloadFilterIds = (this[KEY_DOWNLOAD_FILTER_IDS] ?: DownloadSettingsDefaults.DEFAULT_FILTER_IDS)
+                .filterTo(linkedSetOf()) { it in knownIds },
+            downloadSpeedLimitBytesPerSecond = DownloadSettingsDefaults.sanitizeSpeedLimit(
+                this[KEY_DOWNLOAD_SPEED_LIMIT] ?: DownloadSettingsDefaults.UNLIMITED_SPEED_BYTES_PER_SECOND
+            ),
+            autoRetryDownloads = this[KEY_AUTO_RETRY_DOWNLOADS] ?: true,
+            visualVideoPresentation = this[KEY_VISUAL_VIDEO_PRESENTATION] ?: true,
+            showDownloadFilterCounts = this[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] ?: true,
+        )
+    }
+
+    companion object Keys {
         val KEY_THEME_MODE = intPreferencesKey("theme_mode")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val KEY_PURE_BLACK = booleanPreferencesKey("pure_black")

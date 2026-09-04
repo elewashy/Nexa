@@ -10,8 +10,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -23,37 +23,23 @@ class DownloadSettingsViewModel @Inject constructor(
 ) : ViewModel() {
     private val filterMutationMutex = Mutex()
 
-    // AppPreferences already clamps and sanitizes each value on read; this only
-    // projects the stored primitives onto the domain types. Kotlin's typed
-    // combine caps at five flows, hence the two-stage composition.
-    val state: StateFlow<DownloadSettingsUiState> = combine(
-        combine(
-            preferences.downloadManagerLayout,
-            preferences.maxConcurrentDownloads,
-            preferences.downloadFilterIds,
-            preferences.downloadSpeedLimitBytesPerSecond,
-            preferences.autoRetryDownloads,
-        ) { layout, concurrent, filterIds, speed, autoRetry ->
+    val state: StateFlow<DownloadSettingsUiState?> = preferences.settings
+        .map { settings ->
             DownloadSettingsUiState(
-                layout = DownloadManagerLayout.fromStoredValue(layout),
-                maxConcurrentDownloads = concurrent,
-                enabledFilters = DownloadFilterCategory.fromStoredIds(filterIds),
-                speedLimitBytesPerSecond = speed,
-                autoRetry = autoRetry,
+                layout = DownloadManagerLayout.fromStoredValue(settings.downloadManagerLayout),
+                maxConcurrentDownloads = settings.maxConcurrentDownloads,
+                enabledFilters = DownloadFilterCategory.fromStoredIds(settings.downloadFilterIds),
+                speedLimitBytesPerSecond = settings.downloadSpeedLimitBytesPerSecond,
+                autoRetry = settings.autoRetryDownloads,
+                visualVideoPresentation = settings.visualVideoPresentation,
+                showFilterCounts = settings.showDownloadFilterCounts,
             )
-        },
-        preferences.visualVideoPresentation,
-        preferences.showDownloadFilterCounts,
-    ) { transfers, videoPreviews, showFilterCounts ->
-        transfers.copy(
-            visualVideoPresentation = videoPreviews,
-            showFilterCounts = showFilterCounts,
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null,
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = DownloadSettingsUiState(),
-    )
 
     fun setMaxConcurrentDownloads(value: Int) {
         viewModelScope.launch { preferences.setMaxConcurrentDownloads(value) }

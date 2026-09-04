@@ -6,6 +6,7 @@ import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguage
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
+import com.elewashy.nexa.core.storage.AppSettings
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.settings.data.ThemeRepository
@@ -27,6 +28,9 @@ class SettingsViewModel @Inject constructor(
     private val themeRepository: ThemeRepository,
     refreshRateManager: RefreshRateManager,
 ) : ViewModel() {
+
+    val settings: StateFlow<AppSettings?> = appPreferences.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // ── Theme ────────────────────────────────────────────────────────────
 

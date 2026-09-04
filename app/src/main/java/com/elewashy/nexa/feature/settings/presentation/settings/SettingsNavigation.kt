@@ -7,9 +7,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.update.presentation.ChangelogsScreen
 import com.elewashy.nexa.feature.update.presentation.UpdatesSettingsScreen
 import com.elewashy.nexa.feature.update.presentation.UpdatesSettingsViewModel
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.navigation.AppNavHost
 import com.elewashy.nexa.ui.navigation.AppNavigationMotion
 
@@ -47,9 +49,14 @@ fun SettingsNavigation(
         }
 
         composable(SettingsDestination.BrowserNavigationPosition.route) {
-            val position by viewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
+            val settings by viewModel.settings.collectAsStateWithLifecycle()
+            val loadedSettings = settings
+            if (loadedSettings == null) {
+                SettingsLoadingContent()
+                return@composable
+            }
             BrowserNavigationPositionScreen(
-                selectedPosition = position,
+                selectedPosition = BrowserNavigationBarPosition.fromStoredValue(loadedSettings.browserNavigationBarPosition),
                 onPositionSelected = viewModel::setBrowserNavigationBarPosition,
                 onBackClick = navController::popBackStack,
             )

@@ -10,7 +10,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,23 +32,20 @@ class DownloadLayoutViewModel @Inject constructor(
     private val preferences: AppPreferences,
 ) : ViewModel() {
 
-    val presentation: StateFlow<DownloadManagerPresentation> = combine(
-        preferences.downloadManagerLayout,
-        preferences.downloadFilterIds,
-        preferences.visualVideoPresentation,
-        preferences.showDownloadFilterCounts,
-    ) { layout, filterIds, visualVideo, showCounts ->
-        DownloadManagerPresentation(
-            layout = DownloadManagerLayout.fromStoredValue(layout),
-            enabledFilters = DownloadFilterCategory.fromStoredIds(filterIds),
-            visualVideoPresentation = visualVideo,
-            showFilterCounts = showCounts,
+    val presentation: StateFlow<DownloadManagerPresentation?> = preferences.settings
+        .map { settings ->
+            DownloadManagerPresentation(
+                layout = DownloadManagerLayout.fromStoredValue(settings.downloadManagerLayout),
+                enabledFilters = DownloadFilterCategory.fromStoredIds(settings.downloadFilterIds),
+                visualVideoPresentation = settings.visualVideoPresentation,
+                showFilterCounts = settings.showDownloadFilterCounts,
+            )
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null,
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = DownloadManagerPresentation(),
-    )
 
     fun setLayout(layout: DownloadManagerLayout) {
         viewModelScope.launch { preferences.setDownloadManagerLayout(layout.storedValue) }
