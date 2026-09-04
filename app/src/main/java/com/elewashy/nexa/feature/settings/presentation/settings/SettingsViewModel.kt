@@ -7,6 +7,7 @@ import com.elewashy.nexa.core.localization.AppLanguage
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
+import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.settings.data.ThemeRepository
 import com.elewashy.nexa.ui.theme.AppTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -46,6 +48,16 @@ class SettingsViewModel @Inject constructor(
 
     val videoDownloadButton: StateFlow<Boolean> = appPreferences.videoDownloadButton
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val browserNavigationBarPosition: StateFlow<BrowserNavigationBarPosition> =
+        appPreferences.browserNavigationBarPosition
+            .map(BrowserNavigationBarPosition::fromStoredValue)
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                BrowserNavigationBarPosition.Bottom,
+            )
 
     val selectedThemeColor: StateFlow<Int> = appPreferences.selectedThemeColor
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_THEME_COLOR_ARGB)
@@ -92,6 +104,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setVideoDownloadButton(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setVideoDownloadButton(enabled) }
+    }
+
+    fun setBrowserNavigationBarPosition(position: BrowserNavigationBarPosition) {
+        viewModelScope.launch { appPreferences.setBrowserNavigationBarPosition(position.storedValue) }
     }
 
     fun setSelectedThemeColor(color: Int) {

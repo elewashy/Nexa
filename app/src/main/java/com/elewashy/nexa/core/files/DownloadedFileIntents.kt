@@ -25,21 +25,14 @@ object DownloadedFileIntents {
             return APK_MIME_TYPE
         }
 
-        return when {
-            extensionMimeType != null -> extensionMimeType
-            !normalizedDeclared.isNullOrGenericMimeType() -> normalizedDeclared!!
-            !normalizedResolver.isNullOrGenericMimeType() -> normalizedResolver!!
-            else -> "*/*"
-        }
+        return extensionMimeType
+            ?: normalizedDeclared?.takeUnless { it.isNullOrGenericMimeType() }
+            ?: normalizedResolver?.takeUnless { it.isNullOrGenericMimeType() }
+            ?: "*/*"
     }
 
     fun createViewIntent(context: Context, file: File, declaredMimeType: String?): Intent {
-        val fileUri = getUri(context, file)
-        val mimeType = resolveMimeType(
-            file = file,
-            declaredMimeType = declaredMimeType,
-            contentResolverMimeType = context.contentResolver.getType(fileUri),
-        )
+        val (fileUri, mimeType) = resolveShareable(context, file, declaredMimeType)
         return Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(fileUri, mimeType)
             clipData = ClipData.newUri(context.contentResolver, file.name, fileUri)
@@ -48,8 +41,29 @@ object DownloadedFileIntents {
         }
     }
 
+    fun createShareIntent(context: Context, file: File, declaredMimeType: String?): Intent {
+        val (fileUri, mimeType) = resolveShareable(context, file, declaredMimeType)
+        return Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, fileUri)
+            clipData = ClipData.newUri(context.contentResolver, file.name, fileUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
     fun getUri(context: Context, file: File): Uri {
         return FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+    }
+
+    /** FileProvider URI plus the best MIME type for it, shared by every outgoing intent. */
+    private fun resolveShareable(context: Context, file: File, declaredMimeType: String?): Pair<Uri, String> {
+        val fileUri = getUri(context, file)
+        val mimeType = resolveMimeType(
+            file = file,
+            declaredMimeType = declaredMimeType,
+            contentResolverMimeType = context.contentResolver.getType(fileUri),
+        )
+        return fileUri to mimeType
     }
 
     private fun mimeTypeFromExtension(extension: String): String? {

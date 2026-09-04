@@ -312,7 +312,7 @@ private fun ThemeControls(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp),
                 ) {
-                    items(PaletteColors) { palette ->
+                    items(PaletteColors, key = { it.nameRes }) { palette ->
                         val colorToSave = if (palette.seedColor == Color.Transparent) DefaultThemeColor else palette.seedColor
                         PaletteItem(
                             palette = palette,
@@ -343,12 +343,12 @@ private fun ModeCircle(
     val fillColor = if (pureBlack) Color.Black else modeScheme.surface
     val borderWidth by animateDpAsState(
         targetValue = if (selected) 3.dp else 0.dp,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "modeBorderWidth",
     )
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.05f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "modeScale",
     )
     val interactionSource = remember { MutableInteractionSource() }
@@ -411,17 +411,17 @@ private fun PaletteItem(
     )
     val cornerRadius by animateDpAsState(
         targetValue = if (selected) 12.dp else 24.dp,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "paletteCornerRadius",
     )
     val borderWidth by animateDpAsState(
         targetValue = if (selected) 3.dp else 0.dp,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "paletteBorderWidth",
     )
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.08f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "paletteScale",
     )
     val shape = RoundedCornerShape(cornerRadius)

@@ -21,6 +21,18 @@ class BrowserResourceRepository @Inject constructor(
     private val rootDir = File(context.filesDir, ROOT_DIR_NAME)
     private val locks = BrowserResourceId.entries.associateWith { Any() }
 
+    init {
+        // A crash between tmp write and rename can leave `.tmp` halves behind;
+        // nothing else sweeps them.
+        try {
+            rootDir.listFiles { dir, name ->
+                name.endsWith(".tmp") && File(dir, name).isFile
+            }?.forEach { it.delete() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Tmp sweep failed: ${e.message}")
+        }
+    }
+
     fun fileFor(id: BrowserResourceId): File = File(rootDir, id.cacheFileName)
 
     fun readText(id: BrowserResourceId): String? {
@@ -38,45 +50,69 @@ class BrowserResourceRepository @Inject constructor(
             if (!force && !isDue(id)) {
                 return BrowserResourceRefreshResult(id, checked = false, updated = false, available = fileFor(id).exists())
             }
+            // A null result means "304 with a missing cache file": the stale
+            // validators were dropped, so refetch unconditionally once to
+            // rebuild the cache instead of looping on 304 forever.
+            return fetch(id, conditional = true)
+                ?: fetch(id, conditional = false)
+                ?: BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
+        }
+    }
 
-            val request = Request.Builder()
-                .url(id.remoteUrl)
-                .header("User-Agent", "Nexa")
-                .apply {
+    /**
+     * One HTTP check. Returns null only for the stale-validator case (304
+     * received while the cached file is gone) after dropping the validators.
+     */
+    private fun fetch(id: BrowserResourceId, conditional: Boolean): BrowserResourceRefreshResult? {
+        val request = Request.Builder()
+            .url(id.remoteUrl)
+            .header("User-Agent", "Nexa")
+            .apply {
+                if (conditional) {
                     prefs.getString(key(id, KEY_ETAG), null)?.let { header("If-None-Match", it) }
                     prefs.getString(key(id, KEY_LAST_MODIFIED), null)?.let { header("If-Modified-Since", it) }
                 }
-                .get()
-                .build()
+            }
+            .get()
+            .build()
 
-            return try {
-                httpClientProvider.client.newCall(request).execute().use { response ->
-                    when (response.code) {
-                        HTTP_NOT_MODIFIED -> {
-                            saveCheckedAt(id)
-                            BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
-                        }
-                        HTTP_OK -> {
-                            val body = response.body.bytes()
-                            if (body.isEmpty()) {
-                                saveCheckedAt(id)
-                                BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
-                            } else {
-                                val updated = writeIfChanged(id, body)
-                                saveMetadata(id, response.header("ETag"), response.header("Last-Modified"))
-                                BrowserResourceRefreshResult(id, checked = true, updated = updated, available = true)
+        return try {
+            httpClientProvider.client.newCall(request).execute().use { response ->
+                when (response.code) {
+                    HTTP_NOT_MODIFIED -> {
+                        val cached = fileFor(id)
+                        if (!cached.exists() || cached.length() == 0L) {
+                            Log.w(TAG, "Resource ${id.name}: 304 but cache missing — dropping validators")
+                            prefs.edit {
+                                remove(key(id, KEY_ETAG))
+                                remove(key(id, KEY_LAST_MODIFIED))
                             }
-                        }
-                        else -> {
-                            Log.w(TAG, "Resource ${id.name} check failed: HTTP ${response.code}")
-                            BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
+                            null
+                        } else {
+                            saveCheckedAt(id)
+                            BrowserResourceRefreshResult(id, checked = true, updated = false, available = true)
                         }
                     }
+                    HTTP_OK -> {
+                        val body = response.body.bytes()
+                        if (body.isEmpty()) {
+                            saveCheckedAt(id)
+                            BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
+                        } else {
+                            val updated = writeIfChanged(id, body)
+                            saveMetadata(id, response.header("ETag"), response.header("Last-Modified"))
+                            BrowserResourceRefreshResult(id, checked = true, updated = updated, available = true)
+                        }
+                    }
+                    else -> {
+                        Log.w(TAG, "Resource ${id.name} check failed: HTTP ${response.code}")
+                        BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
+                    }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Resource ${id.name} refresh failed", e)
-                BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Resource ${id.name} refresh failed", e)
+            BrowserResourceRefreshResult(id, checked = true, updated = false, available = fileFor(id).exists())
         }
     }
 

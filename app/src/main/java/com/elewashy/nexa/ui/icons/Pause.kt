@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val Pause: ImageVector
   get() {
     if (_pause != null) {
@@ -90,6 +91,7 @@ val Pause: ImageVector
 
 private var _pause: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val PauseFilled: ImageVector
   get() {
     if (_pause_filled != null) {

@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val Refresh: ImageVector
   get() {
     if (_refresh != null) {
@@ -21,7 +22,6 @@ val Refresh: ImageVector
           defaultHeight = 24.dp,
           viewportWidth = 24f,
           viewportHeight = 24f,
-          autoMirror = true,
         )
         .apply {
           path(
@@ -79,6 +79,7 @@ val Refresh: ImageVector
 
 private var _refresh: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val RefreshFilled: ImageVector
   get() {
     if (_refresh_filled != null) {
@@ -91,7 +92,6 @@ val RefreshFilled: ImageVector
           defaultHeight = 24.dp,
           viewportWidth = 24f,
           viewportHeight = 24f,
-          autoMirror = true,
         )
         .apply {
           path(

@@ -68,7 +68,6 @@ class AdBlockRepository @Inject constructor(
 
         // SharedPreferences (metadata only — NOT for bulk hosts)
         private const val PREFS_NAME = "AdBlockerPrefs"
-        private const val KEY_LAST_UPDATE_TIME = "lastUpdateTime"
 
         // Flat-file storage for bulk hosts
         private const val HOSTS_FILE_NAME = "ad_hosts.txt"
@@ -193,19 +192,17 @@ class AdBlockRepository @Inject constructor(
     init {
         // Create notification channel (lightweight IPC)
         createNotificationChannel()
-        
-        // Single thread: load from disk first, then start background update.
-        // This prevents the race condition where an update could finish before
-        // the load, causing the loaded stale data to overwrite fresh data.
+
+        // Single thread: load from disk only. Refresh passes are triggered by
+        // the splash InitializeBlocklistsUseCase — triggering them here as well
+        // ran two serialized full update passes on every launch whose hourly
+        // gate had expired.
         Thread({
             try {
-                // Step 1: Load from disk (must complete before update)
+                sweepOrphanTmpFiles()
                 val loaded = loadLocalHosts()
                 adHosts = loaded
                 Log.d(TAG, "Loaded ${loaded.size} hosts from storage")
-
-                // Step 2: Only then start background update
-                updateEasyList()
             } catch (e: Exception) {
                 Log.e(TAG, "Init error", e)
             }
@@ -213,6 +210,21 @@ class AdBlockRepository @Inject constructor(
             priority = Thread.NORM_PRIORITY - 2
             isDaemon = true
         }.start()
+    }
+
+    /**
+     * Removes `.tmp` halves of the atomic tmp→rename writes that a crash can
+     * leave behind; nothing else sweeps them.
+     */
+    private fun sweepOrphanTmpFiles() {
+        try {
+            File(context.filesDir, "$HOSTS_FILE_NAME.tmp").delete()
+            context.filesDir.listFiles { dir, name ->
+                name.startsWith("hosts_") && name.endsWith(".tmp") && File(dir, name).isFile
+            }?.forEach { it.delete() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Tmp sweep failed: ${e.message}")
+        }
     }
 
     /**
@@ -305,13 +317,6 @@ class AdBlockRepository @Inject constructor(
         }
     }
 
-    /**
-     * Forces an immediate ad-block resource refresh.
-     */
-    fun updateEasyList() {
-        refreshDueAdBlockLists()
-    }
-
     // ========== Update Logic ==========
 
     private fun performEasyListUpdate(force: Boolean): Boolean {
@@ -355,7 +360,6 @@ class AdBlockRepository @Inject constructor(
 
             if (allHosts.isNotEmpty()) {
                 adHosts = allHosts
-                updateTimestamp()
 
                 if (modifiedCount > 0) {
                     saveLocalHosts(allHosts)
@@ -528,10 +532,6 @@ class AdBlockRepository @Inject constructor(
             Log.e(TAG, "Migration from SharedPreferences failed", e)
             emptySet()
         }
-    }
-
-    private fun updateTimestamp() {
-        sharedPreferences.edit { putLong(KEY_LAST_UPDATE_TIME, System.currentTimeMillis()) }
     }
 
     // ========== Notifications ==========

@@ -6,7 +6,6 @@ import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Semaphore
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
@@ -49,7 +48,7 @@ import java.util.concurrent.TimeUnit
  * @property onStatusChange         Called when any download's status changes.
  */
 class DownloadEngine(
-    private val maxConcurrentDownloads: Int = 3,
+    maxConcurrentDownloads: Int = 3,
     private val onProgress: (DownloadItem) -> Unit = {},
     private val onStatusChange: (DownloadItem, DownloadStatus) -> Unit = { _, _ -> }
 ) {
@@ -123,8 +122,9 @@ class DownloadEngine(
     /** Engine scope — all tasks are children. Cancelled in [close]. */
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** Semaphore that limits how many downloads can run concurrently. */
-    private val downloadSemaphore = Semaphore(maxConcurrentDownloads)
+    /** Adjustable file-level gate plus one aggregate limiter shared by every segment. */
+    private val concurrencyLimiter = AdjustableConcurrencyLimiter(maxConcurrentDownloads)
+    private val bandwidthLimiter = BandwidthLimiter()
 
     // ── Task registry ───────────────────────────────────────────────────
 
@@ -182,26 +182,14 @@ class DownloadEngine(
         val completion = CompletableDeferred<Unit>()
         taskCompletions[item.id] = completion
 
-        // Launch a wrapper coroutine that acquires a semaphore permit
         val job = engineScope.launch {
-            var acquired = false
             try {
-                // Wait for a download slot
-                downloadSemaphore.acquire()
-                acquired = true
-
-                // Check if the task was cancelled while waiting
-                if (!isActive || !activeTasks.containsKey(item.id)) {
-                    return@launch
+                concurrencyLimiter.withPermit {
+                    if (!isActive || !activeTasks.containsKey(item.id)) return@withPermit
+                    task.start(this@launch)
+                    completion.await()
                 }
-
-                // Start the actual download
-                task.start(this)
-
-                // Suspend until onStatusChange signals a terminal state (no polling)
-                completion.await()
             } finally {
-                if (acquired) downloadSemaphore.release()
                 // Identity removal — a late finally from a superseded wrapper
                 // (e.g. pause then immediate resume) must not evict the NEW
                 // wrapper's completion deferred.
@@ -210,6 +198,16 @@ class DownloadEngine(
         }
 
         taskJobs[item.id] = job
+    }
+
+    /** Updates future concurrency without interrupting active files. */
+    fun updateMaxConcurrentDownloads(value: Int) {
+        engineScope.launch { concurrencyLimiter.updateLimit(value) }
+    }
+
+    /** Applies an aggregate byte-rate cap immediately; zero means unlimited. */
+    fun updateSpeedLimit(bytesPerSecond: Long) {
+        bandwidthLimiter.updateLimit(bytesPerSecond)
     }
 
     /**
@@ -256,21 +254,14 @@ class DownloadEngine(
         val completion = CompletableDeferred<Unit>()
         taskCompletions[downloadId] = completion
 
-        // Re-enqueue with semaphore
         val job = engineScope.launch {
-            var acquired = false
             try {
-                downloadSemaphore.acquire()
-                acquired = true
-
-                if (!isActive || !activeTasks.containsKey(downloadId)) {
-                    return@launch
+                concurrencyLimiter.withPermit {
+                    if (!isActive || !activeTasks.containsKey(downloadId)) return@withPermit
+                    task.resume(this@launch)
+                    completion.await()
                 }
-
-                task.resume(this)
-                completion.await()
             } finally {
-                if (acquired) downloadSemaphore.release()
                 // Identity removal — see enqueue().
                 taskCompletions.remove(downloadId, completion)
             }
@@ -335,18 +326,34 @@ class DownloadEngine(
     }
 
     /**
-     * Snapshot of the task's current segment state for persistence.
-     * Empty when the task is unknown or has no bounded segments yet.
+     * Atomic progress snapshot (bytes + total + segment rows) for persistence.
+     * Empty segments when the task is unknown or has no bounded segments yet.
      *
      * [itemStatus] gates the restored-state fallback inside the task: only
-     * still-resumable items (DOWNLOADING/PAUSED) may fall back to their
-     * persisted segments — a fresh PENDING task has no resume state and must
-     * not resurrect stale segments from an unrelated earlier download.
+     * still-resumable items (DOWNLOADING/PAUSED/FAILED — FAILED is retryable)
+     * may fall back to their persisted segments; a fresh PENDING task has no
+     * resume state and must not resurrect stale segments.
      */
-    fun snapshotSegments(downloadId: Long, itemStatus: DownloadStatus): List<PersistedSegment> {
-        val task = activeTasks[downloadId] ?: return emptyList()
-        val resumable = itemStatus == DownloadStatus.DOWNLOADING || itemStatus == DownloadStatus.PAUSED
-        return task.snapshotSegments(allowRestoredFallback = resumable)
+    fun snapshotProgress(
+        downloadId: Long,
+        itemStatus: DownloadStatus,
+    ): DownloadTask.ProgressSnapshot {
+        val task = activeTasks[downloadId]
+            ?: return DownloadTask.ProgressSnapshot(0L, -1L, emptyList())
+        val resumable = itemStatus == DownloadStatus.DOWNLOADING ||
+            itemStatus == DownloadStatus.PAUSED ||
+            itemStatus == DownloadStatus.FAILED
+        return task.snapshotProgress(allowRestoredFallback = resumable)
+    }
+
+    /**
+     * Drops tasks restored by an aborted initialisation attempt (no live job),
+     * so a retry cannot stay bound to orphaned DownloadItem instances.
+     */
+    fun dropRestoredTasks() {
+        activeTasks.keys.toList().forEach { id ->
+            if (taskJobs[id] == null) activeTasks.remove(id)
+        }
     }
 
     /**
@@ -355,14 +362,19 @@ class DownloadEngine(
     fun close() {
         Log.d(TAG, "Closing download engine")
 
+        // Cleanup must run on a scope that outlives engineScope — launching
+        // writer closes on engineScope and then cancelling it would leak
+        // every file descriptor.
+        val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
         // Cancel all running tasks
-        activeTasks.values.forEach { it.cleanup(cleanupScope = engineScope) }
+        activeTasks.values.forEach { it.cleanup(cleanupScope = cleanupScope) }
         activeTasks.clear()
         taskJobs.clear()
         taskCompletions.values.forEach { it.complete(Unit) }
         taskCompletions.clear()
 
-        // Cancel the engine scope (this will also cancel cleanup coroutines)
+        // Cancel the engine scope
         engineScope.cancel()
 
         // Shut down the OkHttp dispatcher
@@ -411,7 +423,8 @@ class DownloadEngine(
                 }
             },
             initialProbe = initialProbe,
-            restoredSegments = restoredSegments
+            restoredSegments = restoredSegments,
+            bandwidthLimiter = bandwidthLimiter,
         )
     }
 

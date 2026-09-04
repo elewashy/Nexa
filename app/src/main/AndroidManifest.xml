@@ -29,13 +29,15 @@
         android:theme="@style/Theme.nexa"
         android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="tiramisu">
 
         <activity
             android:name=".feature.browser.presentation.MainActivity"
             android:configChanges="uiMode|keyboard|keyboardHidden|screenSize|screenLayout|smallestScreenSize|orientation"
             android:exported="true"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.nexa.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

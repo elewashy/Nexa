@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val Delete: ImageVector
   get() {
     if (_delete != null) {
@@ -100,6 +101,7 @@ val Delete: ImageVector
 
 private var _delete: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val DeleteFilled: ImageVector
   get() {
     if (_delete_filled != null) {

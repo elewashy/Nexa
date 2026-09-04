@@ -11,6 +11,10 @@ sealed interface SettingsDestination {
         override val route = "settings/general"
     }
 
+    data object BrowserNavigationPosition : SettingsDestination {
+        override val route = "settings/general/browser-navigation-position"
+    }
+
     data object CustomizeTheme : SettingsDestination {
         override val route = "settings/general/customize-theme"
     }

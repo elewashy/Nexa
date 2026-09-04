@@ -1,20 +1,19 @@
 package com.elewashy.nexa.feature.downloads.presentation.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularWavyProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,6 +22,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,10 +36,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.R
+import com.elewashy.nexa.core.util.UrlDisplay
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadFormatters.fileTypeIcon
@@ -49,6 +50,8 @@ import com.elewashy.nexa.feature.downloads.presentation.components.DownloadForma
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadFormatters.formatCompletedDownloadStatus
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadFormatters.isActiveStatus
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadFormatters.statusTint
+import com.elewashy.nexa.ui.components.common.AppOverflowMenu
+import com.elewashy.nexa.ui.components.common.AppOverflowMenuItem
 import com.elewashy.nexa.ui.icons.Check
 import com.elewashy.nexa.ui.icons.Close
 import com.elewashy.nexa.ui.icons.MoreVert
@@ -62,14 +65,8 @@ fun DownloadItemCard(
     item: DownloadItem,
     isSelected: Boolean,
     isMultiSelectMode: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onPauseClick: (() -> Unit)? = null,
-    onResumeClick: (() -> Unit)? = null,
-    onCancelClick: (() -> Unit)? = null,
-    onRetryClick: (() -> Unit)? = null,
-    onOpenFileClick: (() -> Unit)? = null,
-    onDeleteClick: (() -> Unit)? = null,
+    actions: DownloadItemActions,
+    showSourceHost: Boolean = false,
 ) {
     val accentColor = MaterialTheme.colorScheme.primary
     val context = LocalContext.current
@@ -78,20 +75,26 @@ fun DownloadItemCard(
     val isActive = isActiveStatus(item.status)
     val primaryStatus = if (isActive) formatActiveStatusPrimary(context, item) else ""
     val secondaryStatus = if (isActive) formatActiveStatusSecondary(context, item) else ""
-    val completedStatus = if (!isActive) formatCompletedDownloadStatus(context, item) else ""
+    val completedStatus = if (!isActive) {
+        val status = formatCompletedDownloadStatus(context, item)
+        val host = if (showSourceHost) UrlDisplay.host(item.url) else ""
+        listOf(status, host).filter(String::isNotEmpty).joinToString(" · ")
+    } else ""
 
     ListItem(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClick = { actions.onClick(item) },
+                onLongClick = { actions.onLongClick(item) },
+            ),
         colors = ListItemDefaults.colors(containerColor = containerColor),
         leadingContent = {
             LeadingIcon(
                 item = item,
                 isSelected = isSelected,
                 accentColor = accentColor,
-                onPauseClick = onPauseClick,
-                onResumeClick = onResumeClick
+                actions = actions,
             )
         },
         supportingContent = {
@@ -129,19 +132,15 @@ fun DownloadItemCard(
         },
         trailingContent = if (!isMultiSelectMode) {
             {
-                TrailingAction(
-                    item = item,
-                    onCancelClick = onCancelClick,
-                    onRetryClick = onRetryClick,
-                    onOpenFileClick = onOpenFileClick,
-                    onDeleteClick = onDeleteClick,
-                )
+                TrailingAction(item = item, actions = actions)
             }
         } else null
     ) {
         Text(
             text = item.fileName,
+            modifier = Modifier.fillMaxWidth(),
             style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Start,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -154,9 +153,22 @@ private fun LeadingIcon(
     item: DownloadItem,
     isSelected: Boolean,
     accentColor: Color,
-    onPauseClick: (() -> Unit)?,
-    onResumeClick: (() -> Unit)?
+    actions: DownloadItemActions,
 ) {
+    val activeProgress = item.status == DownloadStatus.DOWNLOADING ||
+        item.status == DownloadStatus.PAUSED
+    var animateCompletion by remember(item.id) { mutableStateOf(activeProgress) }
+    val animatedProgress = remember(item.id) { Animatable(0f) }
+    val targetProgress = (item.progress / 100f).coerceIn(0f, 1f)
+    LaunchedEffect(activeProgress, item.status, targetProgress) {
+        if (activeProgress) animateCompletion = true
+        animatedProgress.animateTo(
+            targetValue = targetProgress,
+            animationSpec = tween(durationMillis = PROGRESS_ANIMATION_MS, easing = LinearEasing),
+        )
+        if (item.status == DownloadStatus.COMPLETED) animateCompletion = false
+    }
+
     Box(
         modifier = Modifier.size(40.dp),
         contentAlignment = Alignment.Center
@@ -173,13 +185,13 @@ private fun LeadingIcon(
                     Icon(
                         imageVector = Check,
                         contentDescription = stringResource(R.string.selected),
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(24.dp)
                     )
                 }
             }
 
-            item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.PAUSED -> {
+            activeProgress || (item.status == DownloadStatus.COMPLETED && animateCompletion) -> {
                 val trackColor = MaterialTheme.colorScheme.surfaceVariant
                 val stroke = rememberProgressStroke()
 
@@ -188,7 +200,7 @@ private fun LeadingIcon(
                     contentAlignment = Alignment.Center
                 ) {
                     CircularWavyProgressIndicator(
-                        progress = { item.progress / 100f },
+                        progress = { animatedProgress.value },
                         modifier = Modifier.size(40.dp),
                         color = if (item.status == DownloadStatus.DOWNLOADING) accentColor else accentColor.copy(alpha = 0.5f),
                         trackColor = trackColor,
@@ -202,17 +214,26 @@ private fun LeadingIcon(
                             .clickable(
                                 onClick = {
                                     when (item.status) {
-                                        DownloadStatus.DOWNLOADING -> onPauseClick?.invoke()
-                                        DownloadStatus.PAUSED -> onResumeClick?.invoke()
-                                        else -> {}
+                                        DownloadStatus.DOWNLOADING -> actions.onPause(item)
+                                        DownloadStatus.PAUSED -> actions.onResume(item)
+                                        else -> Unit
                                     }
-                                }
+                                },
+                                enabled = activeProgress,
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            imageVector = if (item.status == DownloadStatus.PAUSED) PlayArrowFilled else PauseFilled,
-                            contentDescription = if (item.status == DownloadStatus.PAUSED) stringResource(R.string.resume) else stringResource(R.string.pause),
+                            imageVector = when (item.status) {
+                                DownloadStatus.PAUSED -> PlayArrowFilled
+                                DownloadStatus.COMPLETED -> Check
+                                else -> PauseFilled
+                            },
+                            contentDescription = when (item.status) {
+                                DownloadStatus.PAUSED -> stringResource(R.string.resume)
+                                DownloadStatus.COMPLETED -> stringResource(R.string.completed)
+                                else -> stringResource(R.string.pause)
+                            },
                             tint = accentColor,
                             modifier = Modifier.size(20.dp),
                         )
@@ -254,16 +275,13 @@ private fun LeadingIcon(
 @Composable
 private fun TrailingAction(
     item: DownloadItem,
-    onCancelClick: (() -> Unit)?,
-    onRetryClick: (() -> Unit)?,
-    onOpenFileClick: (() -> Unit)?,
-    onDeleteClick: (() -> Unit)?,
+    actions: DownloadItemActions,
 ) {
     when (item.status) {
         DownloadStatus.DOWNLOADING,
         DownloadStatus.PENDING,
         DownloadStatus.PAUSED -> {
-            IconButton(onClick = { onCancelClick?.invoke() }) {
+            IconButton(onClick = { actions.onCancel(item) }) {
                 Icon(
                     imageVector = Close,
                     contentDescription = stringResource(R.string.cancel),
@@ -272,7 +290,7 @@ private fun TrailingAction(
             }
         }
         DownloadStatus.FAILED -> {
-            IconButton(onClick = { onRetryClick?.invoke() }) {
+            IconButton(onClick = { actions.onRetry(item) }) {
                 Icon(
                     imageVector = RefreshFilled,
                     contentDescription = stringResource(R.string.retry),
@@ -282,12 +300,7 @@ private fun TrailingAction(
         }
         DownloadStatus.COMPLETED,
         DownloadStatus.CANCELLED -> {
-            DownloadOverflowMenu(
-                item = item,
-                onOpenFileClick = onOpenFileClick,
-                onRetryClick = onRetryClick,
-                onDeleteClick = onDeleteClick,
-            )
+            DownloadOverflowMenu(item = item, actions = actions)
         }
     }
 }
@@ -295,9 +308,7 @@ private fun TrailingAction(
 @Composable
 private fun DownloadOverflowMenu(
     item: DownloadItem,
-    onOpenFileClick: (() -> Unit)?,
-    onRetryClick: (() -> Unit)?,
-    onDeleteClick: (() -> Unit)?,
+    actions: DownloadItemActions,
 ) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
 
@@ -309,55 +320,58 @@ private fun DownloadOverflowMenu(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        DropdownMenu(
+        AppOverflowMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.widthIn(min = 160.dp, max = 280.dp),
-            offset = DpOffset(x = 0.dp, y = 4.dp),
-            shape = MaterialTheme.shapes.extraLarge,
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 0.dp,
-            shadowElevation = 3.dp,
         ) {
-            Spacer(Modifier.height(8.dp))
             when (item.status) {
                 DownloadStatus.COMPLETED -> {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.open_file)) },
+                    AppOverflowMenuItem(
+                        text = stringResource(R.string.open_file),
                         onClick = {
                             expanded = false
-                            onOpenFileClick?.invoke()
+                            actions.onOpenFile(item)
                         },
-                        contentPadding = DownloadMenuItemPadding,
+                    )
+                    AppOverflowMenuItem(
+                        text = stringResource(R.string.rename_download),
+                        onClick = {
+                            expanded = false
+                            actions.onRename(item)
+                        },
+                    )
+                    AppOverflowMenuItem(
+                        text = stringResource(R.string.share),
+                        onClick = {
+                            expanded = false
+                            actions.onShare(item)
+                        },
                     )
                 }
                 DownloadStatus.CANCELLED -> {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.retry)) },
+                    AppOverflowMenuItem(
+                        text = stringResource(R.string.retry),
                         onClick = {
                             expanded = false
-                            onRetryClick?.invoke()
+                            actions.onRetry(item)
                         },
-                        contentPadding = DownloadMenuItemPadding,
                     )
                 }
                 else -> Unit
             }
 
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.delete)) },
+            AppOverflowMenuItem(
+                text = stringResource(R.string.delete),
                 onClick = {
                     expanded = false
-                    onDeleteClick?.invoke()
+                    actions.onDelete(item)
                 },
-                contentPadding = DownloadMenuItemPadding,
             )
-            Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-private val DownloadMenuItemPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp)
+private const val PROGRESS_ANIMATION_MS = 320
 
 @Composable
 private fun rememberProgressStroke(): Stroke {

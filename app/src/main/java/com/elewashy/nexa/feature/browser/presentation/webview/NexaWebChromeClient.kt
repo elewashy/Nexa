@@ -58,7 +58,11 @@ class NexaWebChromeClient(
     private var onFullscreenEnter: () -> Unit = {},
     private var onFullscreenExit: () -> Unit = {},
     private var onProgressComplete: () -> Unit = {},
-    private var fileChooserLauncher: ((Intent) -> Boolean)? = null
+    private var onReceivedTitleEvent: (url: String?, title: String?) -> Unit = { _, _ -> },
+    private var onReceivedIconEvent: (url: String?, icon: Bitmap?) -> Unit = { _, _ -> },
+    private var fileChooserLauncher: ((Intent) -> Boolean)? = null,
+    /** Whether this client's WebView is the attached (visible) tab. */
+    private val isAttachedToUi: () -> Boolean = { true },
 ) : WebChromeClient() {
 
     companion object {
@@ -85,11 +89,18 @@ class NexaWebChromeClient(
         onFullscreenEnter: () -> Unit,
         onFullscreenExit: () -> Unit,
         onProgressComplete: () -> Unit,
+        onReceivedTitleEvent: (url: String?, title: String?) -> Unit = this.onReceivedTitleEvent,
     ) {
         this.onProgressChangedEvent = onProgressChangedEvent
         this.onFullscreenEnter = onFullscreenEnter
         this.onFullscreenExit = onFullscreenExit
         this.onProgressComplete = onProgressComplete
+        this.onReceivedTitleEvent = onReceivedTitleEvent
+    }
+
+    override fun onReceivedTitle(view: WebView?, title: String?) {
+        super.onReceivedTitle(view, title)
+        onReceivedTitleEvent(view?.url, title)
     }
 
     // ────────────────────────────────────────────────────────────
@@ -97,6 +108,12 @@ class NexaWebChromeClient(
     // ────────────────────────────────────────────────────────────
 
     override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+        // A background tab (paused but still running media/JS) must not paint
+        // its fullscreen view over the active tab via the shared container.
+        if (!isAttachedToUi()) {
+            callback.onCustomViewHidden()
+            return
+        }
         if (customView != null) {
             // A stale fullscreen view is still up (e.g. the renderer swapped
             // video surfaces). Tear it down and continue with the new view
@@ -120,24 +137,24 @@ class NexaWebChromeClient(
 
     override fun onHideCustomView() {
         val current = customView ?: return
+        val callback = customViewCallback
+        // Clear ownership before invoking Chromium's callback: it may call
+        // onHideCustomView synchronously, and must observe an idempotent exit.
+        customView = null
+        customViewCallback = null
 
         try {
             onFullscreenExit()
             activity.requestedOrientation = originalOrientation
-
             webView.visibility = View.VISIBLE
             customViewContainer.visibility = View.GONE
             customViewContainer.removeView(current)
-
-            customViewCallback?.onCustomViewHidden()
+            callback?.onCustomViewHidden()
         } catch (e: Exception) {
             Log.e(TAG, "Error hiding custom view: ${e.message}", e)
         } finally {
-            customView = null
-            customViewCallback = null
+            showSystemBars()
         }
-
-        showSystemBars()
     }
 
     /**
@@ -145,22 +162,10 @@ class NexaWebChromeClient(
      * fullscreen state is cleaned up.
      */
     fun cleanUpFullscreen() {
-        if (customView == null) return
-
-        try {
-            customViewContainer.removeAllViews()
-            customViewContainer.visibility = View.GONE
-            webView.visibility = View.VISIBLE
-            customViewCallback?.onCustomViewHidden()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error cleaning up fullscreen: ${e.message}", e)
-        }
-        customView = null
-        customViewCallback = null
-
-        activity.requestedOrientation = originalOrientation
-        onFullscreenExit()
-        showSystemBars()
+        // Use the same idempotent ownership release as a normal Chromium exit.
+        // Maintaining a second teardown path previously invoked the callback
+        // before clearing state, allowing a reentrant onHideCustomView call.
+        onHideCustomView()
     }
 
     // ────────────────────────────────────────────────────────────
@@ -191,7 +196,7 @@ class NexaWebChromeClient(
 
     override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
         super.onReceivedIcon(view, icon)
-        // Intentionally empty — favicon view was removed
+        onReceivedIconEvent(view?.url, icon)
     }
 
     // ────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
@@ -17,6 +18,8 @@ import android.os.Process
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import com.elewashy.nexa.core.files.DownloadDirectory
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.feature.downloads.data.engine.DownloadEngine
@@ -24,28 +27,37 @@ import com.elewashy.nexa.feature.downloads.data.engine.DownloadTask
 import com.elewashy.nexa.feature.downloads.data.engine.HttpProber
 import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
 import com.elewashy.nexa.feature.downloads.data.notification.DownloadNotificationManager
-import com.elewashy.nexa.feature.downloads.data.persistence.DownloadPersistence
+import com.elewashy.nexa.feature.downloads.data.persistence.DownloadSnapshot
+import com.elewashy.nexa.feature.downloads.data.persistence.DownloadStore
+import com.elewashy.nexa.feature.downloads.data.persistence.LegacyDownloadStateReader
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
+import com.elewashy.nexa.feature.downloads.data.persistence.toEntity
+import com.elewashy.nexa.feature.downloads.data.persistence.toItem
+import com.elewashy.nexa.feature.downloads.data.persistence.toSegmentEntityOrNull
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadRequest
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -54,11 +66,15 @@ import javax.inject.Singleton
  *
  * Owns the full download stack:
  *  - [DownloadEngine]  (segmented parallel downloads)
- *  - [DownloadPersistence]  (atomic flat-file JSON snapshot + segment state)
+ *  - [DownloadStore]  (Room-backed structural state + coalesced progress)
  *  - [DownloadNotificationManager]  (all user-facing notifications)
  *  - [ConcurrentHashMap] of live [DownloadItem]s (shared with the engine)
  *  - [ConnectivityManager.NetworkCallback]  (auto-resume on network return)
- *  - A 2 s periodic flush job on the application scope.
+ *
+ * Persistence model: high-frequency progress only marks ids dirty; the store's
+ * single-writer batch loop persists coalesced snapshots, while structural
+ * events (create/status/cancel) write immediately. Runtime-only values
+ * (speed/ETA/failure tally) never reach the database.
  *
  * Behavior is preserved byte-for-byte from the pre-Phase-3 `DownloadService`;
  * only the ownership of state has moved out of the service and up into this
@@ -73,7 +89,9 @@ import javax.inject.Singleton
 @Singleton
 class DownloadRepositoryImpl @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    @param:ApplicationScope private val appScope: CoroutineScope
+    @param:ApplicationScope private val appScope: CoroutineScope,
+    private val store: DownloadStore,
+    private val runtimeSettings: DownloadRuntimeSettings = DownloadRuntimeSettings(),
 ) : DownloadRepository {
 
     // ── State ──────────────────────────────────────────────────────────
@@ -134,7 +152,15 @@ class DownloadRepositoryImpl @Inject constructor(
      */
     private var notifManager: DownloadNotificationManager? = null
 
-    private val persistence: DownloadPersistence by lazy { DownloadPersistence(context) }
+    /** Download id allocator; seeded from Room metadata at init. */
+    private val idCounter = AtomicLong(0)
+
+    /**
+     * Last persisted segment rows per download, mirroring what Room holds.
+     * Seeds [DownloadTask] restores and serves the empty-snapshot guard (a
+     * restored-but-unresumed task must not wipe its own resume state).
+     */
+    private val restoredSegmentCache = ConcurrentHashMap<Long, List<PersistedSegment>>()
 
     private val engine: DownloadEngine by lazy {
         DownloadEngine(
@@ -155,14 +181,13 @@ class DownloadRepositoryImpl @Inject constructor(
 
     // ── Background jobs ───────────────────────────────────────────────
 
-    private var flushJob: Job? = null
-
     /**
      * Automatic retry for FAILED downloads. Transient failures (server
      * hiccups, unreachable resume probes, mid-stream resets) are retried on a
      * backoff schedule before the download is left failed for manual action.
      * Both maps are main-thread only (all mutations happen on Main.immediate).
      */
+    @Volatile private var autoRetryEnabled = true
     private val autoRetryCounts = mutableMapOf<Long, Int>()
     private val autoRetryJobs = mutableMapOf<Long, Job>()
 
@@ -196,7 +221,8 @@ class DownloadRepositoryImpl @Inject constructor(
      * Downloads screen opens without the service running. Callers that need
      * the loaded state suspend on [awaitInitialised].
      */
-    private val initGate = CompletableDeferred<Unit>()
+    @Volatile
+    private var initGate = CompletableDeferred<Unit>()
 
     /** Set as soon as the init coroutine is launched — the gate completes later. */
     private var initStarted = false
@@ -211,10 +237,37 @@ class DownloadRepositoryImpl @Inject constructor(
     @Volatile
     private var stateLoaded = false
 
+    init {
+        // DownloadTask supplies a locked aggregate snapshot; map/cache access
+        // here is concurrent-safe, so Room's writer thread never blocks main.
+        store.snapshotProvider = { ids -> captureSnapshots(ids) }
+        appScope.launch {
+            runtimeSettings.maxConcurrentDownloads.collect(engine::updateMaxConcurrentDownloads)
+        }
+        appScope.launch {
+            runtimeSettings.speedLimitBytesPerSecond.collect(engine::updateSpeedLimit)
+        }
+        appScope.launch(Dispatchers.Main.immediate) {
+            runtimeSettings.autoRetry.collect { enabled ->
+                autoRetryEnabled = enabled
+                if (!enabled) {
+                    autoRetryJobs.values.forEach(Job::cancel)
+                    autoRetryJobs.clear()
+                    autoRetryCounts.clear()
+                } else if (stateLoaded) {
+                    downloadItems.values
+                        .filter { it.status == DownloadStatus.FAILED }
+                        .forEach(::scheduleAutoRetry)
+                }
+            }
+        }
+    }
+
     @Synchronized
     private fun ensureInitialised() {
         if (initStarted) return
         initStarted = true
+        val gate = initGate
         appScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -225,8 +278,8 @@ class DownloadRepositoryImpl @Inject constructor(
                     // Promote to foreground only when restored work is genuinely
                     // ACTIVE — a sticky restart with only paused work must not
                     // hold a dataSync FGS or show a phantom Preparing notification.
-                    if (attachedService != null && hasActiveWork()) {
-                        notifManager?.startForegroundImmediately(attachedService!!)
+                    attachedService?.takeIf { hasActiveWork() }?.let { service ->
+                        notifManager?.startForegroundImmediately(service)
                     }
                     // Restored records re-reserve their filenames: a restored
                     // item whose .part is gone must not lose its name to a new
@@ -237,7 +290,7 @@ class DownloadRepositoryImpl @Inject constructor(
                         }
                     }
                     notifManager?.updateSummary(downloadItems.values)
-                    startPeriodicFlush()
+                    store.startBatchLoop()
                     // Recover retryable failures from the previous session.
                     // Retries that could not start the foreground service from
                     // the background are left failed (no re-arm loop); a new
@@ -248,12 +301,31 @@ class DownloadRepositoryImpl @Inject constructor(
                     emit(force = true)
                 }
                 Log.d(TAG, "DownloadRepository initialised")
+            } catch (e: CancellationException) {
+                stateLoaded = false
+                downloadItems.clear()
+                restoredSegmentCache.clear()
+                engine.dropRestoredTasks()
+                synchronized(this@DownloadRepositoryImpl) {
+                    initStarted = false
+                    initGate = CompletableDeferred()
+                }
+                throw e
             } catch (e: Exception) {
-                // Never fatal: proceed with whatever state loaded; commands must
-                // not rethrow initialisation errors onto the app scope.
-                Log.e(TAG, "Initialisation failed", e)
+                stateLoaded = false
+                downloadItems.clear()
+                restoredSegmentCache.clear()
+                engine.dropRestoredTasks()
+                // Never fatal for the current caller, but must not latch the
+                // repository into permanently unpersisted operation: reset the
+                // latch and install a fresh gate so the next access retries.
+                Log.e(TAG, "Initialisation failed — will retry on next access", e)
+                synchronized(this@DownloadRepositoryImpl) {
+                    initStarted = false
+                    initGate = CompletableDeferred()
+                }
             } finally {
-                initGate.complete(Unit)
+                gate.complete(Unit)
             }
         }
     }
@@ -262,6 +334,7 @@ class DownloadRepositoryImpl @Inject constructor(
     private suspend fun awaitInitialised() {
         ensureInitialised()
         initGate.await()
+        check(stateLoaded) { "Download persistence initialization failed" }
     }
 
     /** Genuinely active work — paused items must not hold a dataSync FGS. */
@@ -310,16 +383,15 @@ class DownloadRepositoryImpl @Inject constructor(
         }
         notifManager?.updateSummary(downloadItems.values)
 
-        // Final flush to disk — snapshot items AND segments together here on the
-        // main thread so they stay consistent, then do the Gson serialization
-        // and disk write on IO (never on the caller/main thread). The app scope
-        // outlives the service, so the flush survives onDestroy. Skipped when
-        // state never loaded — flushing an empty map would wipe the file.
+        // Final persistence: capture the consistent snapshot here on main
+        // (cheap, bounded, no I/O) and hand the write to the serialized
+        // writer without blocking service destruction. Structural statuses
+        // were already persisted immediately at their transitions; this lands
+        // the latest batched progress. If the process dies before the async
+        // write lands, resume re-verifies against the .part file, so state
+        // stays recoverable.
         if (stateLoaded) {
-            val snapshot = takeStateSnapshot()
-            appScope.launch(Dispatchers.IO) {
-                persistence.forceFlush(snapshot.items, snapshot.segments, snapshot.seq)
-            }
+            store.postSnapshots(captureSnapshots(downloadItems.keys.toList()))
         }
 
         unregisterNetworkCallback()
@@ -355,7 +427,9 @@ class DownloadRepositoryImpl @Inject constructor(
             notifManager?.showSystemTimeoutPausedNotification(item)
         }
         notifManager?.updateSummary(downloadItems.values)
-        persistence.markDirty()
+        // task.pause() set PAUSED synchronously; persist the transition now so
+        // a kill after the quota timeout can't lose it.
+        store.postUpsert(active.map { it.id })
     }
 
     override fun stopServiceIfIdle() {
@@ -435,6 +509,9 @@ class DownloadRepositoryImpl @Inject constructor(
                             forceExtension = request.forceExtension,
                             initialProbe = probe
                         )
+                    } catch (cancellation: CancellationException) {
+                        reservedUrls.remove(request.url)
+                        throw cancellation
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to create download: ${request.url}", e)
                         reservedUrls.remove(request.url)
@@ -511,40 +588,131 @@ class DownloadRepositoryImpl @Inject constructor(
             // service stopped itself — route through the service, which calls
             // back into resume() once attached.
             Log.d(TAG, "Resume routed through service (not attached): ${item.fileName}")
-            routedResumes.add(item.id)
-            return try {
-                context.startForegroundService(
-                    android.content.Intent(context, DownloadService::class.java)
-                        .setAction(DownloadService.ACTION_RESUME_DOWNLOAD)
-                        .putExtra(DownloadService.EXTRA_DOWNLOAD_ID, item.id)
-                )
-                true
-            } catch (e: Exception) {
-                // Android 12+ denies startForegroundService from the background
-                // — the item stays FAILED for the next retry or manual action.
-                routedResumes.remove(item.id)
-                Log.e(TAG, "Failed to start service for resume: ${item.fileName}", e)
-                false
-            }
+            return routeResumeThroughService(item)
         }
 
-        item.failureCount = 0
         item.errorMessage = null
-
-        if (engine.hasTask(item.id)) {
-            engine.resume(item.id)
-            Log.d(TAG, "Resuming: ${item.fileName}")
-        } else {
-            // Task not in engine (e.g. restored from persistence) — re-enqueue
-            // with its persisted segment state so resume is verified on disk.
-            Log.d(TAG, "Re-enqueueing: ${item.fileName}")
-            engine.restoreTask(item, persistence.restoredSegments(item.id))
-            engine.resume(item.id)
-        }
+        resumeInEngine(item)
         return true
     }
 
+    /**
+     * Asks the foreground service to resume [item] once it is attached. The id
+     * is tracked in [routedResumes] so [stopServiceIfIdle] cannot stop the
+     * service before the queued intent is handled.
+     *
+     * @return `false` when the platform denied the start (Android 12+
+     *         background-start restrictions) — the item keeps its current
+     *         status for a later retry or manual action.
+     */
+    private fun routeResumeThroughService(item: DownloadItem): Boolean {
+        routedResumes.add(item.id)
+        return try {
+            context.startForegroundService(
+                Intent(context, DownloadService::class.java)
+                    .setAction(DownloadService.ACTION_RESUME_DOWNLOAD)
+                    .putExtra(DownloadService.EXTRA_DOWNLOAD_ID, item.id)
+            )
+            true
+        } catch (e: Exception) {
+            routedResumes.remove(item.id)
+            Log.e(TAG, "Failed to start service for: ${item.fileName}", e)
+            false
+        }
+    }
+
+    /**
+     * Resumes [item] in the engine, re-enqueueing it with its persisted
+     * segment state when the engine no longer holds the task (restored from
+     * Room) so resume is verified against the `.part` file on disk.
+     */
+    private fun resumeInEngine(item: DownloadItem) {
+        if (engine.hasTask(item.id)) {
+            Log.d(TAG, "Resuming: ${item.fileName}")
+        } else {
+            Log.d(TAG, "Re-enqueueing: ${item.fileName}")
+            engine.restoreTask(item, restoredSegments(item.id))
+        }
+        engine.resume(item.id)
+    }
+
     override suspend fun retry(id: Long) = resume(id)
+
+    override suspend fun renameCompleted(
+        id: Long,
+        requestedName: String,
+    ): RenameDownloadResult = withContext(Dispatchers.Main.immediate) {
+        awaitInitialised()
+        val item = downloadItems[id] ?: return@withContext RenameDownloadResult.NotFound
+        if (item.status != DownloadStatus.COMPLETED) {
+            return@withContext RenameDownloadResult.NotCompleted
+        }
+        val trimmedName = requestedName.trim()
+        val existingExtension = item.fileName.substringAfterLast('.', "")
+        val requestedWithExtension = if (
+            trimmedName.substringAfterLast('.', "").isBlank() && existingExtension.isNotBlank()
+        ) {
+            "$trimmedName.$existingExtension"
+        } else {
+            trimmedName
+        }
+        val cleanName = FileNameResolver.sanitise(requestedWithExtension, item.mimeType)
+        if (trimmedName.isBlank() || cleanName.isBlank()) {
+            return@withContext RenameDownloadResult.InvalidName
+        }
+
+        val source = File(item.filePath)
+        if (!source.exists()) return@withContext RenameDownloadResult.NotFound
+        if (cleanName == item.fileName) return@withContext RenameDownloadResult.Success
+        val target = File(source.parentFile, cleanName)
+        if (target.exists() || File(target.path + DownloadTask.PART_SUFFIX).exists()) {
+            return@withContext RenameDownloadResult.NameAlreadyExists
+        }
+
+        val moved = withContext(Dispatchers.IO) { moveFile(source, target) }
+        if (!moved) return@withContext RenameDownloadResult.FileOperationFailed
+
+        val previousName = item.fileName
+        val previousPath = item.filePath
+        item.fileName = cleanName
+        item.filePath = target.absolutePath
+        try {
+            store.upsertNow(listOf(id))
+            emit(force = true)
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(previousPath, target.absolutePath),
+                arrayOf(item.mimeType, item.mimeType),
+                null,
+            )
+            RenameDownloadResult.Success
+        } catch (error: Exception) {
+            Log.e(TAG, "Failed to persist rename for $id", error)
+            val rolledBack = withContext(NonCancellable + Dispatchers.IO) { moveFile(target, source) }
+            if (rolledBack) {
+                item.fileName = previousName
+                item.filePath = previousPath
+            } else {
+                // Keep in-memory state aligned with the filesystem and retain a durable retry.
+                store.postUpsert(listOf(id))
+                emit(force = true)
+            }
+            if (error is CancellationException) throw error
+            RenameDownloadResult.PersistenceFailed
+        }
+    }
+
+    private fun moveFile(source: File, target: File): Boolean = try {
+        try {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: Exception) {
+            Files.move(source.toPath(), target.toPath())
+        }
+        true
+    } catch (error: Exception) {
+        Log.w(TAG, "Unable to rename ${source.name} to ${target.name}: ${error.message}")
+        false
+    }
 
     override suspend fun cancel(id: Long) = cancelInternal(id, deleteFile = true)
 
@@ -591,8 +759,8 @@ class DownloadRepositoryImpl @Inject constructor(
                 }
 
                 cancelAutoRetry(item.id)
-                persistence.markDirty()
-                flushNow()
+                restoredSegmentCache.remove(item.id)
+                store.postDelete(item.id)
                 emit(force = true) // Item removed — structural change, show it now
                 stopServiceIfIdle()
             }
@@ -631,10 +799,12 @@ class DownloadRepositoryImpl @Inject constructor(
             DownloadStatus.COMPLETED -> {
                 cancelAutoRetry(item.id)
                 item.downloadSpeedBytesPerSecond = 0
-                item.failureCount = 0
                 // The final file now guards the name on disk — release the
                 // reservation or the set grows with every completed download.
                 reservedFileNames.remove(item.fileName)
+                // Completion is terminal — the resume cache is only consumed
+                // when restoring resumable tasks; keep it from accumulating.
+                restoredSegmentCache.remove(item.id)
                 updateStatus(item, DownloadStatus.COMPLETED)
                 scanMediaFile(item.filePath, item.mimeType)
             }
@@ -651,9 +821,10 @@ class DownloadRepositoryImpl @Inject constructor(
                     item.status = DownloadStatus.CANCELLED
                     downloadItems.remove(item.id)
                     reservedFileNames.remove(item.fileName)
+                    restoredSegmentCache.remove(item.id)
                     notifManager?.cancelNotification(item.id)
                     notifManager?.updateSummary(downloadItems.values)
-                    persistence.markDirty()
+                    store.postDelete(item.id)
                     emit(force = true) // Item removed — structural change, show it now
                 }
             }
@@ -674,6 +845,7 @@ class DownloadRepositoryImpl @Inject constructor(
      * left failed immediately. Must run on the main thread.
      */
     private fun scheduleAutoRetry(item: DownloadItem) {
+        if (!autoRetryEnabled) return
         if (item.errorMessage in NON_RETRYABLE_ERRORS) return
 
         val attempt = autoRetryCounts.getOrDefault(item.id, 0)
@@ -698,7 +870,6 @@ class DownloadRepositoryImpl @Inject constructor(
             // resumeInternal routes through the foreground service when it is
             // not attached, so the retry never runs outside an FGS.
             Log.i(TAG, "Auto-retrying: ${current.fileName}")
-            current.failureCount = 0
             if (!resumeInternal(current)) {
                 // Service not startable from the background (Android 12+).
                 // Leave the item failed — the next session's init sweep or a
@@ -726,12 +897,20 @@ class DownloadRepositoryImpl @Inject constructor(
         initialProbe: HttpProber.ProbeResult? = null
     ) {
         try {
-            val downloadId = persistence.idCounter.incrementAndGet()
+            val downloadId = idCounter.incrementAndGet()
+            appScope.launch {
+                try {
+                    store.setLastId(downloadId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Sequence persistence is best-effort; the id clamp at
+                    // load time (max of stored and row ids) heals gaps.
+                    Log.w(TAG, "setLastId failed: ${e.message}")
+                }
+            }
 
-            val targetDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "Nexa"
-            ).also { if (!it.exists()) it.mkdirs() }
+            val targetDir = DownloadDirectory.ensureRoot()
 
             val cleaned = if (forceExtension != null)
                 FileNameResolver.sanitiseWithForcedExtension(fileName, forceExtension)
@@ -765,8 +944,7 @@ class DownloadRepositoryImpl @Inject constructor(
                 downloadItems[downloadId] = item
                 // No engine.enqueue here — a queued task would sit on an
                 // uninitialised writer until the user resumes.
-                persistence.markDirty()
-                flushNow()
+                persistNow(downloadId)
                 updateStatus(item, DownloadStatus.FAILED)
                 // Release the URL reservation first (the finally would only run
                 // afterwards) so stopServiceIfIdle can actually stop the service.
@@ -776,11 +954,6 @@ class DownloadRepositoryImpl @Inject constructor(
             }
 
             downloadItems[downloadId] = item
-            persistence.markDirty()
-            // Persist the new record immediately: a process kill before the
-            // first periodic flush would otherwise lose it (and the orphan-.part
-            // sweep on next start would delete its in-progress file).
-            flushNow()
 
             // A download is starting while notifications are disabled — without a
             // warning the user would get zero feedback about it. One shot per process.
@@ -788,9 +961,38 @@ class DownloadRepositoryImpl @Inject constructor(
 
             emit(force = true) // New item — structural change, show it now
 
-            // Enqueue in the custom download engine, reusing the upstream probe so
-            // the URL is only hit once.
-            engine.enqueue(item, initialProbe = initialProbe)
+            // Persist the record before the engine creates the .part file: a
+            // kill between enqueue and a fire-and-forget persist would leave
+            // an orphan .part that the next start's sweep deletes.
+            appScope.launch(Dispatchers.Main.immediate) {
+                try {
+                    store.upsertNow(listOf(downloadId))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // The item stays in memory and re-persists at the next
+                    // structural transition; the download itself proceeds.
+                    Log.e(TAG, "Initial record persist failed for $downloadId", e)
+                }
+                if (attachedService == null) {
+                    // The probe window can outlive the foreground service (system
+                    // pressure, Android 15 dataSync timeout). A download running
+                    // outside the FGS is killed as soon as the app is backgrounded,
+                    // so persist it paused and route through the service exactly
+                    // like a resume — it starts once the service attaches.
+                    Log.d(TAG, "Start routed through service (not attached): ${item.fileName}")
+                    item.status = DownloadStatus.PAUSED
+                    persistNow(downloadId)
+                    emit(force = true)
+                    // Background-start restrictions leave the item paused for a
+                    // manual resume instead of running unprotected.
+                    routeResumeThroughService(item)
+                } else {
+                    // Enqueue in the custom download engine, reusing the upstream
+                    // probe so the URL is only hit once.
+                    engine.enqueue(item, initialProbe = initialProbe)
+                }
+            }
         } finally {
             // Reservation is handed over to the downloadItems dedup (or dropped on
             // failure) — either way it must not leak.
@@ -832,9 +1034,6 @@ class DownloadRepositoryImpl @Inject constructor(
     @Suppress("DEPRECATION")
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun hasAllFilesAccessOnQ(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return Environment.isExternalStorageManager()
-        }
         return try {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
             val mode = appOps.unsafeCheckOpNoThrow(
@@ -866,16 +1065,36 @@ class DownloadRepositoryImpl @Inject constructor(
         // would skip the notification update and emission for every status change.
         item.status = newStatus
 
-        if (newStatus == DownloadStatus.COMPLETED || newStatus == DownloadStatus.CANCELLED) {
-            item.failureCount = 0
-        }
-
         notifManager?.updateNotification(item, downloadItems.values)
-        persistence.markDirty()
-        // Terminal states must hit disk immediately — a process kill before
-        // the next periodic flush would otherwise lose completions/failures.
-        if (newStatus == DownloadStatus.COMPLETED || newStatus == DownloadStatus.FAILED) {
-            flushNow()
+        when (newStatus) {
+            // Status transitions are structural: persist immediately so a
+            // process kill can't regress them; the latest progress and segment
+            // rows ride along in the same snapshot.
+            DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.PAUSED ->
+                persistNow(item.id)
+            // PENDING/DOWNLOADING coalesce with the batched progress writes.
+            else -> store.markProgress(item.id)
+        }
+        if (newStatus == DownloadStatus.COMPLETED) {
+            appScope.launch {
+                try {
+                    val prunedIds = store.pruneCompleted()
+                    if (prunedIds.isNotEmpty()) {
+                        withContext(Dispatchers.Main.immediate) {
+                            prunedIds.forEach { id ->
+                                downloadItems.remove(id)
+                                engine.remove(id)
+                            }
+                            emit(force = true)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Prune is best-effort; the next completion retries it.
+                    Log.w(TAG, "Completed prune failed: ${e.message}")
+                }
+            }
         }
         emit(force = true)
     }
@@ -895,7 +1114,9 @@ class DownloadRepositoryImpl @Inject constructor(
             notifManager?.updateNotification(item, downloadItems.values)
         }
 
-        persistence.markDirty()
+        // Hot path: only mark the id dirty — the store's batch loop persists
+        // coalesced progress, never one write per tick.
+        store.markProgress(item.id)
     }
 
     /**
@@ -950,22 +1171,83 @@ class DownloadRepositoryImpl @Inject constructor(
     //  Persistence
     // ===================================================================
 
-    private fun loadDownloadState() {
-        val items = persistence.load()
+    private suspend fun loadDownloadState() {
+        importLegacyStateIfNeeded()
         downloadItems.clear()
+        restoredSegmentCache.clear()
+        engine.dropRestoredTasks()
 
-        items.forEach { item ->
+        var maxId = 0L
+        store.pruneCompleted()
+        store.loadAll().forEach { entity ->
+            val raw = entity.toItem()
+            val reconciled = reconcileWithFilesystem(raw)
+            if (reconciled.status != raw.status ||
+                reconciled.errorMessage != raw.errorMessage ||
+                reconciled.downloadedBytes != raw.downloadedBytes
+            ) {
+                store.upsertEntity(reconciled.toEntity())
+            }
+            val item = reconciled.apply {
+                // Active statuses at crash time must not auto-start on restore.
+                if (status == DownloadStatus.DOWNLOADING || status == DownloadStatus.PENDING) {
+                    status = DownloadStatus.PAUSED
+                }
+            }
             downloadItems[item.id] = item
-
-            // Restore task in the engine so it can be resumed. The persisted
-            // segment state travels with it so resume is verified on disk instead
-            // of assuming bytes [0..downloadedBytes] are contiguous.
-            engine.restoreTask(item, persistence.restoredSegments(item.id))
+            val segments = store.segmentsFor(item.id)
+            if (segments.isNotEmpty()) restoredSegmentCache[item.id] = segments
+            engine.restoreTask(item, segments)
+            if (item.id > maxId) maxId = item.id
         }
+        val stored = store.lastId() ?: 0L
+        idCounter.set(maxOf(stored, maxId))
 
-        sweepOrphanPartFiles(items.mapTo(HashSet()) { it.filePath + DownloadTask.PART_SUFFIX })
+        // A still-present legacy artifact means the import did not commit
+        // (rolled back) — its .part files belong to records the next attempt
+        // will restore, so sweeping now would destroy resume data.
+        if (!legacyArtifactPresent()) {
+            sweepOrphanPartFiles(
+                downloadItems.values.mapTo(HashSet()) { it.filePath + DownloadTask.PART_SUFFIX }
+            )
+        }
+        Log.d(TAG, "Loaded ${downloadItems.size} download items from Room")
+    }
 
-        Log.d(TAG, "Loaded ${items.size} download items, restored in engine")
+    /** True while a legacy JSON file or prefs document still awaits import. */
+    private fun legacyArtifactPresent(): Boolean =
+        legacyStateFile.exists() ||
+            context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                .contains(LEGACY_KEY_ITEMS)
+
+    /**
+     * Deterministic DB-vs-filesystem reconciliation at startup:
+     *  - COMPLETED but the final file is gone → FAILED/ERROR_FILE_MISSING
+     *    (never surface a completed download whose file is missing).
+     *  - Not completed, final file present at expected size and no `.part`
+     *    → the rename landed but the completion write was interrupted by the
+     *    kill → promote to COMPLETED.
+     *  - Everything else stays; resume verification against the `.part`
+     *    remains the engine's job.
+     */
+    private fun reconcileWithFilesystem(item: DownloadItem): DownloadItem {
+        val finalFile = File(item.filePath)
+        val partFile = File(item.filePath + DownloadTask.PART_SUFFIX)
+        return when {
+            item.status == DownloadStatus.COMPLETED && !finalFile.exists() -> item.apply {
+                status = DownloadStatus.FAILED
+                errorMessage = DownloadTask.ERROR_FILE_MISSING
+            }
+            item.status != DownloadStatus.COMPLETED &&
+                item.status != DownloadStatus.CANCELLED &&
+                item.totalBytes > 0 && finalFile.exists() &&
+                finalFile.length() == item.totalBytes && !partFile.exists() -> item.apply {
+                status = DownloadStatus.COMPLETED
+                downloadedBytes = item.totalBytes
+                errorMessage = null
+            }
+            else -> item
+        }
     }
 
     /**
@@ -975,11 +1257,7 @@ class DownloadRepositoryImpl @Inject constructor(
      */
     private fun sweepOrphanPartFiles(knownPartPaths: Set<String>) {
         try {
-            val dir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "Nexa"
-            )
-            dir.listFiles { f -> f.isFile && f.name.endsWith(DownloadTask.PART_SUFFIX) }
+            DownloadDirectory.root().listFiles { f -> f.isFile && f.name.endsWith(DownloadTask.PART_SUFFIX) }
                 ?.filter { it.absolutePath !in knownPartPaths }
                 ?.forEach { orphan ->
                     if (orphan.delete()) {
@@ -992,75 +1270,231 @@ class DownloadRepositoryImpl @Inject constructor(
     }
 
     /**
-     * Consistent persistence snapshot: items and their segments captured
-     * together on the main thread — engine mutations are reposted to main
-     * before touching items, so this cannot tear the way copying on IO while
-     * engine coroutines mutate the same instances could.
+     * Thread-safe snapshot capture for the [DownloadStore] writer: the engine
+     * supplies bytes + total + segment rows as ONE atomic snapshot, so a flush
+     * can never persist an entity that disagrees with its segment rows.
+     *
+     * FAILED is captured like PAUSED: it is retryable (auto-retry + manual),
+     * and wiping its rows would force a full re-download after process death.
+     *
+     * The empty-segment guard ports the old last-good rule: a restored-but-
+     * not-yet-resumed task has no live segments; writing an empty row set
+     * would destroy its resume state, so the cached (persisted) rows are used.
      */
-    private data class StateSnapshot(
-        val items: List<DownloadItem>,
-        val segments: Map<Long, List<PersistedSegment>>,
-        /** Capture order — lets persistence drop out-of-order (older) writes. */
-        val seq: Long
-    )
-
-    /** Main-thread capture counter feeding [StateSnapshot.seq]. */
-    private var snapshotSeq = 0L
-
-    private fun takeStateSnapshot(): StateSnapshot {
-        // COMPLETED items MUST be persisted — they are the user's download
-        // history. CANCELLED never appears here (cancel removes items from the
-        // map first). Item copies are captured FIRST and every downstream
-        // decision reads the copies: engine tasks mutate live item fields off
-        // the main thread, so reading the live map again for the segment pass
-        // could observe a status that no longer matches the captured items.
-        val items = downloadItems.values
-            .filter { it.status != DownloadStatus.CANCELLED }
-            .map { it.copy() }
-        val segmentEntries = items
-            .filter {
-                it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.PAUSED
+    private fun captureSnapshots(ids: Collection<Long>): List<DownloadSnapshot> {
+        if (!stateLoaded) return emptyList()
+        return ids.mapNotNull { id ->
+            val item = downloadItems[id] ?: return@mapNotNull null
+            when (item.status) {
+                DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
+                    val snapshot = engine.snapshotProgress(id, item.status)
+                    val effective = if (snapshot.segments.isEmpty()) {
+                        restoredSegmentCache[id].orEmpty()
+                    } else {
+                        restoredSegmentCache[id] = snapshot.segments
+                        snapshot.segments
+                    }
+                    val entity = item.copy().toEntity().copy(
+                        downloadedBytes = snapshot.downloadedBytes,
+                        totalBytes = snapshot.totalBytes,
+                    )
+                    DownloadSnapshot(
+                        entity,
+                        effective.mapNotNull { it.toSegmentEntityOrNull(id) },
+                    )
+                }
+                else -> {
+                    restoredSegmentCache.remove(id)
+                    DownloadSnapshot(item.copy().toEntity(), emptyList())
+                }
             }
-            .map { it.id to engine.snapshotSegments(it.id, it.status) }
-        return StateSnapshot(items = items, segments = segmentEntries.toMap(), seq = ++snapshotSeq)
+        }
     }
 
-    /**
-     * Immediate flush for structural changes (item created, terminal status,
-     * removal) — the 2 s periodic flush alone leaves a window where a process
-     * kill loses the change. Gated on [stateLoaded] like every other writer.
-     */
-    private fun flushNow() {
+    /** Immediate structural write (create / terminal status / pause). */
+    private fun persistNow(id: Long) {
         if (!stateLoaded) {
             // Should be rare — command paths await initialisation first. If it
             // ever fires, it points at a lifecycle race worth investigating.
-            Log.w(TAG, "Flush requested before persisted state loaded — skipped")
+            Log.w(TAG, "Persist requested before state loaded — skipped")
             return
         }
-        val snapshot = takeStateSnapshot()
-        appScope.launch(Dispatchers.IO) {
-            persistence.forceFlush(snapshot.items, snapshot.segments, snapshot.seq)
+        appScope.launch {
+            try {
+                store.upsertNow(listOf(id))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Disk-full/IO errors must not crash the process; the next
+                // structural transition re-persists.
+                Log.e(TAG, "Structural persist failed for download $id", e)
+            }
         }
     }
 
-    /** Periodically flushes dirty state to disk every 2 seconds. */
-    private fun startPeriodicFlush() {
-        flushJob = appScope.launch {
-            while (isActive) {
-                delay(2_000)
-                // Never flush before the persisted state has been loaded — the
-                // in-memory map is empty until then and would wipe the file.
-                if (!stateLoaded) continue
-                // Nothing changed since the last write — skip the main-thread
-                // snapshot entirely instead of copying the whole list for nothing.
-                if (!persistence.isDirty) continue
-                // Snapshot atomically on main BEFORE hopping to IO — copying
-                // items on IO while engine coroutines mutate them tears reads.
-                val snapshot = withContext(Dispatchers.Main.immediate) { takeStateSnapshot() }
-                withContext(Dispatchers.IO) {
-                    persistence.flushIfDirty(snapshot.items, snapshot.segments, snapshot.seq)
+    /** Restored segment rows for engine [DownloadEngine.restoreTask] calls. */
+    private fun restoredSegments(id: Long): List<PersistedSegment> =
+        restoredSegmentCache[id] ?: emptyList()
+
+    // ── Legacy JSON migration (one-time) ────────────────────────────────
+
+    private val legacyStateFile = File(context.filesDir, LEGACY_STATE_FILE_NAME)
+
+    /**
+     * Imports the retired `download_state.json` (or the even older
+     * SharedPreferences document) into Room exactly once. Idempotent: runs
+     * only while the downloads table is empty; a kill mid-transaction rolls
+     * back and retries on next launch. The legacy file is renamed (never
+     * deleted) only after the import verifies.
+     */
+    private suspend fun importLegacyStateIfNeeded() {
+        val legacyJson: String?
+        val fromPrefs: Boolean
+        val prefsLastId: Long
+        when {
+            // The marker is set inside the import transaction — authoritative
+            // even when the user later deleted every imported row.
+            store.legacyImported() -> {
+                retireLegacyFile()
+                clearLegacyPrefs()
+                return
+            }
+            store.count() != 0 -> {
+                // Rows exist without the marker (dev build predating it).
+                // Room is authoritative; backfill the marker, retire artifacts.
+                store.markLegacyImported()
+                retireLegacyFile()
+                clearLegacyPrefs()
+                return
+            }
+            legacyStateFile.exists() -> {
+                legacyJson = legacyStateFile.readText()
+                fromPrefs = false
+                prefsLastId = 0L
+            }
+            else -> {
+                val prefs = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                legacyJson = prefs.getString(LEGACY_KEY_ITEMS, null)
+                fromPrefs = true
+                // Pre-1.2.0 releases stored the id sequence in a separate key;
+                // the bare-array document carries no sequence of its own.
+                prefsLastId = prefs.getLong(LEGACY_KEY_LAST_ID, 0L)
+                if (legacyJson == null) {
+                    // Fresh/no-legacy state is itself a completed migration.
+                    // Persist the decision so a stale artifact can never be
+                    // imported after the user later deletes every row.
+                    store.markLegacyImported()
+                    return
                 }
             }
+        }
+
+        val state = try {
+            LegacyDownloadStateReader.read(legacyJson, fallbackLastId = prefsLastId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Corrupt legacy download state — quarantining", e)
+            // Mark before retiring the artifact. If this DB write fails the
+            // exception escapes and the artifact remains available for retry.
+            store.markLegacyImported()
+            if (fromPrefs) {
+                // Unparseable prefs content can never be imported — clear it
+                // so the startup path stops retrying the same garbage.
+                clearLegacyPrefs()
+            } else {
+                quarantineLegacyFile()
+            }
+            return
+        }
+        if (state == null) {
+            store.markLegacyImported()
+            if (fromPrefs) clearLegacyPrefs() else retireLegacyFile()
+            return
+        }
+
+        // Validate per-record; one bad entry never aborts the batch. Read
+        // non-null-typed fields through nullable locals — Gson documents can
+        // carry nulls where Kotlin expects values.
+        val validById = state.items
+            .filter {
+                val url: String? = it.url
+                val name: String? = it.fileName
+                val path: String? = it.filePath
+                it.id > 0 && !url.isNullOrBlank() && !name.isNullOrBlank() && !path.isNullOrBlank()
+            }
+            .associateBy { it.id }
+        val completed = validById.values.filter { it.status == DownloadStatus.COMPLETED }
+            .sortedByDescending { it.createdAt }
+            .take(DownloadStore.MAX_PERSISTED_COMPLETED)
+            .mapTo(HashSet()) { it.id }
+        val items = validById.values.filter {
+            it.status != DownloadStatus.COMPLETED || it.id in completed
+        }.toList()
+        val resumableIds = items.filter {
+            it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.PENDING ||
+                it.status == DownloadStatus.PAUSED
+        }.mapTo(HashSet()) { it.id }
+
+        val imported = try {
+            store.importLegacy(
+                state.copy(
+                    lastId = maxOf(state.lastId, items.maxOfOrNull { it.id } ?: 0L),
+                    items = items,
+                    segments = state.segments.filterKeys { it in resumableIds },
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Unexpected failure rolled the whole transaction back. Keep the
+            // artifact for the next attempt but let initialisation continue —
+            // escaping into ensureInitialised would disable persistence for
+            // the entire process.
+            Log.e(TAG, "Legacy import failed — keeping artifact for retry", e)
+            return
+        }
+
+        if (items.isEmpty()) {
+            // Nothing importable (all records malformed) — retrying cannot
+            // heal them; retire the artifact.
+            Log.w(TAG, "Legacy state held no importable downloads — retiring artifact")
+        } else if (imported < items.size) {
+            Log.w(TAG, "Imported $imported of ${items.size} legacy download record(s) — malformed entries skipped")
+        } else {
+            Log.i(TAG, "Imported $imported download record(s) from legacy state")
+        }
+        if (fromPrefs) clearLegacyPrefs() else retireLegacyFile()
+    }
+
+    private fun retireLegacyFile() {
+        try {
+            if (!legacyStateFile.exists()) return
+            val archived = File(legacyStateFile.parentFile, "$LEGACY_STATE_FILE_NAME.imported-${System.currentTimeMillis()}")
+            if (legacyStateFile.renameTo(archived)) {
+                Log.i(TAG, "Legacy download state archived → ${archived.name}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to archive legacy download state: ${e.message}")
+        }
+    }
+
+    private fun quarantineLegacyFile() {
+        try {
+            if (!legacyStateFile.exists()) return
+            val quarantined = File(legacyStateFile.parentFile, "$LEGACY_STATE_FILE_NAME.corrupt-${System.currentTimeMillis()}")
+            if (legacyStateFile.renameTo(quarantined)) {
+                Log.w(TAG, "Quarantined corrupt legacy state → ${quarantined.name}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error quarantining legacy state file", e)
+        }
+    }
+
+    private fun clearLegacyPrefs() {
+        try {
+            context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit { clear() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear legacy download prefs: ${e.message}")
         }
     }
 
@@ -1152,13 +1586,7 @@ class DownloadRepositoryImpl @Inject constructor(
             item.wasWaitingForNetwork = false
             notifManager?.showResumeNotification(item)
 
-            if (engine.hasTask(item.id)) {
-                engine.resume(item.id)
-            } else {
-                engine.restoreTask(item, persistence.restoredSegments(item.id))
-                engine.resume(item.id)
-            }
-
+            resumeInEngine(item)
             Log.d(TAG, "Auto-resumed: ${item.fileName}")
         }
     }
@@ -1218,6 +1646,8 @@ class DownloadRepositoryImpl @Inject constructor(
                                 }
                             }
                             Log.e(TAG, "Failed to delete after all retries: $path")
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             Log.e(TAG, "Error on retry delete: $path", e)
                         }
@@ -1231,6 +1661,12 @@ class DownloadRepositoryImpl @Inject constructor(
 
     companion object {
         private const val TAG = "DownloadRepository"
+
+        /** Retired JSON state file, imported once into Room. */
+        private const val LEGACY_STATE_FILE_NAME = "download_state.json"
+        private const val LEGACY_PREFS_NAME = "DownloadPrefs"
+        private const val LEGACY_KEY_ITEMS = "download_items"
+        private const val LEGACY_KEY_LAST_ID = "last_download_id"
 
         /** Minimum interval between notification updates (ms) to avoid Android rate limiting. */
         private const val NOTIFICATION_THROTTLE_MS = 500L
@@ -1255,17 +1691,5 @@ class DownloadRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun safeDownloadedFile(path: String): File? {
-        return try {
-            val root = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "Nexa"
-            ).canonicalFile
-            val file = File(path).canonicalFile
-            if (file.path == root.path || file.path.startsWith(root.path + File.separator)) file else null
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to validate download path: $path", e)
-            null
-        }
-    }
+    private fun safeDownloadedFile(path: String): File? = DownloadDirectory.resolveOwnedFile(path)
 }

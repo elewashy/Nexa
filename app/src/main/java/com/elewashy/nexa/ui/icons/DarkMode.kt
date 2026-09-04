@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val DarkMode: ImageVector
   get() {
     if (_dark_mode != null) {
@@ -80,6 +81,7 @@ val DarkMode: ImageVector
 
 private var _dark_mode: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val DarkModeFilled: ImageVector
   get() {
     if (_dark_mode_filled != null) {

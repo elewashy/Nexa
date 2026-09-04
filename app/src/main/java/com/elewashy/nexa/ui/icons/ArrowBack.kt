@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val ArrowBack: ImageVector
   get() {
     if (_arrow_back != null) {
@@ -67,6 +68,7 @@ val ArrowBack: ImageVector
 
 private var _arrow_back: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val ArrowBackFilled: ImageVector
   get() {
     if (_arrow_back_filled != null) {

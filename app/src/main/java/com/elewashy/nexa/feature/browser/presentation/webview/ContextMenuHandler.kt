@@ -122,7 +122,7 @@ object ContextMenuHandler {
         action: ContextMenuAction,
         webView: WebView,
         context: Context,
-        onDownloadStarted: (() -> Unit)? = null,
+        onDownloadStarted: ((StartedDownload) -> Unit)? = null,
     ): ContextMenuResult {
         // Data captured at long-press time; still null if the WebView has
         // not delivered it yet — every action below degrades gracefully.
@@ -158,7 +158,7 @@ object ContextMenuHandler {
         imgUrl: String?,
         webView: WebView,
         context: Context,
-        onDownloadStarted: (() -> Unit)?,
+        onDownloadStarted: ((StartedDownload) -> Unit)?,
     ): ContextMenuResult {
         imgUrl ?: return ContextMenuResult.None
         return if (isBase64DataUrl(imgUrl)) {

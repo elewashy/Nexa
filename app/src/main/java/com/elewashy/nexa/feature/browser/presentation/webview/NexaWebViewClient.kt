@@ -1,18 +1,20 @@
 package com.elewashy.nexa.feature.browser.presentation.webview
 
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.net.http.SslError
 import android.util.Log
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
 import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
 import com.elewashy.nexa.feature.browser.data.regex.RegexPatterns
@@ -26,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
  * WebView client for URL interception, ad blocking, script injection and page
  * lifecycle events.
  */
+@SuppressLint("MissingOnRenderProcessGone") // Implemented below; AndroidX lint misses the Kotlin override.
 class NexaWebViewClient(
     private val appContext: Context,
     private val adBlockRepository: AdBlockRepository,
@@ -35,15 +38,30 @@ class NexaWebViewClient(
     private val onPageFinishedEvent: () -> Unit = {},
     private val onNavigationConsumedEvent: () -> Unit = {},
     private val onUrlUpdatedEvent: (String?) -> Unit = {},
-    private val pageStartedCallback: (WebView?, String?) -> Unit = { _, _ -> },
-    private val pageFinishedCallback: (WebView?, String?) -> Unit = { _, _ -> },
-    private val urlUpdatedCallback: (String?) -> Unit = {},
-    // Dead callback retained (with its default) purely so existing call
-    // sites compile; load errors surface via [onPageLoadErrorEvent].
-    @Suppress("UNUSED_PARAMETER")
-    mainFrameLoadErrorCallback: (Boolean) -> Unit = {},
     private val onPageLoadErrorEvent: () -> Unit = {},
+    /** Committed main-frame navigation, for history recording. */
+    private val onVisitCommittedEvent: (url: String?, isReload: Boolean) -> Unit = { _, _ -> },
+    /** The WebView's renderer process died; the host must replace the view. */
+    private val onRenderProcessGoneEvent: () -> Unit = {},
 ) : WebViewClient() {
+
+    /**
+     * Set before a programmatic load (restore, home, back/forward step) so
+     * the commit is not recorded as a fresh user visit. The commit still
+     * reaches [onVisitCommittedEvent] — it is the tab's persistent URL source
+     * of truth — but with reload semantics, which history recording skips.
+     * Consumed by the next [doUpdateVisitedHistory].
+     */
+    var suppressNextVisitCommit = false
+
+    /** A main-frame load error precedes this commit — skip recording it. */
+    private var pendingErrorVisit = false
+
+    /** Whether the next history commit belongs to a real document load. */
+    private var documentLoadPending = false
+
+    /** Previous commit exists; the first callback is always a document visit. */
+    private var hasCommittedDocument = false
 
     companion object {
         private const val TAG = "NexaWebViewClient"
@@ -66,7 +84,7 @@ class NexaWebViewClient(
         )
 
         private fun normalizeUrlHost(url: String?): String? = try {
-            if (url.isNullOrBlank()) null else Uri.parse(url).host?.trim('.')?.lowercase()?.takeIf { it.isNotBlank() }
+            if (url.isNullOrBlank()) null else url.toUri().host?.trim('.')?.lowercase()?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
             null
         }
@@ -103,7 +121,7 @@ class NexaWebViewClient(
             return false
         }
 
-        val uri = Uri.parse(url)
+        val uri = url.toUri()
 
         // Non-http(s) schemes dispatch BEFORE the allowlist check: intent://
         // URLs carry their target host, and an allowlisted host there must
@@ -128,7 +146,7 @@ class NexaWebViewClient(
     /** Hands a custom-scheme URL (tel:, mailto:, app://…) to the OS via ACTION_VIEW. */
     private fun dispatchExternalUrl(url: String, scheme: String): Boolean {
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply {
                 addCategory(Intent.CATEGORY_BROWSABLE)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -184,7 +202,7 @@ class NexaWebViewClient(
         // Prefer the page-provided http(s) fallback; otherwise offer the
         // Play Store listing of the missing app.
         if (!fallbackUrl.isNullOrBlank()) {
-            val fallbackScheme = Uri.parse(fallbackUrl).scheme?.lowercase()
+            val fallbackScheme = fallbackUrl.toUri().scheme?.lowercase()
             if (fallbackScheme == "http" || fallbackScheme == "https") {
                 view.loadUrl(fallbackUrl)
                 return
@@ -194,7 +212,7 @@ class NexaWebViewClient(
             try {
                 val marketIntent = Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("market://details?id=$packageName")
+                    "market://details?id=$packageName".toUri()
                 ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
                 appContext.startActivity(marketIntent)
             } catch (e: Exception) {
@@ -204,24 +222,26 @@ class NexaWebViewClient(
     }
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        // Chromium invokes this callback on an IO thread. Never read or mutate `view` here;
+        // WebView methods are UI-thread-confined and newer WebView builds fail fast on misuse.
         val uri = request.url
         val host = uri.host
         val scheme = uri.scheme
 
-        if (scheme == "about") return super.shouldInterceptRequest(view, request)
+        if (scheme == "about") return null
 
         val isWhitelistedRequest = if (host == null) {
             false
         } else if (request.isForMainFrame) {
             isGloballyWhitelisted(host)
         } else {
-            isWhitelistedForPage(host, resolvePageHost(view))
+            isWhitelistedForPage(host, currentPageHost)
         }
-        if (isWhitelistedRequest) return super.shouldInterceptRequest(view, request)
+        if (isWhitelistedRequest) return null
 
         if (host != null) {
             val norm = normalizeHost(host)
-            if (safeHostsCache.contains(norm)) return super.shouldInterceptRequest(view, request)
+            if (safeHostsCache.contains(norm)) return null
             if (isHostCached(norm)) return blockedResponse()
             if (adBlockRepository.isAdHost(norm)) {
                 if (adHostsCache.size < AD_HOSTS_CACHE_MAX_SIZE) adHostsCache.add(norm)
@@ -235,20 +255,22 @@ class NexaWebViewClient(
                 blockedResponse()
             } else {
                 if (host != null && safeHostsCache.size < 512) safeHostsCache.add(normalizeHost(host))
-                super.shouldInterceptRequest(view, request)
+                null
             }
         } catch (_: Exception) {
-            super.shouldInterceptRequest(view, request)
+            null
         }
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
+        // onPageStarted is delivered for real document loads (including
+        // redirects/reloads), but not History API or fragment-only changes.
+        documentLoadPending = true
+        pendingErrorVisit = false
         scriptRepository.inject(view, ScriptType.PRE_LOAD)
         currentPageHost = normalizeUrlHost(url)
         onPageStartedEvent(url, isImmersiveUrl(url))
-        pageStartedCallback(view, url)
-        urlUpdatedCallback(url)
         onUrlUpdatedEvent(url)
     }
 
@@ -257,8 +279,6 @@ class NexaWebViewClient(
         view?.requestLayout()
         scriptRepository.inject(view, ScriptType.POST_LOAD)
         onPageFinishedEvent()
-        pageFinishedCallback(view, url)
-        urlUpdatedCallback(url)
         onUrlUpdatedEvent(url)
     }
 
@@ -266,8 +286,46 @@ class NexaWebViewClient(
         super.doUpdateVisitedHistory(view, url, isReload)
         currentPageHost = normalizeUrlHost(url)
         scriptRepository.inject(view, ScriptType.PRE_LOAD)
-        urlUpdatedCallback(url)
         onUrlUpdatedEvent(url)
+
+        // URL comparison cannot identify same-document navigation: pushState
+        // may change path and query. The page-start signal is the document
+        // identity boundary; fragment/History API commits arrive without it.
+        val sameDocument = hasCommittedDocument && !documentLoadPending
+        hasCommittedDocument = true
+        documentLoadPending = false
+
+        val programmatic = suppressNextVisitCommit
+        suppressNextVisitCommit = false
+        val errorVisit = pendingErrorVisit
+        pendingErrorVisit = false
+        when {
+            // A failed load never became a page the user reached.
+            errorVisit -> Unit
+            // Programmatic loads and same-document commits persist the tab
+            // URL but are not user visits: reload semantics make history
+            // recording skip them.
+            programmatic || sameDocument -> onVisitCommittedEvent(url, true)
+            else -> onVisitCommittedEvent(url, isReload)
+        }
+    }
+
+    /**
+     * A renderer crash (or renderer OOM kill) must not take the whole app
+     * down — every WebView here shares one renderer process by default.
+     * Returning true tells the system the app handled it; the host replaces
+     * the dead WebView.
+     */
+    override fun onRenderProcessGone(
+        view: WebView,
+        detail: RenderProcessGoneDetail,
+    ): Boolean {
+        Log.w(
+            TAG,
+            "Renderer process gone (crash=${detail.didCrash()}) — replacing WebView"
+        )
+        onRenderProcessGoneEvent()
+        return true
     }
 
     // Error-overlay policy: the overlay only covers failures that leave the
@@ -282,6 +340,7 @@ class NexaWebViewClient(
         // quick redirects) — not a real load failure. WebViewClient has no
         // constant for it; the chromium description is the stable signal.
         if (error.description?.toString()?.contains("ERR_ABORTED") == true) return
+        pendingErrorVisit = true
         onPageLoadErrorEvent()
     }
 
@@ -317,14 +376,6 @@ class NexaWebViewClient(
     private fun isWhitelistedForPage(host: String, pageHost: String?): Boolean {
         val norm = normalizeHost(host)
         return whitelist.any { norm == it || norm.endsWith(".$it") } || validLinkRepository.isValidHostOnPage(host, pageHost)
-    }
-
-    private fun resolvePageHost(view: WebView?): String? {
-        // Prefer the host tracked on the UI thread (onPageStarted /
-        // doUpdateVisitedHistory): this runs on the intercept (IO) thread
-        // and WebView is not thread-safe. The tracked host is the committed
-        // main-frame URL, so Referer/Origin headers still can't spoof it.
-        return currentPageHost ?: normalizeUrlHost(view?.url)
     }
 
     private fun shouldBlockUrl(url: String, host: String?): Boolean {

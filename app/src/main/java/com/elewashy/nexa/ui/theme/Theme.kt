@@ -13,7 +13,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -164,11 +164,11 @@ fun NexaTheme(
 
     val prefs = rememberAppPreferences()
     val useDynamicColor = dynamicColor
-        ?: prefs.dynamicColor.collectAsState(initial = true).value
+        ?: prefs.dynamicColor.collectAsStateWithLifecycle(initialValue = true).value
     val usePureBlack = pureBlack
-        ?: prefs.pureBlack.collectAsState(initial = false).value
+        ?: prefs.pureBlack.collectAsStateWithLifecycle(initialValue = false).value
     val seedColor = selectedThemeColor
-        ?: Color(prefs.selectedThemeColor.collectAsState(initial = DEFAULT_THEME_COLOR_ARGB).value)
+        ?: Color(prefs.selectedThemeColor.collectAsStateWithLifecycle(initialValue = DEFAULT_THEME_COLOR_ARGB).value)
 
     val colorScheme = when {
         seedColor == DefaultThemeColor && useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -203,7 +203,10 @@ fun NexaTheme(
     MaterialExpressiveTheme(
         colorScheme = colorScheme,
         typography = NexaTypography,
-        motionScheme = MotionScheme.expressive(),
+        // Standard Material motion is intentionally restrained for a browser: it keeps menus,
+        // snackbars, dialogs, and controls responsive on low-end devices while Compose still
+        // honors the system animator-duration accessibility setting.
+        motionScheme = MotionScheme.standard(),
         content = content,
     )
 }
@@ -220,7 +223,7 @@ fun isAppInDarkTheme(): Boolean {
     // Synchronous SharedPrefs seed: DataStore is async, so without it the
     // first frame would render with SYSTEM and flash on the first emission.
     val seededMode = remember { ThemeModeSeed.read(context) }
-    val themeMode by prefs.themeMode.collectAsState(initial = seededMode)
+    val themeMode by prefs.themeMode.collectAsStateWithLifecycle(initialValue = seededMode)
 
     return when (AppTheme.fromPreferenceValue(themeMode)) {
         AppTheme.DARK -> true

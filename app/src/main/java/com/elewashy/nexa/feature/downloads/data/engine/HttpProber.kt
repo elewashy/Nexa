@@ -89,7 +89,7 @@ object HttpProber {
             val headRequest = baseBuilder.build().newBuilder().head().build()
             val startMs = System.currentTimeMillis()
 
-            client.newCall(headRequest).execute().use { response ->
+            client.newCall(headRequest).awaitResponse().use { response ->
                 val elapsed = System.currentTimeMillis() - startMs
                 Log.d(TAG, "HEAD ${response.code} in ${elapsed}ms — $url")
 
@@ -104,6 +104,8 @@ object HttpProber {
                 // record the code but still fall through to the GET phase.
                 lastErrorResponse = errorProbeResult(response)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "HEAD failed: ${e.message}")
         }
@@ -115,7 +117,7 @@ object HttpProber {
                 .addHeader("Range", "bytes=0-1")
                 .build()
 
-            client.newCall(getRequest).execute().use { response ->
+            client.newCall(getRequest).awaitResponse().use { response ->
                 Log.d(TAG, "GET-Range ${response.code} — $url")
 
                 if (response.isSuccessful || response.code == 206) {
@@ -127,7 +129,7 @@ object HttpProber {
                 // classified dead on resume).
                 if (response.code in 400..499) {
                     val plainRequest = baseBuilder.build().newBuilder().get().build()
-                    client.newCall(plainRequest).execute().use { plain ->
+                    client.newCall(plainRequest).awaitResponse().use { plain ->
                         Log.d(TAG, "Plain GET ${plain.code} — $url")
                         if (plain.isSuccessful) {
                             return@withContext extractFromResponse(plain).copy(reachable = true)
@@ -139,6 +141,8 @@ object HttpProber {
                     lastErrorResponse = errorProbeResult(response)
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "GET-Range probe failed: ${e.message}")
         }

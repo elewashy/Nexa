@@ -2,7 +2,6 @@ package com.elewashy.nexa.feature.share.presentation
 
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -12,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,6 +22,7 @@ import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
+import com.elewashy.nexa.ui.components.common.AppSnackbarHost
 import com.elewashy.nexa.ui.theme.NexaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -94,8 +96,7 @@ class ShareActivity : AppCompatActivity() {
         }
     }
 
-    private fun finishCleanly(message: String?) {
-        message?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
+    private fun finishCleanly() {
         finish()
         @Suppress("DEPRECATION")
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -110,14 +111,18 @@ class ShareActivity : AppCompatActivity() {
 private fun ShareOverlay(
     viewModel: ShareViewModel,
     sharedText: String?,
-    onClose: (String?) -> Unit,
+    onClose: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is ShareEvent.Close -> onClose(event.message)
+                is ShareEvent.Close -> {
+                    event.message?.let { snackbarHostState.showSnackbar(it) }
+                    onClose()
+                }
             }
         }
     }
@@ -144,8 +149,12 @@ private fun ShareOverlay(
                 onDownload = { quality ->
                     viewModel.onQualitySelected(quality)
                 },
-                onCancel = { onClose(null) },
+                onCancel = onClose,
             )
         }
+        AppSnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }

@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -51,6 +52,13 @@ class DownloadNotificationManager(
             DownloadStatus.DOWNLOADING, DownloadStatus.PENDING, DownloadStatus.PAUSED
         )
     }
+
+    private val dataSyncForegroundServiceType: Int
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        } else {
+            0
+        }
 
     /** Whether [service] is currently in the foreground. */
     var isForeground = false
@@ -110,7 +118,7 @@ class DownloadNotificationManager(
         try {
             ServiceCompat.startForeground(
                 svc, SUMMARY_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                dataSyncForegroundServiceType
             )
             isForeground = true
             Log.d(TAG, "Foreground started")
@@ -150,7 +158,7 @@ class DownloadNotificationManager(
         return try {
             ServiceCompat.startForeground(
                 service, SUMMARY_ID, n,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                dataSyncForegroundServiceType
             )
             isForeground = true
             Log.d(TAG, "Foreground started (re-promotion)")

@@ -5,8 +5,13 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
+import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
+import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import com.elewashy.nexa.ui.theme.AppThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -69,6 +74,47 @@ class DataStoreAppPreferences @Inject constructor(
         prefs[KEY_VIDEO_DOWNLOAD_BUTTON] ?: true
     }
 
+    override val browserNavigationBarPosition: Flow<Int> = dataStore.data.map { prefs ->
+        BrowserNavigationBarPosition.fromStoredValue(
+            prefs[KEY_BROWSER_NAVIGATION_BAR_POSITION] ?: BrowserNavigationBarPosition.Bottom.storedValue
+        ).storedValue
+    }
+
+    override val downloadManagerLayout: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0
+    }
+
+    override val maxConcurrentDownloads: Flow<Int> = dataStore.data.map { prefs ->
+        DownloadSettingsDefaults.clampConcurrentDownloads(
+            prefs[KEY_MAX_CONCURRENT_DOWNLOADS]
+                ?: DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS
+        )
+    }
+
+    override val downloadFilterIds: Flow<Set<String>> = dataStore.data.map { prefs ->
+        val knownIds = DownloadFilterCategory.entries.mapTo(HashSet()) { it.storedId }
+        (prefs[KEY_DOWNLOAD_FILTER_IDS] ?: DownloadSettingsDefaults.DEFAULT_FILTER_IDS)
+            .filterTo(linkedSetOf()) { it in knownIds }
+    }
+
+    override val downloadSpeedLimitBytesPerSecond: Flow<Long> = dataStore.data.map { prefs ->
+        DownloadSettingsDefaults.sanitizeSpeedLimit(
+            prefs[KEY_DOWNLOAD_SPEED_LIMIT] ?: DownloadSettingsDefaults.UNLIMITED_SPEED_BYTES_PER_SECOND
+        )
+    }
+
+    override val autoRetryDownloads: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_AUTO_RETRY_DOWNLOADS] ?: true
+    }
+
+    override val visualVideoPresentation: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_VISUAL_VIDEO_PRESENTATION] ?: true
+    }
+
+    override val showDownloadFilterCounts: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] ?: true
+    }
+
     override suspend fun setThemeMode(mode: Int) {
         dataStore.edit { it[KEY_THEME_MODE] = mode }
     }
@@ -111,6 +157,42 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { it[KEY_VIDEO_DOWNLOAD_BUTTON] = enabled }
     }
 
+    override suspend fun setBrowserNavigationBarPosition(position: Int) {
+        val sanitized = BrowserNavigationBarPosition.fromStoredValue(position).storedValue
+        dataStore.edit { it[KEY_BROWSER_NAVIGATION_BAR_POSITION] = sanitized }
+    }
+
+    override suspend fun setDownloadManagerLayout(layout: Int) {
+        dataStore.edit { it[KEY_DOWNLOAD_MANAGER_LAYOUT] = layout }
+    }
+
+    override suspend fun setMaxConcurrentDownloads(value: Int) {
+        dataStore.edit {
+            it[KEY_MAX_CONCURRENT_DOWNLOADS] = DownloadSettingsDefaults.clampConcurrentDownloads(value)
+        }
+    }
+
+    override suspend fun setDownloadFilterIds(ids: Set<String>) {
+        val knownIds = DownloadFilterCategory.entries.mapTo(HashSet()) { it.storedId }
+        dataStore.edit { it[KEY_DOWNLOAD_FILTER_IDS] = ids.filterTo(linkedSetOf()) { id -> id in knownIds } }
+    }
+
+    override suspend fun setDownloadSpeedLimitBytesPerSecond(value: Long) {
+        dataStore.edit { it[KEY_DOWNLOAD_SPEED_LIMIT] = DownloadSettingsDefaults.sanitizeSpeedLimit(value) }
+    }
+
+    override suspend fun setAutoRetryDownloads(enabled: Boolean) {
+        dataStore.edit { it[KEY_AUTO_RETRY_DOWNLOADS] = enabled }
+    }
+
+    override suspend fun setVisualVideoPresentation(enabled: Boolean) {
+        dataStore.edit { it[KEY_VISUAL_VIDEO_PRESENTATION] = enabled }
+    }
+
+    override suspend fun setShowDownloadFilterCounts(show: Boolean) {
+        dataStore.edit { it[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] = show }
+    }
+
     private companion object {
         val KEY_THEME_MODE = intPreferencesKey("theme_mode")
         val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
@@ -122,5 +204,13 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
         val KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH = booleanPreferencesKey("show_update_dialog_on_launch")
         val KEY_VIDEO_DOWNLOAD_BUTTON = booleanPreferencesKey("video_download_button")
+        val KEY_BROWSER_NAVIGATION_BAR_POSITION = intPreferencesKey("browser_navigation_bar_position")
+        val KEY_DOWNLOAD_MANAGER_LAYOUT = intPreferencesKey("download_manager_layout")
+        val KEY_MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("download_max_concurrent")
+        val KEY_DOWNLOAD_FILTER_IDS = stringSetPreferencesKey("download_filter_ids")
+        val KEY_DOWNLOAD_SPEED_LIMIT = longPreferencesKey("download_speed_limit_bytes_per_second")
+        val KEY_AUTO_RETRY_DOWNLOADS = booleanPreferencesKey("download_auto_retry")
+        val KEY_VISUAL_VIDEO_PRESENTATION = booleanPreferencesKey("download_visual_video_presentation")
+        val KEY_SHOW_DOWNLOAD_FILTER_COUNTS = booleanPreferencesKey("download_show_filter_counts")
     }
 }

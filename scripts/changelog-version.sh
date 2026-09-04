@@ -20,14 +20,14 @@ if [ -z "$version" ]; then
 fi
 
 section="$(awk -v version="$version" '
-  $0 ~ "^## " version "[[:space:]]*-" { capture = 1; next }
+  $0 ~ "^## \\[?" version "\\]?[[:space:]]*-" { capture = 1; next }
   capture && /^## / { exit }
   capture { print }
 ' CHANGELOG.md | sed '/^[[:space:]]*$/d')"
 
 if [ -z "$section" ]; then
   printf 'CHANGELOG.md is missing a non-empty section for version %s.\n' "$version" >&2
-  printf 'Add a heading like: ## %s - YYYY-MM-DD\n' "$version" >&2
+  printf 'Add a heading like: ## [%s] - YYYY-MM-DD\n' "$version" >&2
   exit 1
 fi
 

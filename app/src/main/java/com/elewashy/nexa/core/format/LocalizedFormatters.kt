@@ -4,9 +4,17 @@ import android.content.Context
 import android.text.format.Formatter
 import com.elewashy.nexa.R
 import java.text.NumberFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 object LocalizedFormatters {
     fun fileSize(context: Context, bytes: Long): String = Formatter.formatShortFileSize(context, bytes)
+
+    /** Locale-aware medium date ("Sep 3, 2026") shared by every date-grouped list header. */
+    fun mediumDate(date: LocalDate, locale: Locale): String =
+        date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale))
 
     fun speed(context: Context, bytesPerSecond: Long): String {
         if (bytesPerSecond <= 0) return ""

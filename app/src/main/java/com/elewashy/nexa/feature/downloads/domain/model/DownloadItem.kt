@@ -5,9 +5,9 @@ data class DownloadItem(
     val url: String,
     var fileName: String, // Suggested filename, can be updated by service
     var filePath: String, // Full path where the file is/will be saved, can be updated
-    var totalBytes: Long = -1, // Total size of the file in bytes, -1 if unknown
-    var downloadedBytes: Long = 0, // Bytes downloaded so far
-    var status: DownloadStatus = DownloadStatus.PENDING,
+    @Volatile var totalBytes: Long = -1, // Total size of the file in bytes, -1 if unknown
+    @Volatile var downloadedBytes: Long = 0, // Bytes downloaded so far
+    @Volatile var status: DownloadStatus = DownloadStatus.PENDING,
     val mimeType: String? = null, // MIME type of the file
     // Headers needed for the download request
     val userAgent: String? = null,
@@ -16,11 +16,10 @@ data class DownloadItem(
     val cookies: String? = null,
     val source: String = "UNKNOWN", // Source of the download (e.g., "JSON", "BROWSER")
     val createdAt: Long = System.currentTimeMillis(), // Timestamp when created
-    var failureCount: Int = 0, // Number of times this download has failed
-    var downloadSpeedBytesPerSecond: Long = 0, // Current download speed in bytes per second
-    var etaSeconds: Long = -1, // Estimated time remaining in seconds, -1 if unknown
-    var wasWaitingForNetwork: Boolean = false, // Flag to track if download was paused due to network loss
-    var errorMessage: String? = null // User-facing reason when the download fails (shown in the failure notification)
+    @Volatile var downloadSpeedBytesPerSecond: Long = 0, // Current download speed in bytes per second
+    @Volatile var etaSeconds: Long = -1, // Estimated time remaining in seconds, -1 if unknown
+    @Volatile var wasWaitingForNetwork: Boolean = false, // Flag to track if download was paused due to network loss
+    @Volatile var errorMessage: String? = null // User-facing reason when the download fails (shown in the failure notification)
 ) {
     val progress: Int
         get() = when {

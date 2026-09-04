@@ -140,6 +140,15 @@ class FileNameResolverTest {
         assertEquals("a".repeat(120) + ".mp4", result)
     }
 
+    @Test
+    fun `base name cap counts Unicode code points without splitting surrogate pairs`() {
+        val result = FileNameResolver.sanitise("😀".repeat(121) + ".mp4", null)
+        val base = result.substringBeforeLast('.')
+
+        assertEquals(120, base.codePointCount(0, base.length))
+        assertTrue(!base.last().isHighSurrogate())
+    }
+
     // ── sanitiseWithForcedExtension ────────────────────────────────────
 
     @Test

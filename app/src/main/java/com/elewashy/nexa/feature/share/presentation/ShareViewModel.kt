@@ -1,5 +1,6 @@
 package com.elewashy.nexa.feature.share.presentation
 
+import android.annotation.SuppressLint
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -200,6 +201,8 @@ class ShareViewModel @Inject constructor(
                     cancelConversionNotification()
                     startDownload(quality.copy(url = downloadUrl), referer)
                 }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (e: Exception) {
                 Log.e(TAG, "Conversion failed", e)
                 withContext(Dispatchers.Main) {
@@ -250,6 +253,10 @@ class ShareViewModel @Inject constructor(
      * download — a notification tap is an FGS-start exemption. Reuses the
      * downloads notification channel.
      */
+    // The whole notification is intentionally the user gesture that starts
+    // DownloadService; this is not an Activity launch and therefore does not
+    // belong in a secondary action button.
+    @SuppressLint("LaunchActivityFromNotification")
     private fun postTapToDownloadNotification(startIntent: Intent, fileName: String) {
         val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!NotificationManagerCompat.from(appContext).areNotificationsEnabled()) {

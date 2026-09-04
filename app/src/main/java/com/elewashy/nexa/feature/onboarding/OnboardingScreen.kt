@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.graphics.createBitmap
 import androidx.core.net.toUri
 import androidx.compose.foundation.Image
@@ -52,6 +53,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +72,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutSettingsScreen
+import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutViewModel
+import com.elewashy.nexa.feature.settings.presentation.settings.BrowserNavigationPositionScreen
 import com.elewashy.nexa.feature.settings.presentation.settings.CustomizeThemeScreen
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
 import com.elewashy.nexa.ui.icons.ArrowForwardFilled
@@ -97,36 +103,60 @@ fun OnboardingScreen(
     onFinish: () -> Unit,
     vm: OnboardingViewModel,
     settingsViewModel: SettingsViewModel,
+    downloadLayoutViewModel: DownloadLayoutViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     var showSkipDialog by remember { mutableStateOf(false) }
     var step by rememberSaveable { mutableStateOf(OnboardingStep.Permissions) }
+    val downloadPresentation by downloadLayoutViewModel.presentation.collectAsStateWithLifecycle()
+    val navigationPosition by settingsViewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
+
+    if (step == OnboardingStep.DownloadLayout) {
+        DownloadLayoutSettingsScreen(
+            selectedLayout = downloadPresentation.layout,
+            onLayoutSelected = downloadLayoutViewModel::setLayout,
+            onBackClick = { step = OnboardingStep.NavigationPosition },
+            // The selector's own bottom bar already applies navigation-bar and horizontal insets.
+            bottomBar = {
+                OnboardingStepButton(
+                    text = stringResource(R.string.finish),
+                    onClick = onFinish,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            },
+        )
+        return
+    }
+
+    if (step == OnboardingStep.NavigationPosition) {
+        BrowserNavigationPositionScreen(
+            selectedPosition = navigationPosition,
+            onPositionSelected = settingsViewModel::setBrowserNavigationBarPosition,
+            onBackClick = { step = OnboardingStep.Theme },
+            bottomBar = {
+                OnboardingStepButton(
+                    text = stringResource(R.string.next),
+                    onClick = { step = OnboardingStep.DownloadLayout },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            },
+        )
+        return
+    }
 
     if (step == OnboardingStep.Theme) {
         CustomizeThemeScreen(
             onBackClick = { step = OnboardingStep.Permissions },
             viewModel = settingsViewModel,
             bottomBar = {
-                Box(
+                // Scaffold bottom bars sit outside the content insets, so this one pads itself.
+                OnboardingStepButton(
+                    text = stringResource(R.string.next),
+                    onClick = { step = OnboardingStep.NavigationPosition },
                     modifier = Modifier
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Button(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        onClick = onFinish,
-                        shapes = ButtonDefaults.shapes(),
-                    ) {
-                        Text(text = stringResource(R.string.next))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Icon(
-                            imageVector = ArrowForwardFilled,
-                            contentDescription = null,
-                        )
-                    }
-                }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
             },
         )
         return
@@ -378,7 +408,7 @@ fun OnboardingScreen(
                     TextButton(
                         onClick = {
                             showSkipDialog = false
-                            onFinish()
+                            step = OnboardingStep.Theme
                         },
                         shapes = ButtonDefaults.shapes()
                     ) {
@@ -401,6 +431,8 @@ fun OnboardingScreen(
 private enum class OnboardingStep {
     Permissions,
     Theme,
+    NavigationPosition,
+    DownloadLayout,
 }
 
 // ========== Structural composables matching the reference exactly ==========
@@ -482,15 +514,17 @@ private fun OnboardingHeader() {
  *
  * `painterResource(R.mipmap.ic_launcher)` crashes on adaptive icons (XML)
  * because it only supports VectorDrawables and raster assets.
- * This helper uses [Context.getDrawable] which correctly resolves
- * adaptive icons, then converts the resulting Drawable to a [BitmapPainter].
+ * This helper uses [AppCompatResources.getDrawable] to resolve adaptive icons,
+ * then converts the resulting Drawable to a [BitmapPainter].
  */
 @Composable
 @SuppressLint("LocalContextGetResourceValueCall")
 private fun rememberAppIconPainter(): Painter {
     val context = LocalContext.current
     return remember {
-        val drawable = context.getDrawable(R.mipmap.ic_launcher)!!
+        val drawable = checkNotNull(
+            AppCompatResources.getDrawable(context, R.mipmap.ic_launcher)
+        ) { "Launcher icon resource is unavailable" }
         val bitmap = drawableToBitmap(drawable, size = 128)
         BitmapPainter(bitmap.asImageBitmap())
     }
@@ -648,5 +682,25 @@ private fun ColumnWithScrollbarEdgeShadow(
                     )
                 )
         )
+    }
+}
+
+
+/** Primary forward action shared by every onboarding step footer. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun OnboardingStepButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        modifier = modifier.fillMaxWidth().height(56.dp),
+        onClick = onClick,
+        shapes = ButtonDefaults.shapes(),
+    ) {
+        Text(text = text)
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(imageVector = ArrowForwardFilled, contentDescription = null)
     }
 }

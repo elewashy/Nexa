@@ -84,6 +84,19 @@ interface DownloadRepository {
     /** Same semantics as [resume] — preserved for intent-action parity. */
     suspend fun retry(id: Long)
 
+    /** Atomically renames a completed file and its persisted metadata where possible. */
+    suspend fun renameCompleted(id: Long, requestedName: String): RenameDownloadResult
+
     /** Observes a single download by ID. Emits null once the item is gone. */
     fun observe(id: Long): Flow<DownloadItem?>
+}
+
+enum class RenameDownloadResult {
+    Success,
+    NotFound,
+    NotCompleted,
+    InvalidName,
+    NameAlreadyExists,
+    FileOperationFailed,
+    PersistenceFailed,
 }

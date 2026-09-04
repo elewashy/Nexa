@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val ArrowForward: ImageVector
   get() {
     if (_arrow_forward != null) {
@@ -67,6 +68,7 @@ val ArrowForward: ImageVector
 
 private var _arrow_forward: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val ArrowForwardFilled: ImageVector
   get() {
     if (_arrow_forward_filled != null) {

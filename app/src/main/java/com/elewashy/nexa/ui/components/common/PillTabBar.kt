@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
@@ -45,6 +46,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
@@ -74,11 +76,13 @@ fun PillTabBar(
     pagerState: PagerState,
     modifier: Modifier = Modifier,
     colors: PillTabBarColors = PillTabBarDefaults.colors(),
+    tabCount: Int = pagerState.pageCount,
     tabs: @Composable RowScope.() -> Unit
 ) {
-    val tabCount = pagerState.pageCount.coerceAtLeast(1)
-    val state = rememberPillTabBarState(pagerState, tabCount)
+    val visibleTabCount = tabCount.coerceAtLeast(1)
+    val state = rememberPillTabBarState(pagerState, visibleTabCount)
     val indicatorScale by animatePillTabScale(state.pressedTabIndex == pagerState.currentPage)
+    val layoutDirection = LocalLayoutDirection.current
 
     BoxWithConstraints(
         modifier = modifier
@@ -87,20 +91,29 @@ fun PillTabBar(
             .background(colors.containerColor)
             .padding(PillTabBarDefaults.ContainerPadding)
     ) {
-        val indicatorWidthPx = with(LocalDensity.current) { maxWidth.toPx() } / tabCount
+        val indicatorWidthPx = with(LocalDensity.current) { maxWidth.toPx() } / visibleTabCount
 
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .fillMaxWidth(1f / tabCount)
+                .fillMaxWidth(1f / visibleTabCount)
                 .offset {
-                    val offsetX = (pagerState.currentPage + pagerState.currentPageOffsetFraction) * indicatorWidthPx
-                    IntOffset(offsetX.roundToInt(), 0)
+                    val logicalPage = pagerState.currentPage + pagerState.currentPageOffsetFraction
+                    val visualPage = visualPagerPosition(
+                        logicalPage,
+                        visibleTabCount,
+                        layoutDirection,
+                    ).coerceIn(0f, (visibleTabCount - 1).toFloat())
+                    IntOffset((visualPage * indicatorWidthPx).roundToInt(), 0)
                 }
                 .graphicsLayer {
                     scaleX = indicatorScale
                     scaleY = indicatorScale
-                    transformOrigin = transformOriginForIndex(pagerState.currentPage, tabCount)
+                    val visualIndex = when (layoutDirection) {
+                        LayoutDirection.Ltr -> pagerState.currentPage
+                        LayoutDirection.Rtl -> visibleTabCount - 1 - pagerState.currentPage
+                    }.coerceIn(0, visibleTabCount - 1)
+                    transformOrigin = transformOriginForIndex(visualIndex, visibleTabCount)
                 }
                 .clip(CircleShape)
                 .background(colors.indicatorColor)
@@ -204,6 +217,15 @@ private fun animatePillTabScale(isPressed: Boolean) = animateFloatAsState(
     animationSpec = PillTabBarDefaults.PressAnimationSpec,
     label = "pillTabScale"
 )
+
+internal fun visualPagerPosition(
+    logicalPage: Float,
+    tabCount: Int,
+    layoutDirection: LayoutDirection,
+): Float = when (layoutDirection) {
+    LayoutDirection.Ltr -> logicalPage
+    LayoutDirection.Rtl -> tabCount - 1 - logicalPage
+}
 
 private fun transformOriginForIndex(index: Int, count: Int) = TransformOrigin(
     pivotFractionX = when (index) {

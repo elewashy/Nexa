@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val Update: ImageVector
   get() {
     if (_update != null) {
@@ -98,6 +99,7 @@ val Update: ImageVector
 
 private var _update: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val UpdateFilled: ImageVector
   get() {
     if (_update_filled != null) {

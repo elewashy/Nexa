@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val LightMode: ImageVector
   get() {
     if (_light_mode != null) {
@@ -160,6 +161,7 @@ val LightMode: ImageVector
 
 private var _light_mode: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val LightModeFilled: ImageVector
   get() {
     if (_light_mode_filled != null) {

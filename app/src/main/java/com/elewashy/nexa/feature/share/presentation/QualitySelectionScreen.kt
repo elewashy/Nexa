@@ -50,6 +50,7 @@ import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
 import com.elewashy.nexa.ui.adaptive.adaptiveGridColumns
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.AppEmptyState
 import com.elewashy.nexa.ui.components.common.PagerSegmentedControl
 import com.elewashy.nexa.ui.components.common.PillTab
 import com.elewashy.nexa.ui.icons.AudioFile
@@ -330,16 +331,11 @@ private fun QualityTabContent(
 
 @Composable
 private fun EmptyQualityOptions() {
-    Box(
+    AppEmptyState(
+        icon = VideoFile,
+        title = stringResource(R.string.quality_options_unavailable),
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = stringResource(R.string.quality_options_unavailable),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    )
 }
 
 @Composable

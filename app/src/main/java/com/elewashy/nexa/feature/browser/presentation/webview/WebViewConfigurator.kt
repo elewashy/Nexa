@@ -25,15 +25,16 @@ object WebViewConfigurator {
      *  6. Mobile UX tweaks
      *  7. Scroll / overscroll behaviour
      */
-    fun configure(webView: WebView) {
+    fun configure(webView: WebView, isPrivate: Boolean = false) {
         webView.settings.apply {
             // ── 1. Core ────────────────────────────────────────────
             javaScriptEnabled = true
             domStorageEnabled = true
 
             // ── 2. Cache / network ─────────────────────────────────
-            cacheMode = WebSettings.LOAD_DEFAULT
+            cacheMode = if (isPrivate) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
             allowFileAccess = false
+            allowContentAccess = false
 
             // ── 3. Zoom / viewport ─────────────────────────────────
             loadWithOverviewMode = true
@@ -79,10 +80,10 @@ object WebViewConfigurator {
         webView.isHorizontalScrollBarEnabled = true
 
         // ── 8. Process Priority ────────────────────────────────
-        // Keeps the WebView renderer process from being deprioritized or killed
-        // while the app is in the foreground, ensuring smooth transitions
-        // after periods of idleness on RAM-constrained devices.
-        webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, false)
+        // Keep visible rendering bound to the app while allowing the system to reclaim an
+        // unattached/background renderer under memory pressure. Renderer-loss recovery replaces
+        // an evicted WebView, so retaining invisible renderers at foreground priority is wasteful.
+        webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
 
         // Note: setLayerType(LAYER_TYPE_HARDWARE) removed — WebView already
         // uses hardware acceleration when the window has it enabled (default

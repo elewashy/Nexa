@@ -34,6 +34,12 @@ import kotlin.coroutines.coroutineContext
  * @property fileWriter   Thread-safe writer that handles RandomAccessFile I/O.
  * @property onProgress   Called after each buffer write with
  *                        (segmentId, bytesWrittenThisChunk).
+ * @property isStale      Returns true once this downloader belongs to a
+ *                        superseded task generation (fast pause→resume).
+ *                        Stale coroutines must not write segment status:
+ *                        their late PAUSED mark would overwrite the fresh
+ *                        generation's state. The task's pause() marks
+ *                        segments paused itself, so nothing is lost.
  */
 class SegmentDownloader(
     private val client: OkHttpClient,
@@ -42,7 +48,11 @@ class SegmentDownloader(
     private val segment: DownloadSegment,
     private val fileWriter: SegmentFileWriter,
     private val supportsRange: Boolean = true,
-    private val onProgress: (segmentId: Int, bytesWritten: Long) -> Unit = { _, _ -> }
+    private val bandwidthLimiter: BandwidthLimiter = BandwidthLimiter(),
+    private val onProgress: (segmentId: Int, bytesWritten: Long) -> Unit = { _, _ -> },
+    private val isStale: () -> Boolean = { false },
+    /** Shared DownloadTask segment-state ownership boundary. */
+    private val stateLock: Any = Any(),
 ) {
     companion object {
         private const val TAG = "SegmentDownloader"
@@ -114,63 +124,71 @@ class SegmentDownloader(
      *         allowing the [DownloadTask] to auto-pause rather than exhaust retries.
      */
     suspend fun download() = withContext(Dispatchers.IO) {
-        segment.status = SegmentStatus.DOWNLOADING
+        synchronized(stateLock) { segment.status = SegmentStatus.DOWNLOADING }
 
-        while (segment.retryCount <= MAX_RETRIES && segment.hasRemainingBytes) {
+        while (synchronized(stateLock) {
+            segment.retryCount <= MAX_RETRIES && segment.hasRemainingBytes
+        }) {
             try {
                 coroutineContext.ensureActive()
 
                 downloadRange()
 
-                if (!segment.hasRemainingBytes) {
-                    segment.status = SegmentStatus.COMPLETED
-                    Log.d(TAG, "Segment ${segment.id} completed " +
-                            "(${segment.totalBytes / 1024}KB)")
-                    return@withContext
-                } else if (segment.endByte == Long.MAX_VALUE && segment.downloadedBytes > 0) {
-                    // Unknown-size stream: EOF after receiving data is the
-                    // expected completion signal (e.g. streaming audio APIs).
-                    segment.endByte = segment.startByte + segment.downloadedBytes - 1
-                    segment.status = SegmentStatus.COMPLETED
-                    Log.d(TAG, "Segment ${segment.id} stream completed " +
-                            "(${segment.downloadedBytes / 1024}KB)")
+                val outcome = synchronized(stateLock) {
+                    when {
+                        !segment.hasRemainingBytes -> {
+                            segment.status = SegmentStatus.COMPLETED
+                            SegmentOutcome.COMPLETED
+                        }
+                        segment.endByte == Long.MAX_VALUE && segment.downloadedBytes > 0 -> {
+                            segment.endByte = segment.startByte + segment.downloadedBytes - 1
+                            segment.status = SegmentStatus.COMPLETED
+                            SegmentOutcome.STREAM_COMPLETED
+                        }
+                        else -> SegmentOutcome.INCOMPLETE
+                    }
+                }
+                if (outcome != SegmentOutcome.INCOMPLETE) {
+                    Log.d(TAG, "Segment ${segment.id} completed (${segment.downloadedBytes / 1024}KB)")
                     return@withContext
                 } else {
                     // downloadRange returned normally but segment isn't finished.
                     // This means the server terminated the connection early (EOF).
                     // We must increment retryCount to avoid infinite looping.
-                    segment.retryCount++
-                    Log.w(TAG, "Segment ${segment.id} premature EOF, retry ${segment.retryCount}/$MAX_RETRIES")
-                    
-                    if (segment.retryCount > MAX_RETRIES) {
-                        segment.status = SegmentStatus.FAILED
-                        return@withContext
+                    val retry = synchronized(stateLock) {
+                        segment.retryCount++
+                        if (segment.retryCount > MAX_RETRIES) segment.status = SegmentStatus.FAILED
+                        segment.retryCount
                     }
-                    
-                    val delayMs = (1000L * (1 shl (segment.retryCount - 1))).coerceAtMost(8000L)
+                    Log.w(TAG, "Segment ${segment.id} premature EOF, retry $retry/$MAX_RETRIES")
+                    if (retry > MAX_RETRIES) return@withContext
+
+                    val delayMs = (1000L * (1 shl (retry - 1))).coerceAtMost(8000L)
                     kotlinx.coroutines.delay(delayMs)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // Cooperative cancellation — cancel the OkHttp call and re-throw
+                // Cooperative cancellation — cancel the OkHttp call and re-throw.
+                // A stale (superseded-generation) coroutine must not overwrite
+                // the fresh generation's segment state; pause() marks segments
+                // paused itself.
                 cancelActiveCall()
-                segment.status = SegmentStatus.PAUSED
+                if (!isStale()) synchronized(stateLock) { segment.status = SegmentStatus.PAUSED }
                 throw e
             } catch (e: NetworkLostException) {
                 // Network is down — don't waste retries, surface immediately
                 // so DownloadTask can auto-pause all segments.
-                segment.status = SegmentStatus.PAUSED
+                if (!isStale()) synchronized(stateLock) { segment.status = SegmentStatus.PAUSED }
                 Log.w(TAG, "Segment ${segment.id}: network lost, pausing")
                 throw e
             } catch (e: RangeNotSupportedException) {
                 // Server doesn't support ranges — propagate immediately so
                 // DownloadTask can fall back to single-stream download.
-                // Retrying won't help; the server will always return 200.
-                segment.status = SegmentStatus.FAILED
+                synchronized(stateLock) { segment.status = SegmentStatus.FAILED }
                 throw e
             } catch (e: Exception) {
                 // Check if this was caused by OkHttp call cancellation
                 if (activeCall?.isCanceled() == true) {
-                    segment.status = SegmentStatus.PAUSED
+                    if (!isStale()) synchronized(stateLock) { segment.status = SegmentStatus.PAUSED }
                     throw kotlinx.coroutines.CancellationException(
                         "Segment ${segment.id} call cancelled"
                     )
@@ -178,23 +196,23 @@ class SegmentDownloader(
 
                 // Check if this is a network connectivity error
                 if (isNetworkError(e)) {
-                    segment.status = SegmentStatus.PAUSED
+                    if (!isStale()) synchronized(stateLock) { segment.status = SegmentStatus.PAUSED }
                     Log.w(TAG, "Segment ${segment.id}: network error detected, pausing: ${e.message}")
                     throw NetworkLostException("Network lost during segment ${segment.id}", e)
                 }
 
-                segment.retryCount++
-                if (segment.retryCount > MAX_RETRIES) {
-                    segment.status = SegmentStatus.FAILED
-                    Log.e(TAG, "Segment ${segment.id} failed after $MAX_RETRIES retries: " +
-                            "${e.message}")
+                val retry = synchronized(stateLock) {
+                    segment.retryCount++
+                    if (segment.retryCount > MAX_RETRIES) segment.status = SegmentStatus.FAILED
+                    segment.retryCount
+                }
+                if (retry > MAX_RETRIES) {
+                    Log.e(TAG, "Segment ${segment.id} failed after $MAX_RETRIES retries: ${e.message}")
                     return@withContext
                 }
 
-                // Exponential backoff: 1s, 2s, 4s, 8s, 8s
-                val delayMs = (1000L * (1 shl (segment.retryCount - 1)))
-                    .coerceAtMost(8000L)
-                Log.w(TAG, "Segment ${segment.id} retry ${segment.retryCount}/$MAX_RETRIES " +
+                val delayMs = (1000L * (1 shl (retry - 1))).coerceAtMost(8000L)
+                Log.w(TAG, "Segment ${segment.id} retry $retry/$MAX_RETRIES " +
                         "in ${delayMs}ms: ${e.message}")
                 kotlinx.coroutines.delay(delayMs)
             } finally {
@@ -203,8 +221,10 @@ class SegmentDownloader(
         }
 
         // If we exit the loop and segment isn't complete
-        if (segment.hasRemainingBytes && segment.status != SegmentStatus.COMPLETED) {
-            segment.status = SegmentStatus.FAILED
+        synchronized(stateLock) {
+            if (segment.hasRemainingBytes && segment.status != SegmentStatus.COMPLETED) {
+                segment.status = SegmentStatus.FAILED
+            }
         }
     }
 
@@ -217,13 +237,13 @@ class SegmentDownloader(
         // The server will send the full file from byte 0, but we already have
         // the first N bytes on disk. We skip those in the response stream and
         // only write new bytes, preserving progress across pause/resume.
-        val bytesToSkip = if (!supportsRange && segment.downloadedBytes > 0) {
-            segment.downloadedBytes
-        } else {
-            0L
+        val range = synchronized(stateLock) {
+            val skip = if (!supportsRange && segment.downloadedBytes > 0) segment.downloadedBytes else 0L
+            RangeState(skip, if (skip > 0) segment.startByte else segment.currentOffset, segment.endByte)
         }
-        val rangeStart = if (bytesToSkip > 0) segment.startByte else segment.currentOffset
-        val rangeEnd = segment.endByte
+        val bytesToSkip = range.bytesToSkip
+        val rangeStart = range.start
+        val rangeEnd = range.end
 
         val requestBuilder = Request.Builder()
             .url(url)
@@ -310,10 +330,8 @@ class SegmentDownloader(
                     coroutineContext.ensureActive()
 
                     // Calculate how many bytes we still need
-                    val remaining = if (segment.endByte < Long.MAX_VALUE) {
-                        segment.remainingBytes
-                    } else {
-                        Long.MAX_VALUE
+                    val remaining = synchronized(stateLock) {
+                        if (segment.endByte < Long.MAX_VALUE) segment.remainingBytes else Long.MAX_VALUE
                     }
 
                     if (remaining <= 0) break
@@ -322,23 +340,34 @@ class SegmentDownloader(
                     val bytesRead = stream.read(buffer, 0, toRead)
                     if (bytesRead == -1) break
 
-                    // Capture the write position BEFORE updating downloadedBytes.
-                    // This is safe because each segment is owned by exactly one coroutine.
-                    // Dynamic segment splitting only modifies endByte (volatile),
-                    // not downloadedBytes or startByte.
-                    val writePosition = segment.currentOffset
-                    fileWriter.writeAt(writePosition, buffer, 0, bytesRead)
+                    // One shared limiter meters aggregate traffic across every file and segment.
+                    // Delay happens outside the segment lock and before disk I/O.
+                    bandwidthLimiter.throttle(bytesRead)
 
-                    // Update segment progress after the write completes
-                    segment.downloadedBytes += bytesRead
+                    // Selection, write, and progress publication are one state
+                    // operation with respect to dynamic splitting. Otherwise a
+                    // split can create overlapping parent/child writes.
+                    val written = synchronized(stateLock) {
+                        val safeLength = if (segment.endByte == Long.MAX_VALUE) {
+                            bytesRead
+                        } else {
+                            segment.remainingBytes.coerceAtMost(bytesRead.toLong()).toInt()
+                        }
+                        if (safeLength > 0) {
+                            fileWriter.writeAt(segment.currentOffset, buffer, 0, safeLength)
+                            segment.downloadedBytes += safeLength
+                        }
+                        safeLength
+                    }
 
-                    // Report progress
-                    onProgress(segment.id, bytesRead.toLong())
+                    if (written > 0) onProgress(segment.id, written.toLong())
                 }
             }
         }
     }
 
+    private enum class SegmentOutcome { COMPLETED, STREAM_COMPLETED, INCOMPLETE }
+    private data class RangeState(val bytesToSkip: Long, val start: Long, val end: Long)
 }
 
 /**

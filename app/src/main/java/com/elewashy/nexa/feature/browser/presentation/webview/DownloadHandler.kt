@@ -3,7 +3,7 @@ package com.elewashy.nexa.feature.browser.presentation.webview
 import android.content.Context
 import android.webkit.URLUtil
 import android.webkit.CookieManager
-import android.widget.Toast
+import com.elewashy.nexa.ui.components.common.AppMessages
 import androidx.core.net.toUri
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
@@ -15,6 +15,11 @@ import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
  * service.  All callers (WebView download listener, auto-download trigger)
  * go through the same path, eliminating duplication.
  */
+data class StartedDownload(
+    val url: String,
+    val startedAt: Long,
+)
+
 object DownloadHandler {
 
     /** Source tag for normal browser downloads. */
@@ -39,8 +44,9 @@ object DownloadHandler {
         contentDisposition: String? = null,
         userAgent: String,
         currentPageUrl: String?,
+        cookieManager: CookieManager = CookieManager.getInstance(),
         source: String = SOURCE_BROWSER,
-        onDownloadStarted: (() -> Unit)? = null,
+        onDownloadStarted: ((StartedDownload) -> Unit)? = null,
     ) {
         try {
             // Do NOT decode the URL. OkHttp expects the raw encoded URL.
@@ -51,16 +57,17 @@ object DownloadHandler {
             if (scheme == "blob") {
                 // blob: payloads need a blob reader that isn't wired up yet;
                 // say so instead of claiming the link is invalid.
-                Toast.makeText(context, context.getString(R.string.file_type_not_downloadable), Toast.LENGTH_LONG).show()
+                AppMessages.show(context.getString(R.string.file_type_not_downloadable))
                 return
             }
             if (scheme != "http" && scheme != "https" || downloadUri.host.isNullOrBlank()) {
-                Toast.makeText(context, context.getString(R.string.invalid_link), Toast.LENGTH_LONG).show()
+                AppMessages.show(context.getString(R.string.invalid_link))
                 return
             }
 
             val initialFileName = URLUtil.guessFileName(finalUrl, contentDisposition, mimeType)
-            val cookies = CookieManager.getInstance().getCookie(finalUrl)
+            val startedAt = System.currentTimeMillis()
+            val cookies = cookieManager.getCookie(finalUrl)
 
             // Normalize Origin & Referer (truncate to origin only)
             // Some hosts (e.g. Lulustream) return 403 if referer includes a path.
@@ -82,12 +89,12 @@ object DownloadHandler {
             context.startForegroundService(intent)
 
             if (onDownloadStarted != null) {
-                onDownloadStarted()
+                onDownloadStarted(StartedDownload(finalUrl, startedAt))
             } else {
-                Toast.makeText(context, context.getString(R.string.download_starting), Toast.LENGTH_SHORT).show()
+                AppMessages.show(context.getString(R.string.download_starting))
             }
         } catch (e: Exception) {
-            Toast.makeText(context, context.getString(R.string.error_starting_download, e.message.orEmpty()), Toast.LENGTH_LONG).show()
+            AppMessages.show(context.getString(R.string.error_starting_download, e.message.orEmpty()))
         }
     }
 }

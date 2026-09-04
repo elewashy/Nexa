@@ -2,6 +2,7 @@ package com.elewashy.nexa.feature.settings.presentation.settings
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -15,7 +16,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -27,6 +27,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.settings.ExpressiveListIcon
 import com.elewashy.nexa.ui.components.settings.ListSection
@@ -37,11 +38,13 @@ import com.elewashy.nexa.ui.icons.Download
 import com.elewashy.nexa.ui.icons.Language
 import com.elewashy.nexa.ui.icons.Palette
 import com.elewashy.nexa.ui.icons.Speed
+import com.elewashy.nexa.ui.icons.Toolbar
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun GeneralSettingsScreen(
     onBackClick: () -> Unit,
+    onNavigationPositionClick: () -> Unit,
     onCustomizeThemeClick: () -> Unit,
     onLanguageClick: () -> Unit,
     viewModel: SettingsViewModel,
@@ -49,8 +52,8 @@ fun GeneralSettingsScreen(
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val highRefreshRate by viewModel.highRefreshRate.collectAsStateWithLifecycle()
     val videoDownloadButton by viewModel.videoDownloadButton.collectAsStateWithLifecycle()
+    val navigationBarPosition by viewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
     val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
-
     val scrollState = rememberScrollState()
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(
         canScroll = { scrollState.canScrollBackward || scrollState.canScrollForward }
@@ -103,26 +106,26 @@ fun GeneralSettingsScreen(
                 },
             ) {
                 SettingsListItem(
+                    headlineContent = stringResource(R.string.navigation_bar_position),
+                    supportingContent = stringResource(
+                        when (navigationBarPosition) {
+                            BrowserNavigationBarPosition.Bottom -> R.string.navigation_bar_position_bottom
+                            BrowserNavigationBarPosition.Top -> R.string.navigation_bar_position_top
+                        }
+                    ),
+                    leadingContent = { ExpressiveListIcon(icon = Toolbar) },
+                    onClick = onNavigationPositionClick,
+                )
+                SwitchSettingsItem(
                     headlineContent = stringResource(R.string.enable_high_refresh_rate),
                     supportingContent = if (viewModel.highRefreshRateSupported) {
                         stringResource(R.string.enable_high_refresh_rate_description)
                     } else {
                         stringResource(R.string.high_refresh_rate_unsupported)
                     },
-                    leadingContent = { ExpressiveListIcon(icon = Speed) },
-                    trailingContent = {
-                        Switch(
-                            checked = highRefreshRate && viewModel.highRefreshRateSupported,
-                            enabled = viewModel.highRefreshRateSupported,
-                            onCheckedChange = null,
-                        )
-                    },
+                    checked = highRefreshRate && viewModel.highRefreshRateSupported,
                     enabled = viewModel.highRefreshRateSupported,
-                    onClick = if (viewModel.highRefreshRateSupported) {
-                        { viewModel.setHighRefreshRate(!highRefreshRate) }
-                    } else {
-                        null
-                    },
+                    onCheckedChange = viewModel::setHighRefreshRate,
                 )
                 SettingsListItem(
                     headlineContent = stringResource(R.string.customize_theme),

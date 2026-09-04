@@ -115,11 +115,11 @@ fun SettingsListItem(
 @Composable
 fun SwitchSettingsItem(
     headlineContent: String,
-    supportingContent: String,
-        checked: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
-        modifier: Modifier = Modifier,
-        enabled: Boolean = true,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    supportingContent: String? = null,
+    enabled: Boolean = true,
 ) {
     SettingsListItem(
         headlineContent = headlineContent,

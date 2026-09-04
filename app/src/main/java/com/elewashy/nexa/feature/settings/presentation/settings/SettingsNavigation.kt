@@ -1,18 +1,17 @@
 package com.elewashy.nexa.feature.settings.presentation.settings
 
-import androidx.compose.animation.core.EaseOutQuart
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.elewashy.nexa.feature.update.presentation.ChangelogsScreen
 import com.elewashy.nexa.feature.update.presentation.UpdatesSettingsScreen
 import com.elewashy.nexa.feature.update.presentation.UpdatesSettingsViewModel
+import com.elewashy.nexa.ui.navigation.AppNavHost
+import com.elewashy.nexa.ui.navigation.AppNavigationMotion
 
 @Composable
 fun SettingsNavigation(
@@ -22,33 +21,10 @@ fun SettingsNavigation(
 ) {
     val navController = rememberNavController()
 
-    NavHost(
+    AppNavHost(
         navController = navController,
         startDestination = SettingsDestination.Root.route,
-        enterTransition = {
-            slideInHorizontally(
-                animationSpec = tween(300, easing = EaseOutQuart),
-                initialOffsetX = { it },
-            )
-        },
-        exitTransition = {
-            slideOutHorizontally(
-                animationSpec = tween(300, easing = EaseOutQuart),
-                targetOffsetX = { -it / 3 },
-            )
-        },
-        popEnterTransition = {
-            slideInHorizontally(
-                animationSpec = tween(300, easing = EaseOutQuart),
-                initialOffsetX = { -it / 3 },
-            )
-        },
-        popExitTransition = {
-            slideOutHorizontally(
-                animationSpec = tween(300, easing = EaseOutQuart),
-                targetOffsetX = { it },
-            )
-        },
+        motion = AppNavigationMotion.SharedAxisX,
     ) {
         composable(SettingsDestination.Root.route) {
             SettingsScreen(
@@ -61,9 +37,21 @@ fun SettingsNavigation(
         composable(SettingsDestination.General.route) {
             GeneralSettingsScreen(
                 onBackClick = navController::popBackStack,
+                onNavigationPositionClick = {
+                    navController.navigateToSettingsDestination(SettingsDestination.BrowserNavigationPosition)
+                },
                 onCustomizeThemeClick = { navController.navigateToSettingsDestination(SettingsDestination.CustomizeTheme) },
                 onLanguageClick = { navController.navigateToSettingsDestination(SettingsDestination.Language) },
                 viewModel = viewModel,
+            )
+        }
+
+        composable(SettingsDestination.BrowserNavigationPosition.route) {
+            val position by viewModel.browserNavigationBarPosition.collectAsStateWithLifecycle()
+            BrowserNavigationPositionScreen(
+                selectedPosition = position,
+                onPositionSelected = viewModel::setBrowserNavigationBarPosition,
+                onBackClick = navController::popBackStack,
             )
         }
 

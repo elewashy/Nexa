@@ -3,7 +3,6 @@ package com.elewashy.nexa.feature.update.presentation
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -27,6 +26,8 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -34,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,12 +50,14 @@ import com.elewashy.nexa.core.format.LocalizedFormatters
 import com.elewashy.nexa.feature.update.presentation.UpdateViewModel.State
 import com.elewashy.nexa.feature.update.presentation.components.ChangelogList
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.AppSnackbarHost
 import com.elewashy.nexa.ui.icons.ArrowBack
 import com.elewashy.nexa.ui.icons.Close
 import com.elewashy.nexa.ui.icons.FileDownload
 import com.elewashy.nexa.ui.icons.InstallMobile
 import com.elewashy.nexa.ui.icons.Refresh
 import java.io.File
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -64,6 +68,11 @@ fun UpdateScreen(
     val context = LocalContext.current
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val messageScope = rememberCoroutineScope()
+    val showMessage: (String, SnackbarDuration) -> Unit = { message, duration ->
+        messageScope.launch { snackbarHostState.showSnackbar(message, duration = duration) }
+    }
 
     var backPressedOnce by remember { mutableStateOf(false) }
     val pressBackAgainMsg = stringResource(R.string.press_back_again_to_cancel_update)
@@ -75,7 +84,7 @@ fun UpdateScreen(
                 onBackClick()
             } else {
                 backPressedOnce = true
-                Toast.makeText(context, pressBackAgainMsg, Toast.LENGTH_SHORT).show()
+                showMessage(pressBackAgainMsg, SnackbarDuration.Short)
             }
         } else {
             onBackClick()
@@ -100,7 +109,7 @@ fun UpdateScreen(
             {
                 val apkFile = viewModel.getDownloadedApkFile()
                 if (apkFile != null) {
-                    installApk(context, apkFile)
+                    installApk(context, apkFile, showMessage)
                 }
             },
             R.string.install_update,
@@ -143,7 +152,7 @@ fun UpdateScreen(
                                 onBackClick()
                             } else {
                                 backPressedOnce = true
-                                Toast.makeText(context, pressBackAgainMsg, Toast.LENGTH_SHORT).show()
+                                showMessage(pressBackAgainMsg, SnackbarDuration.Short)
                             }
                         } else {
                             onBackClick()
@@ -158,6 +167,7 @@ fun UpdateScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
+        snackbarHost = { AppSnackbarHost(snackbarHostState) },
         bottomBar = {
             Surface(modifier = Modifier.navigationBarsPadding()) {
                 Box(
@@ -201,18 +211,20 @@ fun UpdateScreen(
                 )
             }
 
-            if (viewModel.state == State.FAILED && viewModel.errorMessage != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = viewModel.errorMessage!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+            if (viewModel.state == State.FAILED) {
+                viewModel.errorMessage?.let { errorMessage ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
 
@@ -224,7 +236,11 @@ fun UpdateScreen(
     }
 }
 
-private fun installApk(context: Context, apkFile: File) {
+private fun installApk(
+    context: Context,
+    apkFile: File,
+    showMessage: (String, SnackbarDuration) -> Unit,
+) {
     if (!context.packageManager.canRequestPackageInstalls()) {
         try {
             val settingsIntent = Intent(
@@ -234,17 +250,15 @@ private fun installApk(context: Context, apkFile: File) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(settingsIntent)
-            Toast.makeText(
-                context,
+            showMessage(
                 context.getString(R.string.enable_unknown_apps_install),
-                Toast.LENGTH_LONG
-            ).show()
+                SnackbarDuration.Long,
+            )
         } catch (e: Exception) {
-            Toast.makeText(
-                context,
+            showMessage(
                 context.getString(R.string.cannot_open_install_settings, e.message.orEmpty()),
-                Toast.LENGTH_LONG
-            ).show()
+                SnackbarDuration.Long,
+            )
         }
         return
     }
@@ -262,10 +276,9 @@ private fun installApk(context: Context, apkFile: File) {
         }
         context.startActivity(installIntent)
     } catch (e: Exception) {
-        Toast.makeText(
-            context,
+        showMessage(
             context.getString(R.string.install_failed, e.message.orEmpty()),
-            Toast.LENGTH_LONG
-        ).show()
+            SnackbarDuration.Long,
+        )
     }
 }

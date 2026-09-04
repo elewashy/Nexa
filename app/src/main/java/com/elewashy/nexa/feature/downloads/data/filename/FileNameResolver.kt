@@ -3,10 +3,12 @@ package com.elewashy.nexa.feature.downloads.data.filename
 import android.util.Log
 import android.webkit.MimeTypeMap
 import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.core.text.limitCodePoints
 import com.elewashy.nexa.feature.downloads.data.engine.HttpProber
 import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -21,6 +23,9 @@ import java.util.concurrent.TimeUnit
 object FileNameResolver {
 
     private const val TAG = "FileNameResolver"
+
+    /** Base-name cap measured in code points so a trailing emoji is never split. */
+    private const val MAX_BASE_NAME_CODE_POINTS = 120
 
     @Volatile
     private var clientProvider: HttpClientProvider? = null
@@ -96,6 +101,8 @@ object FileNameResolver {
         }
         return try {
             HttpProber.probe(httpClient, url, headers)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (e: Exception) {
             Log.w(TAG, "Server probe failed (using fallback): ${e.message}")
             HttpProber.ProbeResult()
@@ -174,7 +181,7 @@ object FileNameResolver {
             .replace(' ', '_')
         name = MULTI_UNDERSCORE_RE.replace(name, "_")
             .trim('_', '.', ' ')
-            .take(120)
+            .limitCodePoints(MAX_BASE_NAME_CODE_POINTS)
         if (name.equals(".") || name.equals("..")) name = "download"
         if (RESERVED_WINDOWS_NAMES.contains(name.uppercase())) name = "download_$name"
         return name

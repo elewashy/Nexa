@@ -74,8 +74,13 @@ class SegmentFileWriter(
                 file.parentFile?.mkdirs()
 
                 val randomAccessFile = RandomAccessFile(file, "rw")
-                randomAccessFile.setLength(totalSize)
-                channel = randomAccessFile.channel
+                try {
+                    randomAccessFile.setLength(totalSize)
+                    channel = randomAccessFile.channel
+                } catch (e: Exception) {
+                    randomAccessFile.close()
+                    throw e
+                }
 
                 Log.d(TAG, "Pre-allocated ${totalSize} bytes → $filePath")
             } catch (e: Exception) {

@@ -33,7 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -58,6 +57,7 @@ import com.elewashy.nexa.BuildConfig
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.util.relativeTime
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.AppSnackbarHost
 import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SwitchSettingsItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
@@ -183,7 +183,7 @@ fun UpdatesSettingsScreen(
                 }
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { AppSnackbarHost(snackbarHostState) },
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
         LazyColumn(
@@ -242,12 +242,14 @@ fun UpdatesSettingsScreen(
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
-                                val versionText = if (hasUpdate && managerVersion != null) {
-                                    "${BuildConfig.VERSION_NAME} → $managerVersion"
-                                } else if (managerVersion != null && updateReleasedAt != null) {
-                                    "$managerVersion\u2002\u2022\u2002${updateReleasedAt!!.relativeTime(context)}"
-                                } else {
-                                    BuildConfig.VERSION_NAME
+                                val availableVersion = managerVersion
+                                val releasedAt = updateReleasedAt
+                                val versionText = when {
+                                    hasUpdate && availableVersion != null ->
+                                        "${BuildConfig.VERSION_NAME} → $availableVersion"
+                                    availableVersion != null && releasedAt != null ->
+                                        "$availableVersion\u2002\u2022\u2002${releasedAt.relativeTime(context)}"
+                                    else -> BuildConfig.VERSION_NAME
                                 }
                                 Text(
                                     text = versionText,

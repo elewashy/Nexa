@@ -12,6 +12,8 @@ import com.elewashy.nexa.feature.downloads.domain.usecase.ObserveNotificationsWa
 import com.elewashy.nexa.feature.downloads.domain.usecase.PauseDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.ResumeDownloadUseCase
 import com.elewashy.nexa.feature.downloads.domain.usecase.RetryDownloadUseCase
+import com.elewashy.nexa.feature.downloads.domain.usecase.RenameDownloadUseCase
+import com.elewashy.nexa.feature.downloads.data.RenameDownloadResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,8 +37,9 @@ import javax.inject.Inject
  * All download-engine commands go through use cases backed by the
  * `DownloadRepository` (the SSOT introduced in sub-phase 3.3).
  *
- * Destructive deletes are undoable: the VM hides pending items immediately,
- * waits for the Material snackbar result, then commits through the repository.
+ * Deleting also removes the file from the device, so every delete entry point
+ * (card menu, multi-select header) first raises [DownloadsUiState.deleteConfirmation];
+ * only [confirmDelete] commits through the repository.
  */
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
@@ -47,32 +50,33 @@ class DownloadsViewModel @Inject constructor(
     private val resumeDownload: ResumeDownloadUseCase,
     private val cancelDownload: CancelDownloadUseCase,
     private val retryDownload: RetryDownloadUseCase,
+    private val renameDownload: RenameDownloadUseCase,
     @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
 
-    private var nextDeleteToken = 1L
-    private var latestDownloads: List<DownloadItem> = emptyList()
-    private val pendingDeletes = linkedMapOf<Long, PendingDelete>()
-
     init {
         // Mirror the repository's sorted snapshot into the UI state. Selection
         // and dialog flags are preserved across emissions.
         viewModelScope.launch {
             observeDownloads().collect { snapshot ->
-                latestDownloads = snapshot
                 _uiState.update { state ->
                     val validIds = snapshot.mapTo(HashSet()) { it.id }
                     val prunedSelection = state.selectedItems.filterTo(HashSet()) { it in validIds }
                     state.copy(
-                        downloads = visibleDownloads(snapshot),
+                        downloads = snapshot,
                         selectedItems = prunedSelection,
                         // Auto-exit multi-select if the selection was emptied by a remote removal
                         isMultiSelectMode = state.isMultiSelectMode && prunedSelection.isNotEmpty(),
                         // Drop any dialog pointing at an item that no longer exists
                         cancelDialogItem = state.cancelDialogItem?.takeIf { it.id in validIds },
+                        renameDialogItem = state.renameDialogItem?.takeIf { it.id in validIds },
+                        deleteConfirmation = state.deleteConfirmation?.let { confirmation ->
+                            val remaining = confirmation.items.filter { it.id in validIds }
+                            if (remaining.isEmpty()) null else DeleteConfirmation(remaining)
+                        },
                     )
                 }
             }
@@ -86,24 +90,6 @@ class DownloadsViewModel @Inject constructor(
 
     fun dismissNotificationsWarning() {
         dismissNotificationsWarningUseCase()
-    }
-
-    /**
-     * Commits any deletions still waiting on their undo snackbar. Without this,
-     * clearing the VM (navigation, config change beyond backstack retention)
-     * would silently resurrect the "deleted" items on the next visit.
-     * `viewModelScope` is already cancelled here — commit on the application
-     * scope instead so the repository commands are not lost.
-     */
-    override fun onCleared() {
-        if (pendingDeletes.isEmpty()) return
-        val items = pendingDeletes.values
-            .flatMap { it.items }
-            .distinctBy { it.id }
-        pendingDeletes.clear()
-        applicationScope.launch {
-            items.forEach { item -> cancelDownload(item.id) }
-        }
     }
 
     // ── Item click / long-click ──────────────────────────────────────
@@ -157,16 +143,6 @@ class DownloadsViewModel @Inject constructor(
         }
     }
 
-    /** User tapped back in multi-select mode → just exit selection. Returns true if consumed. */
-    fun onBackPressed(): Boolean {
-        return if (_uiState.value.isMultiSelectMode) {
-            clearSelection()
-            true
-        } else {
-            false
-        }
-    }
-
     // ── Engine commands ──────────────────────────────────────────────
 
     fun pause(item: DownloadItem) { viewModelScope.launch { pauseDownload(item.id) } }
@@ -190,82 +166,61 @@ class DownloadsViewModel @Inject constructor(
         _uiState.update { it.copy(cancelDialogItem = null) }
     }
 
+    fun showRenameDialog(item: DownloadItem) {
+        if (item.status == DownloadStatus.COMPLETED) {
+            _uiState.update { it.copy(renameDialogItem = item) }
+        }
+    }
+
+    fun dismissRenameDialog() {
+        _uiState.update { it.copy(renameDialogItem = null) }
+    }
+
+    fun confirmRename(name: String, onResult: (RenameDownloadResult) -> Unit) {
+        val target = _uiState.value.renameDialogItem ?: return
+        dismissRenameDialog()
+        viewModelScope.launch { onResult(renameDownload(target.id, name)) }
+    }
+
+    // ── Delete (confirm, then commit) ─────────────────────────────────
+
+    /** Card-level delete: asks for confirmation before the file leaves the device. */
     fun requestDelete(item: DownloadItem) {
         requestDelete(listOf(item))
     }
 
+    /** Multi-select delete: one confirmation covering every selected item. */
     fun requestSelectedDelete() {
         val state = _uiState.value
         requestDelete(state.downloads.filter { it.id in state.selectedItems })
     }
 
     private fun requestDelete(items: List<DownloadItem>) {
-        val pendingIds = pendingDeleteIds()
-        val targetItems = items.filterNot { it.id in pendingIds }
-        if (targetItems.isEmpty()) return
+        if (items.isEmpty()) return
+        _uiState.update { it.copy(deleteConfirmation = DeleteConfirmation(items)) }
+    }
 
-        val token = nextDeleteToken++
-        pendingDeletes[token] = PendingDelete(targetItems)
-        val deletedIds = targetItems.mapTo(HashSet()) { it.id }
+    fun dismissDeleteConfirmation() {
+        _uiState.update { it.copy(deleteConfirmation = null) }
+    }
 
+    /**
+     * Commits the confirmed deletion. Runs on the application scope so leaving the screen
+     * mid-commit cannot leave some confirmed files deleted and others not.
+     */
+    fun confirmDelete() {
+        val confirmation = _uiState.value.deleteConfirmation ?: return
+        val deletedIds = confirmation.items.mapTo(HashSet()) { it.id }
         _uiState.update { state ->
-            val newSelection = state.selectedItems - deletedIds
+            val remainingSelection = state.selectedItems - deletedIds
             state.copy(
-                downloads = visibleDownloads(),
-                selectedItems = newSelection,
-                isMultiSelectMode = newSelection.isNotEmpty(),
-                deleteSnackbarQueue = state.deleteSnackbarQueue + PendingDeleteSnackbar(
-                    token = token,
-                    fileName = targetItems.singleOrNull()?.fileName,
-                    itemCount = targetItems.size,
-                ),
+                deleteConfirmation = null,
+                selectedItems = remainingSelection,
+                isMultiSelectMode = remainingSelection.isNotEmpty(),
             )
         }
-    }
-
-    fun onDeleteSnackbarResult(token: Long, undo: Boolean) {
-        if (undo) {
-            undoDelete(token)
-        } else {
-            commitDelete(token)
-        }
-    }
-
-    private fun undoDelete(token: Long) {
-        pendingDeletes.remove(token) ?: return
-        _uiState.update { state ->
-            state.copy(
-                downloads = visibleDownloads(),
-                deleteSnackbarQueue = state.deleteSnackbarQueue.filterNot { it.token == token },
-            )
-        }
-    }
-
-    private fun commitDelete(token: Long) {
-        val pending = pendingDeletes[token] ?: return
-        _uiState.update { state ->
-            state.copy(deleteSnackbarQueue = state.deleteSnackbarQueue.filterNot { it.token == token })
-        }
-        viewModelScope.launch {
-            try {
-                pending.items.forEach { item -> cancelDownload(item.id) }
-            } finally {
-                pendingDeletes.remove(token)
-                _uiState.update { state -> state.copy(downloads = visibleDownloads()) }
-            }
-        }
-    }
-
-    private fun visibleDownloads(snapshot: List<DownloadItem> = latestDownloads): List<DownloadItem> {
-        val pendingIds = pendingDeleteIds()
-        return snapshot.filterNot { it.id in pendingIds }
-    }
-
-    private fun pendingDeleteIds(): Set<Long> {
-        return buildSet {
-            pendingDeletes.values.forEach { pending ->
-                pending.items.forEach { item -> add(item.id) }
-            }
+        applicationScope.launch {
+            confirmation.items.forEach { item -> cancelDownload(item.id) }
         }
     }
 
@@ -277,6 +232,4 @@ class DownloadsViewModel @Inject constructor(
         data object Handled : ItemClickAction()
         data class OpenFile(val item: DownloadItem) : ItemClickAction()
     }
-
-    private data class PendingDelete(val items: List<DownloadItem>)
 }

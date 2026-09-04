@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val PlayArrow: ImageVector
   get() {
     if (_play_arrow != null) {
@@ -66,6 +67,7 @@ val PlayArrow: ImageVector
 
 private var _play_arrow: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val PlayArrowFilled: ImageVector
   get() {
     if (_play_arrow_filled != null) {

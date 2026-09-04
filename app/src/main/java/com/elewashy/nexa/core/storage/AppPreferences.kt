@@ -9,9 +9,9 @@ import kotlinx.coroutines.flow.Flow
  * [android.content.SharedPreferences] for *small* user-facing settings where
  * async IO is acceptable.
  *
- * **Not** a blanket replacement for SharedPreferences everywhere: ad-block
- * metadata and download-persistence JSON stay on SharedPrefs in their current
- * locations because their hot paths require synchronous commits.
+ * **Not** a blanket replacement for every store: ad-block metadata stays on
+ * SharedPreferences because its hot path requires synchronous commits, and
+ * structured, growing data (downloads, tabs, bookmarks, history) lives in Room.
  *
  * All writes are suspending; all reads return a cold [Flow] that re-emits on
  * every mutation. Readers must run inside a coroutine scope.
@@ -58,6 +58,30 @@ interface AppPreferences {
     /** Whether the in-browser video download button is shown. Defaults to true. */
     val videoDownloadButton: Flow<Boolean>
 
+    /** Compact-window browser toolbar position. Defaults to bottom. */
+    val browserNavigationBarPosition: Flow<Int>
+
+    /** Download Manager layout. Defaults to Media gallery. */
+    val downloadManagerLayout: Flow<Int>
+
+    /** Maximum files allowed to transfer concurrently. Defaults to 3. */
+    val maxConcurrentDownloads: Flow<Int>
+
+    /** User-enabled Media gallery category-filter IDs. */
+    val downloadFilterIds: Flow<Set<String>>
+
+    /** Aggregate download speed cap in bytes/second; zero means unlimited. */
+    val downloadSpeedLimitBytesPerSecond: Flow<Long>
+
+    /** Whether transient download failures are retried automatically. Defaults to true. */
+    val autoRetryDownloads: Flow<Boolean>
+
+    /** Whether completed videos use larger preview cards in either design. Defaults to true. */
+    val visualVideoPresentation: Flow<Boolean>
+
+    /** Whether category chips include item counts. Defaults to true. */
+    val showDownloadFilterCounts: Flow<Boolean>
+
     /** Updates [themeMode]. */
     suspend fun setThemeMode(mode: Int)
 
@@ -87,5 +111,23 @@ interface AppPreferences {
 
     /** Updates [videoDownloadButton]. */
     suspend fun setVideoDownloadButton(enabled: Boolean)
+
+    /** Updates [browserNavigationBarPosition]. Unknown values are sanitized by readers. */
+    suspend fun setBrowserNavigationBarPosition(position: Int)
+
+    /** Updates [downloadManagerLayout]. */
+    suspend fun setDownloadManagerLayout(layout: Int)
+
+    suspend fun setMaxConcurrentDownloads(value: Int)
+
+    suspend fun setDownloadFilterIds(ids: Set<String>)
+
+    suspend fun setDownloadSpeedLimitBytesPerSecond(value: Long)
+
+    suspend fun setAutoRetryDownloads(enabled: Boolean)
+
+    suspend fun setVisualVideoPresentation(enabled: Boolean)
+
+    suspend fun setShowDownloadFilterCounts(show: Boolean)
 
 }

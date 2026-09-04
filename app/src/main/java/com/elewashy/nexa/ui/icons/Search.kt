@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
+@Suppress("CheckReturnValue")
 val Search: ImageVector
   get() {
     if (_search != null) {
@@ -70,6 +71,7 @@ val Search: ImageVector
 
 private var _search: ImageVector? = null
 
+@Suppress("CheckReturnValue")
 val SearchFilled: ImageVector
   get() {
     if (_search_filled != null) {

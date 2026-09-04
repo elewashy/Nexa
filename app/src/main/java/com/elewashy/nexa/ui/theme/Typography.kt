@@ -4,9 +4,10 @@ import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.sp
 
-val NexaTypography = Typography(
+private val RawNexaTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
@@ -113,3 +114,30 @@ val NexaTypography = Typography(
         letterSpacing = 0.5.sp,
     ),
 )
+
+/**
+ * Resolve every paragraph from its first strong character instead of forcing the app locale's
+ * direction onto user and web content. Layout direction still follows the selected locale, while
+ * Arabic, Hebrew, Latin, URLs, and mixed text use the Unicode bidirectional algorithm.
+ */
+val NexaTypography = RawNexaTypography.run {
+    copy(
+        displayLarge = displayLarge.bidiAware(),
+        displayMedium = displayMedium.bidiAware(),
+        displaySmall = displaySmall.bidiAware(),
+        headlineLarge = headlineLarge.bidiAware(),
+        headlineMedium = headlineMedium.bidiAware(),
+        headlineSmall = headlineSmall.bidiAware(),
+        titleLarge = titleLarge.bidiAware(),
+        titleMedium = titleMedium.bidiAware(),
+        titleSmall = titleSmall.bidiAware(),
+        bodyLarge = bodyLarge.bidiAware(),
+        bodyMedium = bodyMedium.bidiAware(),
+        bodySmall = bodySmall.bidiAware(),
+        labelLarge = labelLarge.bidiAware(),
+        labelMedium = labelMedium.bidiAware(),
+        labelSmall = labelSmall.bidiAware(),
+    )
+}
+
+private fun TextStyle.bidiAware(): TextStyle = copy(textDirection = TextDirection.Content)

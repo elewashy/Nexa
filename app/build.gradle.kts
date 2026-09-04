@@ -5,8 +5,14 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.aboutlibraries)
-    alias(libs.plugins.aboutlibraries.android)
+    alias(libs.plugins.aboutlibraries) apply false
+}
+
+// Regenerate the checked-in attribution resource with:
+// ./gradlew :app:exportLibraryDefinitionsRelease -PgenerateLicenseMetadata
+val generateLicenseMetadata = providers.gradleProperty("generateLicenseMetadata").isPresent
+if (generateLicenseMetadata) {
+    apply(plugin = "com.mikepenz.aboutlibraries.plugin")
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -44,8 +50,8 @@ android {
         applicationId = "com.elewashy.nexa"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "1.2.2"
+        versionCode = 9
+        versionName = "1.3.0"
         
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -136,6 +142,10 @@ androidComponents {
     }
 }
 
+ksp {
+    arg("room.schemaLocation", file("schemas").path)
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -160,6 +170,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.webkit)
 
     // Jetpack Compose (BOM manages all Compose versions)
     implementation(platform(libs.compose.bom))
@@ -168,6 +179,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material3.window.size)
+    implementation(libs.graphics.shapes)
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
@@ -188,8 +200,12 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
-    // DataStore
+    // Structured persistence
     implementation(libs.datastore.preferences)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    implementation(libs.room.paging)
+    ksp(libs.room.compiler)
 
     // SplashScreen API
     implementation(libs.core.splashscreen)
@@ -223,11 +239,20 @@ dependencies {
     // android.jar does not provide org.json on the JVM unit test classpath
     // (needed by VideoVersionParser tests).
     testImplementation(libs.org.json)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.robolectric)
 }
 
-aboutLibraries {
-    library {
-        duplicationMode = com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
-        duplicationRule = com.mikepenz.aboutlibraries.plugin.DuplicateRule.EXACT
+if (generateLicenseMetadata) {
+    extensions.configure<com.mikepenz.aboutlibraries.plugin.AboutLibrariesExtension> {
+        export {
+            outputFile = file("src/main/res/raw/aboutlibraries.json")
+            variant = "release"
+        }
+
+        library {
+            duplicationMode = com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
+            duplicationRule = com.mikepenz.aboutlibraries.plugin.DuplicateRule.EXACT
+        }
     }
 }

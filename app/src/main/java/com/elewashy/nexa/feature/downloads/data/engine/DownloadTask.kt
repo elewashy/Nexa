@@ -5,8 +5,6 @@ import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
@@ -39,7 +37,8 @@ class DownloadTask(
     /** Probe result fetched upstream (filename resolution) — reused instead of probing again. */
     private var initialProbe: HttpProber.ProbeResult? = null,
     /** Segment state persisted before the last process death, if any. */
-    private val restoredSegments: List<PersistedSegment> = emptyList()
+    private val restoredSegments: List<PersistedSegment> = emptyList(),
+    private val bandwidthLimiter: BandwidthLimiter = BandwidthLimiter(),
 ) {
     companion object {
         private const val TAG = "DownloadTask"
@@ -118,14 +117,20 @@ class DownloadTask(
     // ── State ───────────────────────────────────────────────────────────
 
     /** Coroutine scope for this task — cancelled on cancel/pause. */
+    @Volatile
     private var taskScope: CoroutineScope? = null
 
     /** File writer shared by all segments. */
-    private var fileWriter: SegmentFileWriter? = null
+    @Volatile private var fileWriter: SegmentFileWriter? = null
 
-    /** Active download segments. */
-    private val segments = mutableListOf<DownloadSegment>()
-    private val segmentsMutex = Mutex()
+    /**
+     * Live segment objects. Every read or mutation is serialized by
+     * [segmentsLock]. The list itself is replaced, never mutated. This single
+     * ownership boundary is required because dynamic splitting changes a
+     * segment's end while a downloader is selecting its next write range.
+     */
+    private var segments: List<DownloadSegment> = emptyList()
+    private val segmentsLock = Any()
 
     /**
      * Active [SegmentDownloader] instances.
@@ -135,7 +140,7 @@ class DownloadTask(
     private val activeDownloaders = mutableListOf<SegmentDownloader>()
 
     /** Tracks whether server supports Range requests. */
-    private var supportsRanges = false
+    @Volatile private var supportsRanges = false
 
     /** Set after a resume range re-probe fails — skip future re-probes. */
     private var rangeProbeConfirmedFailed = false
@@ -148,7 +153,7 @@ class DownloadTask(
      * Set by [resumeAfterRestart] so that progress aggregation correctly
      * adds pre-existing bytes to the segment's session-only count.
      */
-    private var baseDownloadedBytes = 0L
+    @Volatile private var baseDownloadedBytes = 0L
 
     // ── Speed calculation ───────────────────────────────────────────────
 
@@ -170,13 +175,6 @@ class DownloadTask(
     /** Set by [cancel]; finalization checks it so a racing cancel cannot orphan files. */
     @Volatile private var cancelled = false
 
-    /**
-     * Last successful segment snapshot. [snapshotSegments] must never block the
-     * caller (it runs on the main thread during service detach), so on lock
-     * contention it returns this instead of waiting on [segmentsMutex].
-     */
-    @Volatile private var lastGoodSegmentSnapshot: List<PersistedSegment> = emptyList()
-
     // ===================================================================
     //  Public API
     // ===================================================================
@@ -191,12 +189,14 @@ class DownloadTask(
      */
     fun start(parentScope: CoroutineScope) {
         cancelled = false
-        val supervisorJob = SupervisorJob(parentScope.coroutineContext[Job])
-        taskScope = CoroutineScope(supervisorJob + Dispatchers.IO)
+        val scope = CoroutineScope(
+            SupervisorJob(parentScope.coroutineContext[Job]) + Dispatchers.IO
+        )
+        taskScope = scope
 
         updateStatus(DownloadStatus.PENDING)
 
-        taskScope!!.launch {
+        scope.launch {
             try {
                 executeDownload()
             } catch (e: CancellationException) {
@@ -207,6 +207,7 @@ class DownloadTask(
                 handleNetworkLoss()
             } catch (e: Exception) {
                 Log.e(TAG, "Task failed: ${item.fileName} — ${e.message}", e)
+                releaseWriter()
                 updateStatus(DownloadStatus.FAILED)
             }
         }
@@ -226,15 +227,13 @@ class DownloadTask(
         // Now cancel the coroutine scope
         taskScope?.cancel()
         taskScope = null
+        // Persistent segment metadata survives; live file descriptors do not.
+        releaseWriter()
 
-        // Mark remaining segments as paused (under the mutex — dynamic splitting
-        // can append entries while this runs)
-        runBlocking {
-            segmentsMutex.withLock {
-                segments.forEach { seg ->
-                    if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
-                        seg.status = SegmentStatus.PAUSED
-                    }
+        synchronized(segmentsLock) {
+            segments.forEach { seg ->
+                if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
+                    seg.status = SegmentStatus.PAUSED
                 }
             }
         }
@@ -254,10 +253,11 @@ class DownloadTask(
      */
     fun resume(parentScope: CoroutineScope) {
         cancelled = false
+        val resumeState = synchronized(segmentsLock) {
+            ResumeState(segments.isNotEmpty(), segments.any { it.hasRemainingBytes })
+        }
         Log.d(TAG, "Resuming: ${item.fileName} " +
-                "(segments=${segments.size}, downloaded=${item.downloadedBytes})")
-
-        item.failureCount = 0
+                "(segments=${if (resumeState.hasSegments) "present" else "empty"}, downloaded=${item.downloadedBytes})")
 
         // Reset speed counters to avoid stale speed readings after resume
         resetSpeedCounters()
@@ -265,25 +265,22 @@ class DownloadTask(
         // Save downloaded bytes before any reset — needed for range re-probe
         val pausedAtBytes = item.downloadedBytes
 
-        // Read the segment list under the mutex — dynamic splitting mutates it.
-        val hasRemaining = runBlocking {
-            segmentsMutex.withLock { segments.any { it.hasRemainingBytes } }
-        }
-
-        val supervisorJob = SupervisorJob(parentScope.coroutineContext[Job])
-        taskScope = CoroutineScope(supervisorJob + Dispatchers.IO)
+        val scope = CoroutineScope(
+            SupervisorJob(parentScope.coroutineContext[Job]) + Dispatchers.IO
+        )
+        taskScope = scope
 
         updateStatus(DownloadStatus.DOWNLOADING)
 
-        taskScope!!.launch {
+        scope.launch {
             try {
                 when {
                     // Case 1: We have segments with remaining bytes (normal pause/resume)
-                    segments.isNotEmpty() && hasRemaining -> {
+                    resumeState.hasSegments && resumeState.hasRemaining -> {
                         resumeSegments(pausedAtBytes)
                     }
                     // Case 2: No segments but partial file exists (app restart with progress)
-                    segments.isEmpty() && item.downloadedBytes > 0 && item.totalBytes > 0 -> {
+                    !resumeState.hasSegments && item.downloadedBytes > 0 && item.totalBytes > 0 -> {
                         Log.d(TAG, "Resuming after app restart: ${item.fileName} " +
                                 "(${item.downloadedBytes}/${item.totalBytes} bytes)")
                         resumeAfterRestart()
@@ -291,7 +288,7 @@ class DownloadTask(
                     // Case 3: All segments complete, zero bytes left (e.g. a failed
                     // finalization rename). Re-run finalization — a full re-download
                     // would waste every byte already on disk.
-                    segments.isNotEmpty() && !hasRemaining -> {
+                    resumeState.hasSegments && !resumeState.hasRemaining -> {
                         Log.d(TAG, "All segments complete, retrying finalization: ${item.fileName}")
                         handleAllSegmentsCompleted()
                     }
@@ -315,6 +312,7 @@ class DownloadTask(
                 restartCleanly()
             } catch (e: Exception) {
                 Log.e(TAG, "Resume failed: ${item.fileName} — ${e.message}", e)
+                releaseWriter()
                 updateStatus(DownloadStatus.FAILED)
             }
         }
@@ -382,6 +380,17 @@ class DownloadTask(
         }
     }
 
+    /**
+     * Closes and drops the file writer at terminal failure so a permanently
+     * FAILED task holds no file descriptor. [resumeSegments] recreates the
+     * writer on the next resume; finalization never needs it.
+     */
+    private fun releaseWriter() {
+        val writer = fileWriter
+        fileWriter = null
+        writer?.close()
+    }
+
     // ===================================================================
     //  Internal download logic
     // ===================================================================
@@ -394,6 +403,10 @@ class DownloadTask(
         // Fresh download — no base bytes from a previous session
         baseDownloadedBytes = 0
         item.errorMessage = null
+
+        // A previous attempt (e.g. FAILED with a live writer) must not leak
+        // its file descriptor into the fresh plan.
+        releaseWriter()
 
         // Build header map from DownloadItem metadata
         val headers = buildHeaderMap()
@@ -432,9 +445,8 @@ class DownloadTask(
             SegmentPlan.createSingleSegment(totalSize)
         }
 
-        segmentsMutex.withLock {
-            segments.clear()
-            segments.addAll(initialSegments)
+        synchronized(segmentsLock) {
+            segments = initialSegments
             nextSegmentId = segments.size
         }
 
@@ -460,9 +472,8 @@ class DownloadTask(
             
             // Disable range support and clear segments
             supportsRanges = false
-            segmentsMutex.withLock {
-                segments.clear()
-                segments.addAll(SegmentPlan.createSingleSegment(item.totalBytes))
+            synchronized(segmentsLock) {
+                segments = SegmentPlan.createSingleSegment(item.totalBytes)
                 nextSegmentId = segments.size
             }
             
@@ -567,9 +578,8 @@ class DownloadTask(
         item.downloadedBytes = rebuilt.sumOf { it.effectiveDownloadedBytes }
         item.errorMessage = null
 
-        segmentsMutex.withLock {
-            segments.clear()
-            segments.addAll(rebuilt)
+        synchronized(segmentsLock) {
+            segments = rebuilt
             nextSegmentId = rebuilt.size
         }
 
@@ -616,7 +626,7 @@ class DownloadTask(
     private suspend fun restartCleanly() {
         item.downloadedBytes = 0
         baseDownloadedBytes = 0
-        segmentsMutex.withLock { segments.clear() }
+        synchronized(segmentsLock) { segments = emptyList() }
         File(partFilePath).delete()
         executeDownload()
     }
@@ -636,13 +646,12 @@ class DownloadTask(
      *    [allowRestoredFallback] — the engine only enables it for items that
      *    are still resumable (DOWNLOADING/PAUSED).
      */
-    fun snapshotSegments(allowRestoredFallback: Boolean = true): List<PersistedSegment> {
-        if (item.totalBytes <= 0) return emptyList()
-
-        if (!segmentsMutex.tryLock()) {
-            return lastGoodSegmentSnapshot
+    fun snapshotProgress(allowRestoredFallback: Boolean = true): ProgressSnapshot {
+        if (item.totalBytes <= 0) {
+            return ProgressSnapshot(item.downloadedBytes, item.totalBytes, emptyList())
         }
-        return try {
+
+        return synchronized(segmentsLock) {
             val current = segments.map { seg ->
                 PersistedSegment(
                     startByte = seg.startByte,
@@ -651,21 +660,34 @@ class DownloadTask(
                     completed = seg.status == SegmentStatus.COMPLETED
                 )
             }
-            if (current.isNotEmpty()) {
-                lastGoodSegmentSnapshot = current
-                current
-            } else if (allowRestoredFallback &&
-                restoredSegments.isNotEmpty() &&
-                restoredSegments.all { it.endByte < item.totalBytes }
-            ) {
-                restoredSegments
-            } else {
-                current
+            // Recompute from the SAME segment snapshot so the persisted bytes
+            // can never disagree with the persisted rows.
+            val bytes = baseDownloadedBytes + current.sumOf { it.downloadedBytes }
+            val snapshot = when {
+                current.isNotEmpty() -> ProgressSnapshot(bytes, item.totalBytes, current)
+                allowRestoredFallback &&
+                    restoredSegments.isNotEmpty() &&
+                    restoredSegments.all { it.endByte < item.totalBytes } ->
+                    ProgressSnapshot(
+                        baseDownloadedBytes + restoredSegments.sumOf { it.downloadedBytes },
+                        item.totalBytes,
+                        restoredSegments,
+                    )
+                else -> ProgressSnapshot(bytes, item.totalBytes, current)
             }
-        } finally {
-            segmentsMutex.unlock()
+            snapshot
         }
     }
+
+    /** Resume decision captured atomically with respect to segment mutations. */
+    private data class ResumeState(val hasSegments: Boolean, val hasRemaining: Boolean)
+
+    /** Atomic persistence unit: progress bytes + total + segment rows. */
+    data class ProgressSnapshot(
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val segments: List<PersistedSegment>,
+    )
 
     /**
      * Resumes downloading segments that still have remaining bytes.
@@ -697,10 +719,11 @@ class DownloadTask(
                 baseDownloadedBytes = pausedAtBytes
                 item.downloadedBytes = pausedAtBytes
 
-                segmentsMutex.withLock {
-                    segments.clear()
-                    segments.addAll(resumeSegments)
-                    nextSegmentId = resumeSegments.size
+                synchronized(segmentsLock) {
+                    segments = SegmentPlan.createSegmentsForRange(
+                        pausedAtBytes, item.totalBytes - 1
+                    )
+                    nextSegmentId = segments.size
                 }
 
                 lastSpeedCalcTime = System.currentTimeMillis()
@@ -722,16 +745,11 @@ class DownloadTask(
             }
         }
 
-        // Reset retry counts for paused/failed segments (under the mutex —
-        // dynamic splitting mutates the list)
-        segmentsMutex.withLock {
+        synchronized(segmentsLock) {
             segments.forEach { seg ->
                 if (seg.status == SegmentStatus.PAUSED || seg.status == SegmentStatus.FAILED) {
                     seg.retryCount = 0
                     seg.status = SegmentStatus.PENDING
-                    // For non-range servers, we keep seg.downloadedBytes as-is.
-                    // SegmentDownloader will skip the already-downloaded bytes
-                    // from the response stream, preserving progress.
                 }
             }
         }
@@ -756,10 +774,12 @@ class DownloadTask(
             }
             requestBuilder.addHeader("Range", "bytes=$offset-$offset")
             val call = client.newCall(requestBuilder.build())
-            call.execute().use { resp ->
+            call.awaitResponse().use { resp ->
                 Log.d(TAG, "Resume range probe: GET bytes=$offset-$offset → ${resp.code}")
                 resp.code == 206
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Resume range probe failed: ${e.message}")
             false
@@ -774,7 +794,7 @@ class DownloadTask(
         writer: SegmentFileWriter,
         headers: Map<String, String>
     ) {
-        val segmentsToDownload = segmentsMutex.withLock {
+        val segmentsToDownload = synchronized(segmentsLock) {
             segments.filter { it.hasRemainingBytes }.toList()
         }
 
@@ -792,30 +812,26 @@ class DownloadTask(
 
         // All segments (including dynamic ones) have finished execution.
         // Check final status to determine if we succeeded, failed, or were paused.
-        val allCompleted = segmentsMutex.withLock {
-            segments.all { it.status == SegmentStatus.COMPLETED }
-        }
+        val finishedStatuses = synchronized(segmentsLock) { segments.map { it.status } }
+        val allCompleted = finishedStatuses.all { it == SegmentStatus.COMPLETED }
 
         if (allCompleted) {
             handleAllSegmentsCompleted()
         } else {
             // Check if any segment was paused due to network loss
-            val anyNetworkPaused = segmentsMutex.withLock {
-                segments.any { it.status == SegmentStatus.PAUSED }
-            }
+            val anyNetworkPaused = finishedStatuses.any { it == SegmentStatus.PAUSED }
 
             if (anyNetworkPaused) {
                 throw NetworkLostException("One or more segments lost network")
             }
 
-            val anyFailed = segmentsMutex.withLock {
-                segments.any { it.status == SegmentStatus.FAILED }
-            }
+            val anyFailed = finishedStatuses.any { it == SegmentStatus.FAILED }
             if (anyFailed) {
                 // Report FAILED and let the repository's automatic-retry policy
                 // (bounded backoff, non-retryable classification) decide what
                 // happens next — the engine no longer second-guesses it.
-                item.failureCount++
+                // Release the writer: retry/resume recreates it.
+                releaseWriter()
                 updateStatus(DownloadStatus.FAILED)
             }
         }
@@ -830,6 +846,10 @@ class DownloadTask(
         headers: Map<String, String>,
         segment: DownloadSegment
     ) {
+        // Generation token: pause() nulls taskScope and resume() assigns a new
+        // one, so identity comparison tells a late-running coroutine whether a
+        // newer generation has superseded it.
+        val scopeAtLaunch = taskScope
         scope.launch {
             val downloader = SegmentDownloader(
                 client = client,
@@ -838,9 +858,12 @@ class DownloadTask(
                 segment = segment,
                 fileWriter = writer,
                 supportsRange = supportsRanges,
+                bandwidthLimiter = bandwidthLimiter,
                 onProgress = { _, bytesWritten ->
                     handleSegmentProgress(bytesWritten)
-                }
+                },
+                isStale = { taskScope !== scopeAtLaunch },
+                stateLock = segmentsLock,
             )
 
             synchronized(activeDownloaders) { activeDownloaders.add(downloader) }
@@ -853,9 +876,10 @@ class DownloadTask(
 
             // When a segment completes, try dynamic splitting.
             // Launch the new segment in the SAME scope so downloadAllSegments waits for it.
-            if (segment.status == SegmentStatus.COMPLETED && supportsRanges) {
-                tryDynamicSplit(scope, writer, headers)
+            val shouldSplit = synchronized(segmentsLock) {
+                segment.status == SegmentStatus.COMPLETED && supportsRanges
             }
+            if (shouldSplit) tryDynamicSplit(scope, writer, headers, scopeAtLaunch)
         }
     }
 
@@ -870,18 +894,23 @@ class DownloadTask(
     private suspend fun tryDynamicSplit(
         scope: CoroutineScope,
         writer: SegmentFileWriter,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        scopeAtLaunch: CoroutineScope?,
     ) {
         val newSeg: DownloadSegment
 
-        segmentsMutex.withLock {
+        synchronized(segmentsLock) {
+            // A pause/resume superseded this generation while the segment was
+            // finishing — never append into a foreign generation's list.
+            if (taskScope !== scopeAtLaunch) return
+
             val activeSegments = segments.filter { it.status == SegmentStatus.DOWNLOADING }
             val result = SegmentPlan.trySplitLargestSegment(activeSegments, nextSegmentId)
                 ?: return
 
             val (_, newSegment) = result
 
-            segments.add(newSegment)
+            segments = segments + newSegment
             nextSegmentId++
             newSeg = newSegment
         }
@@ -912,15 +941,9 @@ class DownloadTask(
         if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return
         lastProgressTime = now
 
-        // Aggregate downloaded bytes from all segments + pre-existing bytes.
-        // Snapshot the list under the mutex — dynamic splitting appends entries.
-        // On contention just skip this tick; the next one picks the state up.
-        val segmentSnapshot: List<DownloadSegment> = if (segmentsMutex.tryLock()) {
-            try { segments.toList() } finally { segmentsMutex.unlock() }
-        } else {
-            return
+        val totalDownloaded = synchronized(segmentsLock) {
+            baseDownloadedBytes + segments.sumOf { it.effectiveDownloadedBytes }
         }
-        val totalDownloaded = baseDownloadedBytes + segmentSnapshot.sumOf { it.effectiveDownloadedBytes }
         item.downloadedBytes = totalDownloaded
 
         // Calculate speed — 1-second window
@@ -958,16 +981,15 @@ class DownloadTask(
         // Cancel any ongoing work
         taskScope?.cancel()
         taskScope = null
+        releaseWriter()
 
-        // Mark all active segments as paused (snapshot under the mutex —
-        // dynamic splitting mutates the list)
-        val snapshot = runBlocking {
-            segmentsMutex.withLock { segments.toList() }
-        }
-        snapshot.forEach { seg ->
-            if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
-                seg.status = SegmentStatus.PAUSED
+        val remainingCount = synchronized(segmentsLock) {
+            segments.forEach { seg ->
+                if (seg.status == SegmentStatus.DOWNLOADING || seg.status == SegmentStatus.PENDING) {
+                    seg.status = SegmentStatus.PAUSED
+                }
             }
+            segments.count { it.hasRemainingBytes }
         }
 
         // Set flag so DownloadService can auto-resume when network returns
@@ -975,7 +997,7 @@ class DownloadTask(
         item.downloadSpeedBytesPerSecond = 0
 
         Log.d(TAG, "Network lost — auto-pausing: ${item.fileName} " +
-                "(${snapshot.count { it.hasRemainingBytes }} segments paused)")
+                "($remainingCount segments paused)")
 
         updateStatus(DownloadStatus.PAUSED)
     }
@@ -1006,10 +1028,9 @@ class DownloadTask(
             return
         }
 
-        // Aggregate actual bytes from segments + base bytes from previous session
-        // (snapshot under the mutex — dynamic splitting mutates the list)
-        val actualDownloaded = baseDownloadedBytes + segmentsMutex.withLock {
-            segments.sumOf { it.effectiveDownloadedBytes }
+        // Aggregate actual bytes from segments + base bytes from previous session.
+        val actualDownloaded = synchronized(segmentsLock) {
+            baseDownloadedBytes + segments.sumOf { it.effectiveDownloadedBytes }
         }
 
         if (item.totalBytes > 0) {
@@ -1021,7 +1042,6 @@ class DownloadTask(
         }
 
         item.downloadSpeedBytesPerSecond = 0
-        item.failureCount = 0
 
         // Close the file writer
         fileWriter?.close()

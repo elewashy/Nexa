@@ -41,7 +41,9 @@ import coil3.compose.AsyncImage
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.settings.data.GitHubContributorsRepository
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.AppEmptyState
 import com.elewashy.nexa.ui.components.common.AppTopBar
+import com.elewashy.nexa.ui.icons.Android
 
 private const val NEXA_REPO_LABEL = "elewashy/Nexa"
 
@@ -83,11 +85,12 @@ fun ContributorsSettingsScreen(
                     when {
                         state.isLoading -> LoadingContent()
                         state.isError -> ErrorContent(onRetry = viewModel::retry)
-                        state.contributors.isEmpty() -> Text(
-                            text = stringResource(R.string.no_contributors_found),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
+                        state.contributors.isEmpty() -> AppEmptyState(
+                            icon = Android,
+                            title = stringResource(R.string.no_contributors_found),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 48.dp),
                         )
                         else -> ContributorsList(
                             contributors = state.contributors,

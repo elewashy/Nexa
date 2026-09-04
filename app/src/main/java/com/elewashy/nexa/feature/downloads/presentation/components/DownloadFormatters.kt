@@ -80,6 +80,10 @@ object DownloadFormatters {
         }
     }
 
+    fun isVideo(item: DownloadItem): Boolean = resolveFileType(item) == FileType.VIDEO
+
+    fun isAudio(item: DownloadItem): Boolean = resolveFileType(item) == FileType.AUDIO
+
     fun fileTypeIcon(item: DownloadItem): ImageVector = when (resolveFileType(item)) {
         FileType.VIDEO    -> VideoFile
         FileType.AUDIO    -> AudioFile

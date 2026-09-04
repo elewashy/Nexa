@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Nexa</string>
-    <string name="search_or_enter_address">Search or enter website address</string>
+    <string name="search_or_enter_address">Search or type URL</string>
+    <string name="edit_url">Edit current URL</string>
+    <string name="copy_url">Copy URL</string>
+    <string name="url_copied">URL copied</string>
+    <string name="website_url">Website URL</string>
+    <string name="close_search">Close search</string>
+    <string name="recent_searches">Recent searches</string>
+    <string name="fill_search_field">Fill search field</string>
 
     <!-- General UI -->
     <string name="back">Back</string>
@@ -18,6 +25,76 @@
     <string name="settings">Settings</string>
     <string name="more_options">More Options</string>
     <string name="search">Search</string>
+    <string name="save">Save</string>
+    <string name="edit">Edit</string>
+    <string name="add">Add</string>
+    <string name="title">Title</string>
+
+    <!-- Browser tabs, bookmarks, and history -->
+    <string name="new_tab">New tab</string>
+    <string name="close_tab">Close tab</string>
+    <string name="open_tab">Open tab</string>
+    <string name="tabs_count_accessibility">Tabs: %1$d</string>
+    <string name="private_tabs">Incognito tabs</string>
+    <string name="new_private_tab">New incognito tab</string>
+    <string name="search_tabs">Search your tabs</string>
+    <string name="tab_switcher_more">Tab options</string>
+    <string name="close_all_tabs">Close all tabs</string>
+    <string name="closed_tab">Closed %1$s</string>
+    <string name="no_matching_tabs">No matching tabs</string>
+    <string name="tab_limit_reached">Tab limit reached</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="bookmark_this_page">Bookmark this page</string>
+    <string name="remove_bookmark">Remove bookmark</string>
+    <string name="bookmark_added">Bookmark added</string>
+    <string name="bookmark_removed">Bookmark removed</string>
+    <string name="edit_bookmark">Edit bookmark</string>
+    <string name="web_address">Web address</string>
+    <string name="bookmark_location_value">Location: %1$s</string>
+    <string name="bookmark_edit_invalid">Enter a valid title and web address</string>
+    <string name="bookmark_edit_not_found">This bookmark no longer exists</string>
+    <string name="bookmark_url_exists">That web address is already bookmarked</string>
+    <string name="pin_tab">Pin tab</string>
+    <string name="unpin_tab">Unpin tab</string>
+    <string name="close_selected_tabs">Close selected tabs</string>
+    <string name="select_all_tabs">Select all tabs</string>
+    <string name="bookmark_selected_tabs">Bookmark selected tabs</string>
+    <string name="remove_selected_tab_bookmarks">Remove selected tab bookmarks</string>
+    <string name="pin_selected_tabs">Pin selected tabs</string>
+    <string name="unpin_selected_tabs">Unpin selected tabs</string>
+    <string name="bookmarks_search_hint">Search bookmarks</string>
+    <string name="bookmarks_empty_title">No bookmarks</string>
+    <string name="bookmarks_empty_desc">Pages you bookmark will appear here</string>
+    <string name="bookmarks_no_results">No results</string>
+    <string name="bookmarks_no_results_desc">Try another title or web address</string>
+    <string name="create_new_folder">Create new folder</string>
+    <string name="rename_folder">Rename folder</string>
+    <string name="sort_and_view">Sort and view</string>
+    <string name="sort_manual">Sort by manual order</string>
+    <string name="sort_newest">Sort by newest</string>
+    <string name="sort_oldest">Sort by oldest</string>
+    <string name="sort_last_opened">Sort by last opened</string>
+    <string name="sort_a_to_z">Sort by A to Z</string>
+    <string name="sort_z_to_a">Sort by Z to A</string>
+    <string name="visual_view">Visual view</string>
+    <string name="compact_view">Compact view</string>
+    <string name="move_to">Move to…</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="bookmarks_root">All bookmarks</string>
+    <string name="history">History</string>
+    <string name="clear_history">Clear history</string>
+    <string name="delete_browsing_data">Delete browsing data…</string>
+    <string name="clear_history_message">Delete all browsing history?</string>
+    <string name="history_entry_deleted">History entry deleted</string>
+    <string name="history_search_hint">Search history</string>
+    <string name="history_empty_title">No history</string>
+    <string name="history_empty_desc">Pages you visit will appear here</string>
+    <string name="history_no_results_title">No results</string>
+    <string name="history_no_results_desc">Try a different title or web address</string>
+    <string name="history_load_error">History couldn’t be loaded</string>
+    <string name="history_date_today">Today — %1$s</string>
+    <string name="history_date_yesterday">Yesterday — %1$s</string>
 
     <!-- Updates Screen -->
     <string name="updates">Updates</string>
@@ -43,6 +120,11 @@
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="selected">Selected</string>
+    <string name="select">Select</string>
+    <string name="select_all">Select all</string>
+    <string name="delete_selected_items">Delete selected items?</string>
+    <string name="delete_selected_items_message">Selected bookmarks will be deleted. Contents of selected folders will be moved to their parent folder.</string>
+    <string name="delete_selected_history_message">Selected history entries will be deleted.</string>
 
     <!-- No Internet -->
     <string name="no_internet_connection">No Internet Connection</string>
@@ -81,6 +163,13 @@
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="navigation_bar_position">Navigation bar position</string>
+    <string name="navigation_bar_position_bottom">Bottom</string>
+    <string name="navigation_bar_position_top">Top</string>
+    <string name="navigation_bar_position_description">Choose where browser controls appear. You can change this at any time.</string>
+    <string name="navigation_bar_position_bottom_desc">Controls stay within easy thumb reach below the page</string>
+    <string name="navigation_bar_position_top_desc">The address and browser controls stay above the page</string>
+    <string name="navigation_bar_position_apply">Apply position</string>
     <string name="enable_high_refresh_rate">Enable High Refresh Rate</string>
     <string name="enable_high_refresh_rate_description">Use the display\'s smoother refresh rate when supported</string>
     <string name="high_refresh_rate_unsupported">This device does not expose a high refresh-rate display mode</string>
@@ -112,10 +201,9 @@
     <string name="app_language">App language</string>
     <string name="search_language">Search languages</string>
     <string name="search_language_hint">Type anything to search</string>
+    <string name="languages_no_results">No matching languages</string>
+    <string name="languages_no_results_desc">Try another language name.</string>
     <string name="clear_search">Clear search</string>
-    <string name="choose_language">Choose your language</string>
-    <string name="choose_language_description">Select the language nexa should use. You can change this later in Settings.</string>
-    <string name="language_follows_device">Uses device language</string>
     <string name="language_system_default">System default</string>
     <string name="language_english">English</string>
     <string name="language_arabic">Arabic</string>
@@ -124,7 +212,6 @@
     <!-- Settings — Updates section -->
     <string name="app_up_to_date">Nexa is up to date</string>
     <string name="github_rate_limit_reached">GitHub rate limit reached, please try again later</string>
-    <string name="failed_to_check_updates">Failed to check for updates</string>
     <string name="update_available">Update available</string>
     <string name="checking_for_updates">Checking for updates…</string>
     <string name="manual_update_check">Check for updates</string>
@@ -137,10 +224,8 @@
 
     <!-- Update screen -->
     <string name="downloading_update">Downloading update…</string>
-    <string name="download_update">Download update</string>
     <string name="install_update">Install</string>
     <string name="ready_to_install_update">Ready to install update</string>
-    <string name="whats_new">What\'s new</string>
     <string name="download_update_failed">Failed to download update</string>
     <string name="press_back_again_to_cancel_update">Press back again to cancel</string>
     <string name="changelog_download_fail">Failed to download changelog</string>
@@ -200,8 +285,20 @@
     <string name="cancel_download">Cancel Download</string>
     <string name="cancel_download_message">Cancel %s?</string>
     <string name="download_cancelled">Download cancelled</string>
+    <plurals name="delete_downloads_title">
+        <item quantity="one">Delete download?</item>
+        <item quantity="other">Delete %d downloads?</item>
+    </plurals>
+    <string name="delete_download_message">“%s” will be permanently deleted from this device. This can’t be undone.</string>
+    <plurals name="delete_downloads_message">
+        <item quantity="one">%d file will be permanently deleted from this device. This can’t be undone.</item>
+        <item quantity="other">%d files will be permanently deleted from this device. This can’t be undone.</item>
+    </plurals>
     <string name="deleted_file_message">Deleted %s</string>
-    <string name="deleted_items_message">Deleted %d items</string>
+    <plurals name="deleted_items_message">
+        <item quantity="one">Deleted %d item</item>
+        <item quantity="other">Deleted %d items</item>
+    </plurals>
     <string name="undo">Undo</string>
     <string name="open_file">Open file</string>
     <string name="file_not_found_error">Error: File not found</string>
@@ -216,15 +313,13 @@
     <string name="watermark">Watermark</string>
     <string name="download_starting">Download starting…</string>
     <string name="browser_download_snackbar_title">Downloading file…</string>
-    <string name="browser_download_snackbar_subtitle">See notification for download status</string>
+    <string name="browser_download_complete_snackbar_title">Download complete</string>
     <string name="file_type_not_downloadable">This file type can\'t be downloaded yet</string>
     <string name="details">Details</string>
     <string name="error_starting_download">Error starting download: %s</string>
     <string name="enable_unknown_apps_install">Please enable "Install unknown apps" then tap Install again</string>
     <string name="cannot_open_install_settings">Cannot open install settings: %s</string>
     <string name="install_failed">Install failed: %s</string>
-    <string name="paused_after_repeated_failures">Paused after repeated failures</string>
-    <string name="download_paused_after_failures_details">Download paused after multiple failed attempts. Tap Resume to retry.</string>
     <string name="download_paused_system_timeout">Paused by the system — the background download time limit was reached. Tap Resume to continue.</string>
     <string name="storage_permission_required_downloads">Storage permission is required to save downloads. Grant \"All files access\" to Nexa in system settings, then retry.</string>
     <string name="notifications_disabled_warning">Notifications are turned off — you won\'t see download progress or completion. Enable notifications for Nexa to follow your downloads.</string>
@@ -286,6 +381,14 @@
     <string name="page_load_error_message">Check your internet connection and try again.</string>
     <string name="page_load_error_home">Back to home</string>
 
+    <plurals name="history_entries_deleted">
+        <item quantity="one">%d history entry deleted</item>
+        <item quantity="other">%d history entries deleted</item>
+    </plurals>
+    <plurals name="bookmarks_deleted">
+        <item quantity="one">%d bookmark item deleted</item>
+        <item quantity="other">%d bookmark items deleted</item>
+    </plurals>
     <plurals name="selected_count">
         <item quantity="one">%d selected</item>
         <item quantity="other">%d selected</item>
@@ -293,10 +396,6 @@
     <plurals name="updated_lists_count">
         <item quantity="one">Updated %d list</item>
         <item quantity="other">Updated %d lists</item>
-    </plurals>
-    <plurals name="adblock_lists_up_to_date">
-        <item quantity="one">%d list is up to date</item>
-        <item quantity="other">All %d lists are up to date</item>
     </plurals>
     <plurals name="eta_seconds_left">
         <item quantity="one">%d sec left</item>
@@ -311,4 +410,66 @@
         <item quantity="other">%d hrs left</item>
     </plurals>
 
+    <!-- Download Manager layouts -->
+    <string name="download_settings">Download settings</string>
+    <string name="download_layout_title">Download Manager design</string>
+    <string name="download_layout_description">Choose how downloads are organized and displayed. You can change this at any time.</string>
+    <string name="download_layout_media_gallery">Media gallery</string>
+    <string name="download_layout_media_gallery_desc">Contextual file filters, search, and date groups</string>
+    <string name="download_layout_tabbed_list">Tabbed list</string>
+    <string name="download_layout_tabbed_list_desc">Separate Active and Completed task lists</string>
+    <string name="download_layout_apply">Apply design</string>
+    <string name="download_layout_currently_applied">Currently applied</string>
+    <string name="download_settings_title">Download settings</string>
+    <string name="download_settings_appearance">Appearance</string>
+    <string name="download_settings_transfers">Transfers</string>
+    <string name="concurrent_downloads_value">Simultaneous downloads: %1$d</string>
+    <string name="concurrent_downloads_description">Up to five files can run at once. Reducing this limit does not interrupt downloads already transferring.</string>
+    <string name="download_speed_limit">Download speed limit</string>
+    <string name="download_speed_unlimited">Unlimited</string>
+    <string name="download_speed_kbps">%1$d KB/s</string>
+    <string name="download_speed_mbps">%1$d MB/s</string>
+    <string name="download_speed_custom">Custom</string>
+    <string name="download_speed_custom_title">Custom speed limit</string>
+    <string name="download_speed_custom_label">Speed in KB/s</string>
+    <string name="download_speed_custom_hint">Enter 1–1,048,576 KB/s</string>
+    <string name="download_speed_custom_error">Enter a value between 1 and 1,048,576 KB/s</string>
+    <string name="download_speed_custom_required">Enter a speed in KB/s</string>
+    <string name="download_speed_apply">Apply limit</string>
+    <string name="auto_retry_downloads">Automatically retry failures</string>
+    <string name="auto_retry_downloads_desc">Retry temporary network and server failures</string>
+    <string name="visual_video_presentation">Media preview for videos</string>
+    <string name="visual_video_presentation_desc">Show completed videos as larger media cards in either design</string>
+    <string name="download_filters_title">Visible filters</string>
+    <string name="download_filter_with_count">%1$s (%2$d)</string>
+    <string name="download_filter_counts">Show filter counts</string>
+    <string name="download_filter_counts_desc">Display the number of matching files in each filter</string>
+    <string name="download_filter_all">All</string>
+    <string name="download_filter_videos">Videos</string>
+    <string name="download_filter_audio">Audio</string>
+    <string name="download_filter_other">Other</string>
+    <string name="download_filter_images">Images</string>
+    <string name="download_filter_apk">APK files</string>
+    <string name="download_filter_pdf">PDF files</string>
+    <string name="download_filter_archives">Archives</string>
+    <string name="rename_download">Rename</string>
+    <string name="file_name">File name</string>
+    <string name="rename">Rename</string>
+    <string name="download_renamed">Download renamed</string>
+    <string name="download_name_exists">A file with that name already exists</string>
+    <string name="invalid_download_name">Enter a valid file name</string>
+    <string name="download_rename_failed">Couldn’t rename the download</string>
+    <string name="no_app_found_share_file">No app found to share this file</string>
+    <string name="share_file_failed">Couldn’t share the file</string>
+    <string name="downloads_storage_usage">Using %1$s of %2$s</string>
+    <string name="downloads_storage_used">Using %1$s</string>
+    <string name="search_downloads">Search downloads</string>
+    <string name="download_date_just_now">Just now</string>
+    <string name="download_date_today">Today</string>
+    <string name="download_date_yesterday">Yesterday</string>
+    <string name="downloads_visual_empty_title">You’ll find your downloads here</string>
+    <string name="downloads_visual_empty_desc">Save images and files to view offline or share in other apps.</string>
+    <string name="downloads_no_matches">No matching downloads</string>
+    <string name="downloads_no_matches_desc">Try another search or file filter.</string>
+    <string name="finish">Finish</string>
 </resources>

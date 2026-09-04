@@ -4,8 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -38,7 +36,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -54,6 +51,7 @@ import com.elewashy.nexa.core.localization.AppLanguage
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.Close
+import com.elewashy.nexa.ui.components.common.AppEmptyState
 import com.elewashy.nexa.ui.icons.Search
 import com.elewashy.nexa.ui.icons.SearchFilled
 
@@ -238,24 +236,18 @@ private fun LanguageSearchView(
         },
     ) {
         if (query.isEmpty()) {
-            // Empty state: show a centred search icon + hint
-            Column(
+            AppEmptyState(
+                icon = Search,
+                title = stringResource(R.string.search_language_hint),
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Icon(
-                    imageVector = Search,
-                    contentDescription = stringResource(R.string.search_language),
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = stringResource(R.string.search_language_hint),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            )
+        } else if (filteredLanguages.isEmpty()) {
+            AppEmptyState(
+                icon = Search,
+                title = stringResource(R.string.languages_no_results),
+                description = stringResource(R.string.languages_no_results_desc),
+                modifier = Modifier.fillMaxSize(),
+            )
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
