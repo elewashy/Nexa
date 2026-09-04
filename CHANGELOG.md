@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Downloads:** Refactored download notifications to use stable per-download IDs, update existing notifications in place, and keep pause, resume, failure, completion, retry, and lifecycle restoration states synchronized with the persisted download state.
+
 ## [1.3.0] - 2026-09-04
 
 ### Added

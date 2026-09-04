@@ -192,10 +192,10 @@ class DownloadRepositoryImpl @Inject constructor(
     private val autoRetryJobs = mutableMapOf<Long, Job>()
 
     /**
-     * Timestamp of last notification update — throttled to avoid Android's
-     * notification rate limit (5/sec). Repository emissions still fire at full rate.
+     * Last progress-notification update per download. Android may drop overly frequent
+     * notification updates, so progress is throttled per item while status transitions always render.
      */
-    private var lastNotificationUpdateTime = 0L
+    private val lastNotificationUpdateById = mutableMapOf<Long, Long>()
 
     /** UI emission throttle state — see [emit]. Main thread only. */
     private var lastUiEmitTime = 0L
@@ -289,7 +289,7 @@ class DownloadRepositoryImpl @Inject constructor(
                             reservedFileNames.add(item.fileName)
                         }
                     }
-                    notifManager?.updateSummary(downloadItems.values)
+                    notifManager?.syncNotifications(downloadItems.values)
                     store.startBatchLoop()
                     // Recover retryable failures from the previous session.
                     // Retries that could not start the foreground service from
@@ -374,12 +374,13 @@ class DownloadRepositoryImpl @Inject constructor(
         }
         active.forEach { engine.pause(it.id) }
 
-        // Clean up notifications: only cancel ones that are actively downloading
-        // or pending; leave completed, failed, and paused so the user can still
-        // interact with them or see them.
+        // The service going away pauses active work. Render that state into the same
+        // per-download notification id instead of cancelling it; otherwise users see
+        // disappearing/stuck progress notifications and lose the Resume action.
         active.forEach {
-            notifManager?.cancelNotification(it.id)
-            it.status = DownloadStatus.PAUSED // mark them paused internally so the summary matches
+            it.status = DownloadStatus.PAUSED
+            it.downloadSpeedBytesPerSecond = 0
+            notifManager?.updateNotification(it, downloadItems.values)
         }
         notifManager?.updateSummary(downloadItems.values)
 
@@ -424,6 +425,8 @@ class DownloadRepositoryImpl @Inject constructor(
         // scope runs on Dispatchers.Default — so nothing else reposts them.)
         notifManager?.demoteFromForeground()
         active.forEach { item ->
+            item.status = DownloadStatus.PAUSED
+            item.downloadSpeedBytesPerSecond = 0
             notifManager?.showSystemTimeoutPausedNotification(item)
         }
         notifManager?.updateSummary(downloadItems.values)
@@ -760,6 +763,7 @@ class DownloadRepositoryImpl @Inject constructor(
 
                 cancelAutoRetry(item.id)
                 restoredSegmentCache.remove(item.id)
+                lastNotificationUpdateById.remove(item.id)
                 store.postDelete(item.id)
                 emit(force = true) // Item removed — structural change, show it now
                 stopServiceIfIdle()
@@ -805,6 +809,7 @@ class DownloadRepositoryImpl @Inject constructor(
                 // Completion is terminal — the resume cache is only consumed
                 // when restoring resumable tasks; keep it from accumulating.
                 restoredSegmentCache.remove(item.id)
+                lastNotificationUpdateById.remove(item.id)
                 updateStatus(item, DownloadStatus.COMPLETED)
                 scanMediaFile(item.filePath, item.mimeType)
             }
@@ -822,6 +827,7 @@ class DownloadRepositoryImpl @Inject constructor(
                     downloadItems.remove(item.id)
                     reservedFileNames.remove(item.fileName)
                     restoredSegmentCache.remove(item.id)
+                    lastNotificationUpdateById.remove(item.id)
                     notifManager?.cancelNotification(item.id)
                     notifManager?.updateSummary(downloadItems.values)
                     store.postDelete(item.id)
@@ -1084,6 +1090,7 @@ class DownloadRepositoryImpl @Inject constructor(
                             prunedIds.forEach { id ->
                                 downloadItems.remove(id)
                                 engine.remove(id)
+                                lastNotificationUpdateById.remove(id)
                             }
                             emit(force = true)
                         }
@@ -1109,8 +1116,9 @@ class DownloadRepositoryImpl @Inject constructor(
         // Throttle notification updates to avoid Android's rate limit (5/sec).
         // Without this, 8 segments × multiple downloads can easily exceed 5/sec.
         val now = System.currentTimeMillis()
-        if (now - lastNotificationUpdateTime >= NOTIFICATION_THROTTLE_MS) {
-            lastNotificationUpdateTime = now
+        val lastForItem = lastNotificationUpdateById[item.id] ?: 0L
+        if (now - lastForItem >= NOTIFICATION_THROTTLE_MS) {
+            lastNotificationUpdateById[item.id] = now
             notifManager?.updateNotification(item, downloadItems.values)
         }
 
@@ -1525,12 +1533,8 @@ class DownloadRepositoryImpl @Inject constructor(
             override fun onLost(network: Network) {
                 super.onLost(network)
                 Log.d(TAG, "Network lost")
-                // Show network-wait notification for active downloads
-                appScope.launch(Dispatchers.Main.immediate) {
-                    downloadItems.values
-                        .filter { it.status == DownloadStatus.DOWNLOADING }
-                        .forEach { notifManager?.showNetworkWaitNotification(it) }
-                }
+                // The engine is the source of truth. It will mark affected downloads
+                // PAUSED + wasWaitingForNetwork and that status transition will render notifications.
             }
         }
         networkCallback = cb
@@ -1584,8 +1588,6 @@ class DownloadRepositoryImpl @Inject constructor(
 
         waitingDownloads.forEach { item ->
             item.wasWaitingForNetwork = false
-            notifManager?.showResumeNotification(item)
-
             resumeInEngine(item)
             Log.d(TAG, "Auto-resumed: ${item.fileName}")
         }
