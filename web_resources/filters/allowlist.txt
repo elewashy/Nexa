@@ -155,6 +155,9 @@
 ||tuktukhd.com^
 ||vidmoly.net^
 ||hcaptcha.net^
+||streamruby.com
 ||hcaptcha.com^
 ||playmogo.com^
 ||timmaybealready.com^
+||streamruby.com^
+||megamax.cam^
