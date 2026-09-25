@@ -50,8 +50,8 @@ android {
         applicationId = "com.elewashy.nexa"
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "1.3.0"
+        versionCode = 11
+        versionName = "1.3.1"
         
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -106,6 +106,7 @@ android {
         // stubs (android.util.Log, MimeTypeMap, …). Return default values
         // instead of throwing "not mocked". Test-only; no production effect.
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
     }
 
     androidResources {

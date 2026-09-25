@@ -2,6 +2,7 @@ package com.elewashy.nexa.feature.share.presentation
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -11,9 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -22,7 +22,6 @@ import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
-import com.elewashy.nexa.ui.components.common.AppSnackbarHost
 import com.elewashy.nexa.ui.theme.NexaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -114,13 +113,16 @@ private fun ShareOverlay(
     onClose: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 is ShareEvent.Close -> {
-                    event.message?.let { snackbarHostState.showSnackbar(it) }
+                    // Toast, not a Snackbar: a suspending Snackbar would delay closing.
+                    event.message?.let {
+                        Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+                    }
                     onClose()
                 }
             }
@@ -152,9 +154,5 @@ private fun ShareOverlay(
                 onCancel = onClose,
             )
         }
-        AppSnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
     }
 }

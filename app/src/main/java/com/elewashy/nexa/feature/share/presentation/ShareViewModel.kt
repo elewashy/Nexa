@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 data class ShareUiState(
@@ -62,6 +63,8 @@ class ShareViewModel @Inject constructor(
 
     private val _events = MutableSharedFlow<ShareEvent>(extraBufferCapacity = 1)
     val events: SharedFlow<ShareEvent> = _events.asSharedFlow()
+
+    private val downloadStarted = AtomicBoolean(false)
 
     fun handleSharedText(text: String?) {
         val url = text?.let(SharePlatformDetector::extractFirstUrl)
@@ -139,6 +142,9 @@ class ShareViewModel @Inject constructor(
     }
 
     fun onQualitySelected(quality: VideoQuality) {
+        if (!downloadStarted.compareAndSet(false, true)) return
+        _uiState.update { it.copy(showSheet = false) }
+
         if (quality.url.startsWith(MediaLabel.CONVERT_PREFIX)) {
             startConversion(quality)
         } else {
@@ -152,11 +158,6 @@ class ShareViewModel @Inject constructor(
                 closeWithMessage(appContext.getString(R.string.download_queued_tap_to_start))
             }
         }
-    }
-
-    fun onDismiss() {
-        _uiState.update { it.copy(showSheet = false) }
-        emitClose()
     }
 
     private fun parseVideoQuality(rawLabel: String, videoUrl: String): VideoQuality {
@@ -353,12 +354,8 @@ class ShareViewModel @Inject constructor(
         )
     }
 
-    private fun closeWithMessage(message: String) {
-        viewModelScope.launch { _events.emit(ShareEvent.Close(message)) }
-    }
-
-    private fun emitClose() {
-        viewModelScope.launch { _events.emit(ShareEvent.Close()) }
+    private fun closeWithMessage(message: String? = null) {
+        _events.tryEmit(ShareEvent.Close(message))
     }
 
     private companion object {

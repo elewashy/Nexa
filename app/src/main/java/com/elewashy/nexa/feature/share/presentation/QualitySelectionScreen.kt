@@ -86,6 +86,7 @@ fun QualitySelectionScreen(
         }
     }
     var selectedQuality by remember { mutableStateOf<VideoQuality?>(null) }
+    var downloadInitiated by remember { mutableStateOf(false) }
     val pagerState = rememberPagerState(pageCount = { availableTabs.size.coerceAtLeast(1) })
     val scope = rememberCoroutineScope()
     val maxSheetContentHeight = remember(adaptiveInfo.heightDp, adaptiveInfo.isLandscape) {
@@ -163,8 +164,12 @@ fun QualitySelectionScreen(
             }
 
             Button(
-                onClick = { selectedQuality?.let(onDownload) },
-                enabled = !isLoading && selectedQuality != null,
+                onClick = {
+                    if (downloadInitiated) return@Button
+                    downloadInitiated = true
+                    selectedQuality?.let(onDownload)
+                },
+                enabled = !isLoading && !downloadInitiated && selectedQuality != null,
                 modifier = Modifier.weight(1f),
                 shapes = ButtonDefaults.shapes(),
             ) {
