@@ -1,0 +1,23 @@
+name: Set up Android environment
+description: Sets up JDK 17, the Android SDK compile platform, and Gradle with caching.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK 17
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: 17
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v4
+
+    - name: Install Android SDK packages
+      shell: bash
+      run: |
+        sdkmanager --install "platforms;android-37.0"
+        ln -sfn "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v5
