@@ -24,6 +24,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalFocusManager
@@ -236,14 +237,24 @@ private fun ConcurrentDownloadsSetting(
             text = stringResource(R.string.concurrent_downloads_value, value),
             style = MaterialTheme.typography.titleMedium,
         )
-        Slider(
+        val sliderState = rememberSliderState(
             value = value.toFloat(),
-            onValueChange = { onValueChange(it.roundToInt()) },
-            onValueChangeFinished = onValueChangeFinished,
-            valueRange = DownloadSettingsDefaults.MIN_CONCURRENT_DOWNLOADS.toFloat()..
-                DownloadSettingsDefaults.MAX_CONCURRENT_DOWNLOADS.toFloat(),
             steps = DownloadSettingsDefaults.MAX_CONCURRENT_DOWNLOADS -
                 DownloadSettingsDefaults.MIN_CONCURRENT_DOWNLOADS - 1,
+            trackRange = DownloadSettingsDefaults.MIN_CONCURRENT_DOWNLOADS.toFloat()..
+                DownloadSettingsDefaults.MAX_CONCURRENT_DOWNLOADS.toFloat(),
+        )
+        // Propagate external value changes (e.g. draft reset) into the state.
+        // Comparing rounded values avoids fighting active drag gestures.
+        LaunchedEffect(value) {
+            if (sliderState.value.roundToInt() != value) {
+                sliderState.value = value.toFloat()
+            }
+        }
+        Slider(
+            state = sliderState,
+            onValueChange = { onValueChange(it.roundToInt()) },
+            onValueChangeFinished = onValueChangeFinished,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
