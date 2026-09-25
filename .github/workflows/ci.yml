@@ -79,43 +79,13 @@ jobs:
       - name: Set up Android environment
         uses: ./.github/actions/setup-android-env
 
-      - name: Validate signing secrets
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-        run: |
-          missing=0
-          for name in SIGNING_KEY SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_STORE_PASSWORD; do
-            if [ -z "${!name}" ]; then
-              printf 'Missing required GitHub secret: %s\n' "$name"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            printf '\nConfigure these repository secrets before publishing a release:\n'
-            printf '%s\n' '- SIGNING_KEY: base64 encoded release keystore file'
-            printf '%s\n' '- SIGNING_KEY_ALIAS: release key alias'
-            printf '%s\n' '- SIGNING_KEY_PASSWORD: release key password'
-            printf '%s\n' '- SIGNING_STORE_PASSWORD: release keystore password'
-            exit 1
-          fi
-
       - name: Prepare signing config
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-        run: |
-          printf '%s' "$SIGNING_KEY" | base64 --decode > release-keystore.jks
-          {
-            printf 'storeFile=%s\n' "$GITHUB_WORKSPACE/release-keystore.jks"
-            printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
-            printf 'keyAlias=%s\n' "$SIGNING_KEY_ALIAS"
-            printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
-          } > keystore.properties
+        uses: ./.github/actions/prepare-signing
+        with:
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          signing-key-alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          signing-key-password: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          signing-store-password: ${{ secrets.SIGNING_STORE_PASSWORD }}
 
       - name: Assemble minified release APK and lint
         run: ./gradlew assembleRelease lintRelease --no-daemon --stacktrace

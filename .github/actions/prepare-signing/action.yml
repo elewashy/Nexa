@@ -1,0 +1,59 @@
+name: Prepare release signing
+description: Validates signing secrets and materializes the release keystore config.
+
+inputs:
+  signing-key:
+    description: Base64-encoded release keystore file.
+    required: true
+  signing-key-alias:
+    description: Release key alias.
+    required: true
+  signing-key-password:
+    description: Release key password.
+    required: true
+  signing-store-password:
+    description: Release keystore password.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate signing secrets
+      shell: bash
+      env:
+        SIGNING_KEY: ${{ inputs.signing-key }}
+        SIGNING_KEY_ALIAS: ${{ inputs.signing-key-alias }}
+        SIGNING_KEY_PASSWORD: ${{ inputs.signing-key-password }}
+        SIGNING_STORE_PASSWORD: ${{ inputs.signing-store-password }}
+      run: |
+        missing=0
+        for name in SIGNING_KEY SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_STORE_PASSWORD; do
+          if [ -z "${!name}" ]; then
+            printf 'Missing required GitHub secret: %s\n' "$name"
+            missing=1
+          fi
+        done
+        if [ "$missing" -ne 0 ]; then
+          printf '\nConfigure these repository secrets before publishing a release:\n'
+          printf '%s\n' '- SIGNING_KEY: base64 encoded release keystore file'
+          printf '%s\n' '- SIGNING_KEY_ALIAS: release key alias'
+          printf '%s\n' '- SIGNING_KEY_PASSWORD: release key password'
+          printf '%s\n' '- SIGNING_STORE_PASSWORD: release keystore password'
+          exit 1
+        fi
+
+    - name: Prepare signing config
+      shell: bash
+      env:
+        SIGNING_KEY: ${{ inputs.signing-key }}
+        SIGNING_KEY_ALIAS: ${{ inputs.signing-key-alias }}
+        SIGNING_KEY_PASSWORD: ${{ inputs.signing-key-password }}
+        SIGNING_STORE_PASSWORD: ${{ inputs.signing-store-password }}
+      run: |
+        printf '%s' "$SIGNING_KEY" | base64 --decode > release-keystore.jks
+        {
+          printf 'storeFile=%s\n' "$GITHUB_WORKSPACE/release-keystore.jks"
+          printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
+          printf 'keyAlias=%s\n' "$SIGNING_KEY_ALIAS"
+          printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
+        } > keystore.properties
