@@ -320,14 +320,12 @@
     <string name="enable_unknown_apps_install">Please enable "Install unknown apps" then tap Install again</string>
     <string name="cannot_open_install_settings">Cannot open install settings: %s</string>
     <string name="install_failed">Install failed: %s</string>
-    <string name="download_paused_system_timeout">Paused by the system — the background download time limit was reached. Tap Resume to continue.</string>
     <string name="storage_permission_required_downloads">Storage permission is required to save downloads. Grant \"All files access\" to Nexa in system settings, then retry.</string>
     <string name="notifications_disabled_warning">Notifications are turned off — you won\'t see download progress or completion. Enable notifications for Nexa to follow your downloads.</string>
     <string name="resume">Resume</string>
     <string name="pause">Pause</string>
     <string name="waiting_for_connection">Waiting for connection…</string>
     <string name="download_waiting_network_details">Download paused. Will resume automatically when internet is available.</string>
-    <string name="resuming_download">Resuming download…</string>
     <string name="unknown">Unknown</string>
     <string name="starting">Starting…</string>
     <string name="paused">Paused</string>
@@ -356,7 +354,6 @@
     <string name="youtube_conversion_channel_description">YouTube video conversion progress</string>
     <string name="download_notification_channel_name">Downloads</string>
     <string name="download_notification_channel_description">Download progress and status</string>
-    <string name="preparing_downloads">Preparing downloads</string>
     <string name="adblock_channel_name">AdBlock Updates</string>
     <string name="adblock_channel_description">Notifications for AdBlock list updates</string>
     <string name="checking_adblock_lists">Checking AdBlock Lists</string>

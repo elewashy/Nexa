@@ -282,14 +282,12 @@
     <string name="enable_unknown_apps_install">Veuillez activer « Installer des applications inconnues », puis touchez de nouveau Installer</string>
     <string name="cannot_open_install_settings">Impossible d’ouvrir les paramètres d’installation : %s</string>
     <string name="install_failed">Échec de l’installation : %s</string>
-    <string name="download_paused_system_timeout">Mis en pause par le système — la limite de durée des téléchargements en arrière-plan a été atteinte. Touchez Reprendre pour continuer.</string>
     <string name="storage_permission_required_downloads">L’accès au stockage est requis pour enregistrer les téléchargements. Accordez « Accès à tous les fichiers » à Nexa dans les paramètres système, puis réessayez.</string>
     <string name="notifications_disabled_warning">Les notifications sont désactivées — vous ne verrez ni la progression ni la fin de vos téléchargements. Activez les notifications pour Nexa afin de les suivre.</string>
     <string name="resume">Reprendre</string>
     <string name="pause">Pause</string>
     <string name="waiting_for_connection">En attente de connexion…</string>
     <string name="download_waiting_network_details">Le téléchargement est en pause. Il reprendra automatiquement quand Internet sera disponible.</string>
-    <string name="resuming_download">Reprise du téléchargement…</string>
     <string name="unknown">Inconnu</string>
     <string name="starting">Démarrage…</string>
     <string name="paused">En pause</string>
@@ -318,7 +316,6 @@
     <string name="youtube_conversion_channel_description">Progression de la conversion de la vidéo YouTube</string>
     <string name="download_notification_channel_name">Téléchargements</string>
     <string name="download_notification_channel_description">Progression et état des téléchargements</string>
-    <string name="preparing_downloads">Préparation des téléchargements</string>
     <string name="adblock_channel_name">Mises à jour AdBlock</string>
     <string name="adblock_channel_description">Notifications des mises à jour des listes AdBlock</string>
     <string name="checking_adblock_lists">Vérification des listes AdBlock</string>

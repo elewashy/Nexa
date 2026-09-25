@@ -291,14 +291,12 @@
     <string name="enable_unknown_apps_install">يرجى تفعيل "تثبيت التطبيقات غير المعروفة" ثم الضغط على تثبيت مرة أخرى</string>
     <string name="cannot_open_install_settings">تعذر فتح إعدادات التثبيت: %s</string>
     <string name="install_failed">فشل التثبيت: %s</string>
-    <string name="download_paused_system_timeout">أوقفه النظام مؤقتًا — تم بلوغ الحد الزمني للتنزيل في الخلفية. اضغط على استئناف للمتابعة.</string>
     <string name="storage_permission_required_downloads">إذن التخزين مطلوب لحفظ التنزيلات. امنح Nexa إذن "الوصول إلى جميع الملفات" في إعدادات النظام، ثم أعد المحاولة.</string>
     <string name="notifications_disabled_warning">الإشعارات معطّلة — لن تتمكن من رؤية تقدم التنزيل أو اكتماله. فعّل الإشعارات لتطبيق Nexa لمتابعة تنزيلاتك.</string>
     <string name="resume">استئناف</string>
     <string name="pause">إيقاف مؤقت</string>
     <string name="waiting_for_connection">في انتظار الاتصال…</string>
     <string name="download_waiting_network_details">تم إيقاف التنزيل مؤقتًا. سيُستأنف تلقائيًا عند توفر الإنترنت.</string>
-    <string name="resuming_download">جارٍ استئناف التنزيل…</string>
     <string name="unknown">غير معروف</string>
     <string name="starting">جارٍ البدء…</string>
     <string name="paused">متوقف مؤقتًا</string>
@@ -327,7 +325,6 @@
     <string name="youtube_conversion_channel_description">تقدم تحويل فيديو YouTube</string>
     <string name="download_notification_channel_name">التنزيلات</string>
     <string name="download_notification_channel_description">تقدم التنزيل وحالته</string>
-    <string name="preparing_downloads">جارٍ تجهيز التنزيلات</string>
     <string name="adblock_channel_name">تحديثات مانع الإعلانات</string>
     <string name="adblock_channel_description">إشعارات تحديث قوائم مانع الإعلانات</string>
     <string name="checking_adblock_lists">جارٍ فحص قوائم مانع الإعلانات</string>
