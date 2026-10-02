@@ -1,6 +1,5 @@
 package com.elewashy.nexa.feature.settings.presentation.settings
 
-import android.widget.ImageView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,10 +29,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.elewashy.nexa.BuildConfig
 import com.elewashy.nexa.R
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.components.common.FramedAppIcon
 import com.elewashy.nexa.ui.components.settings.ExpressiveListIcon
 import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SettingsListItem
@@ -99,14 +98,7 @@ fun SettingsScreen(
                         headlineContent = stringResource(R.string.about_app_name, stringResource(R.string.app_name)),
                         supportingContent = BuildConfig.VERSION_NAME,
                         leadingContent = {
-                            AndroidView(
-                                factory = { ctx ->
-                                    ImageView(ctx).apply {
-                                        setImageResource(R.mipmap.ic_launcher)
-                                    }
-                                },
-                                modifier = Modifier.size(42.dp),
-                            )
+                            FramedAppIcon(size = 42.dp)
                         },
                         onClick = { onNavigate(SettingsDestination.About) },
                     )

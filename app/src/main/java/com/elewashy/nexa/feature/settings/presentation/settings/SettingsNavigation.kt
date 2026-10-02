@@ -93,7 +93,7 @@ fun SettingsNavigation(
         }
 
         composable(SettingsDestination.About.route) {
-            AboutSettingsScreen(
+            AboutScreen(
                 onBackClick = navController::popBackStack,
                 onContributorsClick = { navController.navigateToSettingsDestination(SettingsDestination.Contributors) },
                 onLicensesClick = { navController.navigateToSettingsDestination(SettingsDestination.Licenses) },

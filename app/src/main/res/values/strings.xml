@@ -104,7 +104,6 @@
     <string name="never_updated">Never Updated</string>
 
     <!-- Settings Screen -->
-    <string name="version">Version</string>
 
     <!-- Downloads Screen tabs and empty states -->
     <string name="downloads_tab_active">Active</string>
@@ -256,20 +255,26 @@
     <!-- Settings — About section -->
     <string name="about_app_name">About %s</string>
     <string name="about">About</string>
-    <string name="about_nexa">About Nexa</string>
     <string name="nexa_description">Nexa is a fast, privacy-focused browser with a built-in ad blocker, smart download manager, and a clean browsing experience.</string>
     <string name="telegram" translatable="false">Telegram</string>
     <string name="github" translatable="false">GitHub</string>
+    <string name="project">Project</string>
     <string name="report_issue">Issues &amp; Feedback</string>
     <string name="report_issue_description">Report bugs or share suggestions on GitHub</string>
     <string name="contributors">Contributors</string>
     <string name="contributors_description">The people behind this project</string>
     <string name="opensource_licenses">Open Source Licenses</string>
     <string name="opensource_licenses_description">Licenses of the libraries used in this app</string>
-    <string name="developer">Developer</string>
-    <string name="developer_description">View the developer\'s GitHub profile</string>
+    <string name="lead_developer">Lead Developer</string>
+    <string name="community_and_info">Community &amp; Info</string>
+    <string name="telegram_channel">Telegram Channel</string>
+    <string name="view_source_code">View Source Code</string>
+    <string name="view_source_code_description">Browse and contribute to the Nexa repository</string>
+    <string name="app_license">App License</string>
+    <string name="app_license_description">MIT License - See details in repository</string>
     <string name="no_contributors_found">No contributors found</string>
     <string name="contributors_load_failed">Couldn\'t load contributors</string>
+    <string name="stands_with_palestine">This project stands with Palestine 🇵🇸</string>
 
     <!-- Share Video Feature -->
     <string name="select_quality">Select Quality</string>
