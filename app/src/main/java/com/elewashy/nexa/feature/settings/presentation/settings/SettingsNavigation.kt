@@ -44,6 +44,7 @@ fun SettingsNavigation(
                 },
                 onCustomizeThemeClick = { navController.navigateToSettingsDestination(SettingsDestination.CustomizeTheme) },
                 onLanguageClick = { navController.navigateToSettingsDestination(SettingsDestination.Language) },
+                onSearchEngineClick = { navController.navigateToSettingsDestination(SettingsDestination.SearchEngine) },
                 viewModel = viewModel,
             )
         }
@@ -71,6 +72,13 @@ fun SettingsNavigation(
 
         composable(SettingsDestination.Language.route) {
             LanguageSettingsScreen(
+                onBackClick = navController::popBackStack,
+                viewModel = viewModel,
+            )
+        }
+
+        composable(SettingsDestination.SearchEngine.route) {
+            SearchEngineSettingsScreen(
                 onBackClick = navController::popBackStack,
                 viewModel = viewModel,
             )

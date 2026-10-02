@@ -64,6 +64,9 @@ interface AppPreferences {
     /** Compact-window browser toolbar position. Defaults to bottom. */
     val browserNavigationBarPosition: Flow<Int>
 
+    /** User-selected search engine for address-bar queries. Defaults to Google. */
+    val selectedSearchEngine: Flow<Int>
+
     /** Download Manager layout. Defaults to Media gallery. */
     val downloadManagerLayout: Flow<Int>
 
@@ -117,6 +120,9 @@ interface AppPreferences {
 
     /** Updates [browserNavigationBarPosition]. Unknown values are sanitized by readers. */
     suspend fun setBrowserNavigationBarPosition(position: Int)
+
+    /** Updates [selectedSearchEngine]. Unknown values are sanitized by readers. */
+    suspend fun setSelectedSearchEngine(engine: Int)
 
     /** Updates [downloadManagerLayout]. */
     suspend fun setDownloadManagerLayout(layout: Int)

@@ -14,7 +14,7 @@ abstract class SearchSuggestionModule {
     @Binds
     @Singleton
     abstract fun bindSearchSuggestionRepository(
-        implementation: GoogleSearchSuggestionRepository,
+        implementation: SearchEngineSuggestionRepository,
     ): SearchSuggestionRepository
 
     @Binds

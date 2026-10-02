@@ -11,13 +11,37 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 @Composable
 fun ExpressiveListIcon(
     icon: ImageVector,
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.secondaryContainer,
+    iconColor: Color = MaterialTheme.colorScheme.onSecondaryContainer,
+    size: Dp = 42.dp,
+    iconSize: Dp = 24.dp,
+    contentDescription: String? = null,
+) {
+    ExpressiveListIcon(
+        painter = rememberVectorPainter(icon),
+        modifier = modifier,
+        containerColor = containerColor,
+        iconColor = iconColor,
+        size = size,
+        iconSize = iconSize,
+        contentDescription = contentDescription,
+    )
+}
+
+/** [Painter] variant, e.g. for vector drawables loaded with `painterResource`. */
+@Composable
+fun ExpressiveListIcon(
+    painter: Painter,
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.secondaryContainer,
     iconColor: Color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -35,7 +59,7 @@ fun ExpressiveListIcon(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = icon,
+                painter = painter,
                 contentDescription = contentDescription,
                 modifier = Modifier.size(iconSize),
                 tint = iconColor,

@@ -169,6 +169,15 @@
     <string name="navigation_bar_position_bottom_desc">Controls stay within easy thumb reach below the page</string>
     <string name="navigation_bar_position_top_desc">The address and browser controls stay above the page</string>
     <string name="navigation_bar_position_apply">Apply position</string>
+    <string name="search_engine">Search engine</string>
+    <string name="search_engine_google" translatable="false">Google</string>
+    <string name="search_engine_bing" translatable="false">Bing</string>
+    <string name="search_engine_duckduckgo" translatable="false">DuckDuckGo</string>
+    <string name="search_engine_yahoo" translatable="false">Yahoo</string>
+    <string name="search_engine_brave" translatable="false">Brave Search</string>
+    <string name="search_engine_startpage" translatable="false">Startpage</string>
+    <string name="search_engine_ecosia" translatable="false">Ecosia</string>
+    <string name="search_engine_qwant" translatable="false">Qwant</string>
     <string name="enable_high_refresh_rate">Enable High Refresh Rate</string>
     <string name="enable_high_refresh_rate_description">Use the display\'s smoother refresh rate when supported</string>
     <string name="high_refresh_rate_unsupported">This device does not expose a high refresh-rate display mode</string>

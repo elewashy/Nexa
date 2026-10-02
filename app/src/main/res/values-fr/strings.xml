@@ -146,6 +146,7 @@
     <string name="navigation_bar_position_bottom_desc">Les commandes restent à portée du pouce sous la page</string>
     <string name="navigation_bar_position_top_desc">L’adresse et les commandes restent au-dessus de la page</string>
     <string name="navigation_bar_position_apply">Appliquer la position</string>
+    <string name="search_engine">Moteur de recherche</string>
     <string name="enable_high_refresh_rate">Activer le taux de rafraîchissement élevé</string>
     <string name="enable_high_refresh_rate_description">Utiliser le taux de rafraîchissement plus fluide de l’écran lorsqu’il est disponible</string>
     <string name="high_refresh_rate_unsupported">Cet appareil n’expose pas de mode d’affichage à taux de rafraîchissement élevé</string>

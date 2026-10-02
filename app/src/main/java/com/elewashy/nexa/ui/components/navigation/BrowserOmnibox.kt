@@ -53,6 +53,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -63,8 +64,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.text.contentDirectionScaleX
+import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.browser.presentation.BrowserOmniboxMode
 import com.elewashy.nexa.feature.browser.presentation.BrowserOmniboxState
+import com.elewashy.nexa.feature.browser.presentation.iconRes
 import com.elewashy.nexa.feature.history.domain.model.HistorySuggestion
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.common.SiteFavicon
@@ -84,6 +87,7 @@ fun BrowserOmniboxOverlay(
     currentUrl: String,
     currentTitle: String,
     isPrivate: Boolean,
+    searchEngine: SearchEngine,
     onQueryChange: (String) -> Unit,
     onCommit: (String) -> Unit,
     onEditCurrentUrl: () -> Unit,
@@ -125,6 +129,7 @@ fun BrowserOmniboxOverlay(
                 ) {
                     OmniboxInput(
                         state = state,
+                        searchEngine = searchEngine,
                         onQueryChange = onQueryChange,
                         onCommit = onCommit,
                         onDismiss = onDismiss,
@@ -149,6 +154,7 @@ fun BrowserOmniboxOverlay(
 @Composable
 private fun OmniboxInput(
     state: BrowserOmniboxState,
+    searchEngine: SearchEngine,
     onQueryChange: (String) -> Unit,
     onCommit: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -193,7 +199,7 @@ private fun OmniboxInput(
             .focusRequester(focusRequester),
         lineLimits = TextFieldLineLimits.SingleLine,
         shape = MaterialTheme.shapes.extraLarge,
-        leadingIcon = { Icon(Search, contentDescription = null) },
+        leadingIcon = { Icon(painterResource(searchEngine.iconRes), contentDescription = null) },
         trailingIcon = {
             IconButton(
                 onClick = {
@@ -309,8 +315,8 @@ private fun OmniboxResults(
             }
             items(
                 items = filteredRemoteResults,
-                key = { "google-$it" },
-                contentType = { "google" },
+                key = { "remote-$it" },
+                contentType = { "remote" },
             ) { suggestion ->
                 SearchResult(suggestion, onCommit, onPopulateQuery)
             }
@@ -499,9 +505,5 @@ private fun hostLabel(url: String): String = runCatching {
 
 private fun historyLabel(item: HistorySuggestion): String {
     if (item.title.isNotBlank()) return item.title
-    val uri = runCatching { item.url.toUri() }.getOrNull()
-    if (uri?.host?.contains("google.") == true && uri.path == "/search") {
-        return uri.getQueryParameter("q").orEmpty().ifBlank { hostLabel(item.url) }
-    }
-    return hostLabel(item.url)
+    return SearchEngine.searchQueryFromUrl(item.url) ?: hostLabel(item.url)
 }

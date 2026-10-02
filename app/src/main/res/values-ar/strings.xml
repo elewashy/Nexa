@@ -146,6 +146,7 @@
     <string name="navigation_bar_position_bottom_desc">تبقى عناصر التحكم قريبة من الإبهام أسفل الصفحة</string>
     <string name="navigation_bar_position_top_desc">يبقى العنوان وعناصر تحكم المتصفح أعلى الصفحة</string>
     <string name="navigation_bar_position_apply">تطبيق الموضع</string>
+    <string name="search_engine">محرك البحث</string>
     <string name="enable_high_refresh_rate">تفعيل معدل التحديث العالي</string>
     <string name="enable_high_refresh_rate_description">استخدم معدل تحديث الشاشة الأكثر سلاسة عند دعمه</string>
     <string name="high_refresh_rate_unsupported">هذا الجهاز لا يوفر وضع عرض بمعدل تحديث عالٍ</string>

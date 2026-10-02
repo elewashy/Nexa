@@ -1,14 +1,14 @@
 package com.elewashy.nexa.feature.browser.presentation
 
-import android.net.Uri
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.elewashy.nexa.core.common.BrowserUrls
+import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.data.BookmarkRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchHistoryRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchSuggestionRepository
+import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.history.data.HistoryRepository
 import com.elewashy.nexa.feature.history.domain.model.HistorySuggestion
 import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebViewClient
@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -62,6 +63,7 @@ class BrowserViewModel @Inject constructor(
     private val historyRepository: HistoryRepository,
     private val searchSuggestionRepository: SearchSuggestionRepository,
     private val searchHistoryRepository: SearchHistoryRepository,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -79,6 +81,18 @@ class BrowserViewModel @Inject constructor(
     /** Bookmark state for every tab URL, synchronized with the shared Room repository. */
     val bookmarkedUrls: StateFlow<Set<String>> = bookmarkRepository.observeBookmarkedUrls()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /**
+     * Currently selected search engine for address-bar queries, new tabs, and Home.
+     * Shared eagerly because non-UI callers ([onUrlCommitted] and the
+     * Activity's Home action) read `.value` synchronously; with `WhileSubscribed`
+     * those reads would fall back to the default engine whenever the omnibox is
+     * not on screen.
+     */
+    val selectedSearchEngine: StateFlow<SearchEngine> = appPreferences.selectedSearchEngine
+        .map(SearchEngine::fromStoredValue)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SearchEngine.DEFAULT)
 
     /**
      * One-shot navigation events emitted by [onUrlCommitted]. The Activity
@@ -340,7 +354,10 @@ class BrowserViewModel @Inject constructor(
     fun newPrivateTab() = createTab(BrowsingMode.Private)
 
     private fun createTab(mode: BrowsingMode) = viewModelScope.launch {
-        val id = tabRepository.newTab(BrowserUrls.HOME, mode)
+        // Read the persisted choice directly so a tab opened right after a cold
+        // start never falls back to the default before the StateFlow loads.
+        val engine = SearchEngine.fromStoredValue(appPreferences.selectedSearchEngine.first())
+        val id = tabRepository.newTab(engine.homeUrl, mode)
         if (id == null) _tabLimitEvent.trySend(Unit)
     }
 
@@ -460,7 +477,7 @@ class BrowserViewModel @Inject constructor(
         // Scheme-like input (javascript:, data:, file:, …) must never be loaded or blindly
         // upgraded to HTTPS. It remains a search query and is recorded only in query history.
         val searchQuery = trimmed.takeIf { directUrl == null }
-        val url = directUrl ?: "https://www.google.com/search?q=${Uri.encode(trimmed)}"
+        val url = directUrl ?: selectedSearchEngine.value.searchUrl(trimmed)
         if (searchQuery != null && !isPrivateBrowsing()) {
             viewModelScope.launch { searchHistoryRepository.record(searchQuery) }
         }

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import com.elewashy.nexa.ui.theme.AppThemeMode
@@ -56,6 +57,7 @@ class DataStoreAppPreferences @Inject constructor(
     override val showUpdateDialogOnLaunch: Flow<Boolean> = settings.map { it.showUpdateDialogOnLaunch }.distinctUntilChanged()
     override val videoDownloadButton: Flow<Boolean> = settings.map { it.videoDownloadButton }.distinctUntilChanged()
     override val browserNavigationBarPosition: Flow<Int> = settings.map { it.browserNavigationBarPosition }.distinctUntilChanged()
+    override val selectedSearchEngine: Flow<Int> = settings.map { it.selectedSearchEngine }.distinctUntilChanged()
     override val downloadManagerLayout: Flow<Int> = settings.map { it.downloadManagerLayout }.distinctUntilChanged()
     override val maxConcurrentDownloads: Flow<Int> = settings.map { it.maxConcurrentDownloads }.distinctUntilChanged()
     override val downloadFilterIds: Flow<Set<String>> = settings.map { it.downloadFilterIds }.distinctUntilChanged()
@@ -110,6 +112,10 @@ class DataStoreAppPreferences @Inject constructor(
 
     override suspend fun setBrowserNavigationBarPosition(position: Int) {
         dataStore.edit { it[KEY_BROWSER_NAVIGATION_BAR_POSITION] = BrowserNavigationBarPosition.fromStoredValue(position).storedValue }
+    }
+
+    override suspend fun setSelectedSearchEngine(engine: Int) {
+        dataStore.edit { it[KEY_SELECTED_SEARCH_ENGINE] = SearchEngine.fromStoredValue(engine).storedValue }
     }
 
     override suspend fun setDownloadManagerLayout(layout: Int) {
@@ -172,6 +178,9 @@ class DataStoreAppPreferences @Inject constructor(
             browserNavigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
                 this[KEY_BROWSER_NAVIGATION_BAR_POSITION] ?: BrowserNavigationBarPosition.Bottom.storedValue
             ).storedValue,
+            selectedSearchEngine = SearchEngine.fromStoredValue(
+                this[KEY_SELECTED_SEARCH_ENGINE] ?: SearchEngine.DEFAULT.storedValue
+            ).storedValue,
             downloadManagerLayout = this[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0,
             maxConcurrentDownloads = DownloadSettingsDefaults.clampConcurrentDownloads(
                 this[KEY_MAX_CONCURRENT_DOWNLOADS] ?: DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS
@@ -199,6 +208,7 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_SHOW_UPDATE_DIALOG_ON_LAUNCH = booleanPreferencesKey("show_update_dialog_on_launch")
         val KEY_VIDEO_DOWNLOAD_BUTTON = booleanPreferencesKey("video_download_button")
         val KEY_BROWSER_NAVIGATION_BAR_POSITION = intPreferencesKey("browser_navigation_bar_position")
+        val KEY_SELECTED_SEARCH_ENGINE = intPreferencesKey("selected_search_engine")
         val KEY_DOWNLOAD_MANAGER_LAYOUT = intPreferencesKey("download_manager_layout")
         val KEY_MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("download_max_concurrent")
         val KEY_DOWNLOAD_FILTER_IDS = stringSetPreferencesKey("download_filter_ids")

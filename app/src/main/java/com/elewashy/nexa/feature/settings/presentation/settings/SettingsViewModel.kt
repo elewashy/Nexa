@@ -9,6 +9,7 @@ import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.storage.AppSettings
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.settings.data.ThemeRepository
 import com.elewashy.nexa.ui.theme.AppTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -63,6 +64,16 @@ class SettingsViewModel @Inject constructor(
                 BrowserNavigationBarPosition.Bottom,
             )
 
+    val selectedSearchEngine: StateFlow<SearchEngine> =
+        appPreferences.selectedSearchEngine
+            .map(SearchEngine::fromStoredValue)
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                SearchEngine.DEFAULT,
+            )
+
     val selectedThemeColor: StateFlow<Int> = appPreferences.selectedThemeColor
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_THEME_COLOR_ARGB)
 
@@ -112,6 +123,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setBrowserNavigationBarPosition(position: BrowserNavigationBarPosition) {
         viewModelScope.launch { appPreferences.setBrowserNavigationBarPosition(position.storedValue) }
+    }
+
+    fun setSelectedSearchEngine(engine: SearchEngine) {
+        viewModelScope.launch { appPreferences.setSelectedSearchEngine(engine.storedValue) }
     }
 
     fun setSelectedThemeColor(color: Int) {

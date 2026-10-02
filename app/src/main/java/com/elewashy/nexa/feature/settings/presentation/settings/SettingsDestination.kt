@@ -23,6 +23,10 @@ sealed interface SettingsDestination {
         override val route = "settings/general/language"
     }
 
+    data object SearchEngine : SettingsDestination {
+        override val route = "settings/general/search-engine"
+    }
+
     data object Updates : SettingsDestination {
         override val route = "settings/updates"
     }

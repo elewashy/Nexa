@@ -801,6 +801,7 @@ class MainActivity : AppCompatActivity() {
                 currentUrl = state.topSearchBarText,
                 currentTitle = state.pageTitle,
                 isPrivate = navigationState.isPrivate,
+                searchEngine = browserViewModel.selectedSearchEngine.collectAsStateWithLifecycle().value,
                 onQueryChange = browserViewModel::updateOmniboxQuery,
                 onCommit = browserViewModel::onUrlCommitted,
                 onEditCurrentUrl = browserViewModel::openOmniboxUrlEditor,
@@ -1717,11 +1718,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigateToHome() {
+        val homeUrl = browserViewModel.selectedSearchEngine.value.homeUrl
         safeWebViewOperation { wv ->
             wv.post {
                 // Programmatic home load — not a user visit.
                 (wv.webViewClient as? NexaWebViewClient)?.suppressNextVisitCommit = true
-                wv.loadUrl(BrowserUrls.HOME)
+                wv.loadUrl(homeUrl)
             }
         }
     }

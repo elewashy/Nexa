@@ -2,6 +2,7 @@ package com.elewashy.nexa.core.storage
 
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import com.elewashy.nexa.ui.theme.AppThemeMode
 
@@ -19,6 +20,7 @@ data class AppSettings(
     val showUpdateDialogOnLaunch: Boolean = true,
     val videoDownloadButton: Boolean = true,
     val browserNavigationBarPosition: Int = BrowserNavigationBarPosition.Bottom.storedValue,
+    val selectedSearchEngine: Int = SearchEngine.DEFAULT.storedValue,
     val downloadManagerLayout: Int = 0,
     val maxConcurrentDownloads: Int = DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS,
     val downloadFilterIds: Set<String> = DownloadSettingsDefaults.DEFAULT_FILTER_IDS,

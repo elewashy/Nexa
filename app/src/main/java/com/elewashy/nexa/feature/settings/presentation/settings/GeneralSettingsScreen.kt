@@ -23,11 +23,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.presentation.iconRes
+import com.elewashy.nexa.feature.browser.presentation.labelRes
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.settings.ExpressiveListIcon
 import com.elewashy.nexa.ui.components.settings.ListSection
@@ -38,6 +41,7 @@ import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.Download
 import com.elewashy.nexa.ui.icons.Language
 import com.elewashy.nexa.ui.icons.Palette
+import com.elewashy.nexa.ui.icons.Search
 import com.elewashy.nexa.ui.icons.Speed
 import com.elewashy.nexa.ui.icons.Toolbar
 
@@ -48,11 +52,13 @@ fun GeneralSettingsScreen(
     onNavigationPositionClick: () -> Unit,
     onCustomizeThemeClick: () -> Unit,
     onLanguageClick: () -> Unit,
+    onSearchEngineClick: () -> Unit,
     viewModel: SettingsViewModel,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val selectedSearchEngine by viewModel.selectedSearchEngine.collectAsStateWithLifecycle()
     val loadedSettings = settings
     val navigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
         loadedSettings?.browserNavigationBarPosition ?: BrowserNavigationBarPosition.Bottom.storedValue
@@ -139,6 +145,25 @@ fun GeneralSettingsScreen(
                     supportingContent = stringResource(R.string.customize_theme_description),
                     leadingContent = { ExpressiveListIcon(icon = Palette) },
                     onClick = onCustomizeThemeClick,
+                )
+            }
+
+            ListSection(
+                modifier = Modifier.widthIn(max = adaptiveInfo.listMaxWidth),
+                title = stringResource(R.string.search),
+                leadingContent = {
+                    Icon(
+                        Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            ) {
+                SettingsListItem(
+                    headlineContent = stringResource(R.string.search_engine),
+                    supportingContent = stringResource(selectedSearchEngine.labelRes),
+                    leadingContent = { ExpressiveListIcon(painter = painterResource(selectedSearchEngine.iconRes)) },
+                    onClick = onSearchEngineClick,
                 )
             }
 
