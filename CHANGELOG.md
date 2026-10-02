@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [1.3.1] - Unreleased
 
+### Added
+
+- **Search:** Added a search engine setting with Google, Bing, DuckDuckGo, Yahoo, Brave Search, Startpage, Ecosia, and Qwant.
+
+### Changed
+
+- **Search:** Address-bar searches, suggestions, new tabs, and the Home action now use the selected search engine.
+- **History:** Result pages from every supported search engine are now labeled with the search query.
+- **About:** Redesigned the About screen with app and developer cards, project links, and community links.
+
 ### Fixed
 
 - **Share:** Fixed the quality sheet staying open after tapping Download, which allowed duplicate downloads.
