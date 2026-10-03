@@ -1,0 +1,8 @@
+! Title: Nexa Filters
+! Description: Site fixes not yet covered by the upstream lists.
+! Homepage: https://github.com/elewashy/Nexa
+!
+! streamhls.to: when the in-page push tag is blocked, an inline anti-adblock
+! loader re-injects it from rotating domains. uBO's site rule no longer
+! matches the served loader, so remove it by its decoder prologue.
+streamhls.to##+js(rmnt, script, /"use strict";for\(var t=decodeURI\(/)
