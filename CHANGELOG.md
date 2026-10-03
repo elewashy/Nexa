@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** Pop-up ads opened by a page from a tap on a non-link element (as mycima.bid does) are now blocked when they lead to another site, while legitimate same-site pop-ups and taps on real links keep opening.
 - **Ad blocking:** Fixed YouTube videos not playing: requests whose type WebView cannot report (such as YouTube's video stream uploads) are no longer matched by filters meant for other request types.
 - **Ad blocking:** Element-hiding styles now survive pages that replace `document.adoptedStyleSheets`.
+- **Ad blocking:** Fixed embedded video players such as VideoTube and UpDown not loading: filters that guard built-in page functions (such as `addEventListener` or `document.documentElement`) against ad scripts no longer hide those functions from the rest of the page.
 
 ## [1.3.1] - 2026-10-02
 

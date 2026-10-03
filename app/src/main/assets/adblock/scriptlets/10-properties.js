@@ -85,53 +85,17 @@ S['abort-current-script'] = function (target, needle, context) {
     var text = H.scriptText(el);
     return reNeedle.test(text) && reContext.test(text);
   };
+  var guard = function () { if (shouldAbort()) throw H.abortError(); };
   // The chain's last segment is trapped; intermediate objects are reached lazily.
-  H.trapChain(window, target, function (owner, prop) {
-    var desc = H.natives.getOwnPropertyDescriptor(owner, prop);
-    if (desc && desc.configurable === false) return;
-    var getter = desc && desc.get;
-    var setter = desc && desc.set;
-    var value = desc && 'value' in desc ? desc.value : undefined;
-    try {
-      H.define(owner, prop, {
-        configurable: true,
-        get: function () {
-          if (shouldAbort()) throw H.abortError();
-          return getter ? getter.call(this) : value;
-        },
-        set: function (v) {
-          if (shouldAbort()) throw H.abortError();
-          if (setter) setter.call(this, v); else value = v;
-        }
-      });
-    } catch (e) { /* ignore */ }
-  });
+  H.trapChain(window, target, function (owner, prop) { H.trapAccess(owner, prop, guard); });
 };
 
 S['abort-on-stack-trace'] = function (chain, needle) {
   if (!chain) return;
   H.installErrorHandler();
   var reNeedle = H.matcher(needle || '', true);
-  H.trapChain(window, chain, function (owner, prop) {
-    var desc = H.natives.getOwnPropertyDescriptor(owner, prop);
-    if (desc && desc.configurable === false) return;
-    var getter = desc && desc.get;
-    var setter = desc && desc.set;
-    var value = desc && 'value' in desc ? desc.value : undefined;
-    try {
-      H.define(owner, prop, {
-        configurable: true,
-        get: function () {
-          if (H.matchesStack(reNeedle)) throw H.abortError();
-          return getter ? getter.call(this) : value;
-        },
-        set: function (v) {
-          if (H.matchesStack(reNeedle)) throw H.abortError();
-          if (setter) setter.call(this, v); else value = v;
-        }
-      });
-    } catch (e) { /* ignore */ }
-  });
+  var guard = function () { if (H.matchesStack(reNeedle)) throw H.abortError(); };
+  H.trapChain(window, chain, function (owner, prop) { H.trapAccess(owner, prop, guard); });
 };
 
 S['noeval'] = function () {

@@ -60,12 +60,47 @@ scriptlet('abort-current-script', () => {
   assert.equal(p.window.eval('window.secret'), 42);
 });
 
+test('abort-current-script keeps inherited members working for other scripts', () => {
+  // updown.icu##+js(acs, addEventListener, HTMLAllCollection) and
+  // vidtube.one##+js(acs, document.documentElement, break;case $.) trap
+  // members defined on prototypes, not on window/document themselves.
+  const p = setupPage();
+  const nativeAdd = p.window.EventTarget.prototype.addEventListener;
+  const root = p.document.documentElement;
+  p.run('abort-current-script', 'addEventListener', 'HTMLAllCollection');
+  p.run('abort-current-script', 'document.documentElement', 'break;case $.');
+  assert.ok(Object.getOwnPropertyDescriptor(p.window, 'addEventListener'), 'trap installed on window');
+  assert.equal(p.window.eval('window.addEventListener'), nativeAdd);
+  assert.equal(p.window.eval('document.documentElement'), root);
+  let fired = false;
+  p.window.addEventListener('nexa-test', () => { fired = true; });
+  p.window.dispatchEvent(new p.window.Event('nexa-test'));
+  assert.ok(fired, 'the shadowed method still registers listeners');
+
+  const script = p.document.createElement('script');
+  script.textContent = 'if (x instanceof HTMLAllCollection) addEventListener("load", ad);';
+  Object.defineProperty(p.document, 'currentScript', { configurable: true, get: () => script });
+  assert.throws(() => p.window.eval('window.addEventListener'));
+  assert.equal(p.window.eval('document.documentElement'), root, 'needle does not match this script');
+});
+
 scriptlet('abort-on-stack-trace', () => {
   const p = setupPage();
   p.run('abort-on-stack-trace', 'tracked', 'adCheckFunction');
   p.window.tracked = 1;
   assert.throws(() => p.window.eval('(function adCheckFunction() { return window.tracked; })()'));
   assert.equal(p.window.eval('(function other() { return window.tracked; })()'), 1);
+});
+
+test('abort-on-stack-trace keeps inherited members working outside the matched stack', () => {
+  const p = setupPage();
+  const nativeAdd = p.window.EventTarget.prototype.addEventListener;
+  const root = p.document.documentElement;
+  p.run('abort-on-stack-trace', 'addEventListener', 'adCheckFunction');
+  p.run('abort-on-stack-trace', 'document.documentElement', 'adCheckFunction');
+  assert.equal(p.window.eval('(function other() { return window.addEventListener; })()'), nativeAdd);
+  assert.equal(p.window.eval('(function other() { return document.documentElement; })()'), root);
+  assert.throws(() => p.window.eval('(function adCheckFunction() { return window.addEventListener; })()'));
 });
 
 scriptlet('noeval', () => {

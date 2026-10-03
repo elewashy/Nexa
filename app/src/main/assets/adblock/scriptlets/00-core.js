@@ -263,6 +263,50 @@ var H = (function () {
     } catch (e) { /* non-extensible owner */ }
   }
 
+  /** Descriptor of [prop] on [owner] or the nearest prototype defining it. */
+  function lookupDescriptor(owner, prop) {
+    for (var o = owner; o !== null && o !== undefined; o = natives.getPrototypeOf(o)) {
+      var desc = natives.getOwnPropertyDescriptor(o, prop);
+      if (desc) return desc;
+    }
+    return undefined;
+  }
+
+  /**
+   * Installs an own accessor for [prop] on [owner] that calls [guard] (which
+   * throws to abort) on every read and write, and otherwise behaves like the
+   * property it shadows. Inherited members count: `window.addEventListener`
+   * and `document.documentElement` live on prototypes, and shadowing them
+   * with `undefined` would break every script on the page, not only the one
+   * being aborted. Inherited accessors are delegated to with the original
+   * receiver; data properties keep their value in the trap.
+   */
+  function trapAccess(owner, prop, guard) {
+    var own = natives.getOwnPropertyDescriptor(owner, prop);
+    if (own && own.configurable === false) return;
+    var desc = own || lookupDescriptor(owner, prop);
+    var isAccessor = desc !== undefined && ('get' in desc || 'set' in desc);
+    var getter = isAccessor ? desc.get : undefined;
+    var setter = isAccessor ? desc.set : undefined;
+    var value = desc !== undefined && !isAccessor ? desc.value : undefined;
+    try {
+      define(owner, prop, {
+        configurable: true,
+        enumerable: desc ? desc.enumerable : true,
+        get: function () {
+          guard();
+          if (!isAccessor) return value;
+          return getter ? getter.call(this) : undefined;
+        },
+        set: function (v) {
+          guard();
+          if (!isAccessor) value = v;
+          else if (setter) setter.call(this, v);
+        }
+      });
+    } catch (e) { /* non-extensible owner */ }
+  }
+
   /** Resolves `a.b.c` to { owner: a.b, prop: 'c' } from window, or null when a link is missing. */
   function resolveChain(chain) {
     if (!chain) return null;
@@ -455,6 +499,7 @@ var H = (function () {
     extraArgs: extraArgs,
     constantValue: constantValue,
     trapChain: trapChain,
+    trapAccess: trapAccess,
     resolveChain: resolveChain,
     proxyApply: proxyApply,
     wrapFunction: wrapFunction,
