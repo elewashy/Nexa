@@ -14,14 +14,13 @@ interface TabsDao {
     @Query("SELECT * FROM tabs WHERE is_active = 1 LIMIT 1")
     suspend fun activeTab(): TabEntity?
 
-
     @Query("SELECT COUNT(*) FROM tabs")
     suspend fun count(): Int
 
     @Insert
     suspend fun insert(entity: TabEntity): Long
 
-    @Query("UPDATE tabs SET is_active = 0")
+    @Query("UPDATE tabs SET is_active = 0 WHERE is_active = 1")
     suspend fun clearActive()
 
     @Query("UPDATE tabs SET is_active = 1 WHERE id = :id")
@@ -36,23 +35,42 @@ interface TabsDao {
     @Query("UPDATE tabs SET last_accessed_at = :timestamp WHERE id = :id")
     suspend fun touch(id: Long, timestamp: Long)
 
-    @Query("UPDATE tabs SET is_pinned = :isPinned WHERE id = :id")
-    suspend fun updatePinned(id: Long, isPinned: Boolean): Int
-
     @Query("UPDATE tabs SET is_pinned = :isPinned WHERE id IN (:ids)")
     suspend fun updatePinned(ids: Set<Long>, isPinned: Boolean): Int
 
-    @Query("UPDATE tabs SET position = :position WHERE id = :id")
+    /** Skips rows already in place so a reorder rewrites only the pages that changed. */
+    @Query("UPDATE tabs SET position = :position WHERE id = :id AND position != :position")
     suspend fun updatePosition(id: Long, position: Int): Int
 
-    @Query("DELETE FROM tabs WHERE id = :id")
-    suspend fun delete(id: Long)
+    @Query("UPDATE tabs SET opener_tab_id = :openerTabId WHERE id = :id")
+    suspend fun updateOpener(id: Long, openerTabId: Long?)
 
+    /** Session state rows cascade via their foreign key. */
     @Query("DELETE FROM tabs WHERE id IN (:ids)")
     suspend fun delete(ids: Set<Long>)
 
     @Query("DELETE FROM tabs")
     suspend fun deleteAll()
+
+    // ── Session state (one-to-one with tabs) ────────────────────────────
+
+    @Query("SELECT state FROM tab_session_states WHERE tab_id = :tabId")
+    suspend fun sessionState(tabId: Long): ByteArray?
+
+    /**
+     * Upserts a tab's navigation state only while the tab row exists. Coalesced writes can race a
+     * close; the EXISTS guard turns a late write into a no-op instead of a foreign-key failure.
+     */
+    @Query(
+        "INSERT OR REPLACE INTO tab_session_states (tab_id, state) " +
+            "SELECT :tabId, :state WHERE EXISTS (SELECT 1 FROM tabs WHERE id = :tabId)"
+    )
+    suspend fun upsertSessionState(tabId: Long, state: ByteArray)
+
+    @Query("DELETE FROM tab_session_states WHERE tab_id = :tabId")
+    suspend fun deleteSessionState(tabId: Long)
+
+    // ── Transactions ────────────────────────────────────────────────────
 
     /** Insert a tab as the new active one, atomically. */
     @Transaction
@@ -63,18 +81,30 @@ interface TabsDao {
         return id
     }
 
+    /**
+     * Re-inserts a previously closed tab as the active one at canonical [index] of
+     * [orderedExistingIds], restoring its navigation [sessionState] in the same transaction.
+     */
+    @Transaction
+    suspend fun insertAtAndActivate(
+        entity: TabEntity,
+        orderedExistingIds: List<Long>,
+        index: Int,
+        sessionState: ByteArray?,
+    ): Long {
+        val id = insertAndActivate(entity)
+        val ordered = orderedExistingIds.toMutableList()
+            .apply { add(index.coerceIn(0, size), id) }
+        updatePositions(ordered)
+        if (sessionState != null) upsertSessionState(id, sessionState)
+        return id
+    }
+
     /** Move the active pointer, atomically. */
     @Transaction
     suspend fun activate(id: Long) {
         clearActive()
         setActive(id)
-    }
-
-    /** Applies pin state and canonical positions as one durable mutation. */
-    @Transaction
-    suspend fun setPinnedAndOrder(id: Long, isPinned: Boolean, orderedIds: List<Long>) {
-        updatePinned(id, isPinned)
-        updatePositions(orderedIds)
     }
 
     /** Applies one pin state and canonical positions to a selection atomically. */
@@ -90,24 +120,20 @@ interface TabsDao {
         updatePositions(orderedIds)
     }
 
-    /** Deletes, optionally moves the active pointer, and closes position gaps atomically. */
-    @Transaction
-    suspend fun deleteActivateAndReorder(id: Long, nextId: Long?, orderedIds: List<Long>) {
-        delete(id)
-        if (nextId != null) {
-            clearActive()
-            setActive(nextId)
-        }
-        updatePositions(orderedIds)
-    }
-
-    /** Deletes a selection, optionally moves the active pointer, and closes gaps atomically. */
+    /**
+     * Closes a selection atomically: re-parents the closed tabs' children ([openerUpdates], applied
+     * before the delete so the `SET NULL` foreign key never severs a surviving ancestor chain),
+     * deletes the rows (session states cascade), optionally moves the active pointer, and closes
+     * position gaps.
+     */
     @Transaction
     suspend fun deleteActivateAndReorder(
         ids: Set<Long>,
         nextId: Long?,
         orderedIds: List<Long>,
+        openerUpdates: Map<Long, Long?> = emptyMap(),
     ) {
+        openerUpdates.forEach { (id, openerTabId) -> updateOpener(id, openerTabId) }
         if (ids.isNotEmpty()) delete(ids)
         if (nextId != null) {
             clearActive()
@@ -120,9 +146,7 @@ interface TabsDao {
     @Transaction
     suspend fun replaceWithActive(entity: TabEntity): Long {
         deleteAll()
-        val id = insert(entity)
-        setActive(id)
-        return id
+        return insertAndActivate(entity)
     }
 
     private suspend fun updatePositions(orderedIds: List<Long>) {

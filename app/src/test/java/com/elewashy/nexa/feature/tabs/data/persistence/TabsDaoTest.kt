@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.elewashy.nexa.core.data.persistence.NexaDatabase
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -40,6 +41,7 @@ class TabsDaoTest {
         isPinned: Boolean = false,
         createdAt: Long = 100,
         lastAccessedAt: Long = 100,
+        openerTabId: Long? = null,
     ) = TabEntity(
         url = url,
         title = "",
@@ -48,6 +50,7 @@ class TabsDaoTest {
         isActive = isActive,
         createdAt = createdAt,
         lastAccessedAt = lastAccessedAt,
+        openerTabId = openerTabId,
     )
 
     @Test
@@ -86,7 +89,7 @@ class TabsDaoTest {
         val a = dao.insertAndActivate(tab(position = 0))
         val b = dao.insert(tab(position = 1))
 
-        dao.deleteActivateAndReorder(a, nextId = b, orderedIds = listOf(b))
+        dao.deleteActivateAndReorder(setOf(a), nextId = b, orderedIds = listOf(b))
 
         assertEquals(1, dao.count())
         assertEquals(b, dao.activeTab()?.id)
@@ -96,7 +99,7 @@ class TabsDaoTest {
     fun `deleteAndActivate with null next leaves no active row`() = runTest {
         val a = dao.insertAndActivate(tab(position = 0))
 
-        dao.deleteActivateAndReorder(a, nextId = null, orderedIds = emptyList())
+        dao.deleteActivateAndReorder(setOf(a), nextId = null, orderedIds = emptyList())
 
         assertEquals(0, dao.count())
         assertNull(dao.activeTab())
@@ -125,7 +128,7 @@ class TabsDaoTest {
         val b = dao.insert(tab(url = "https://b.example/", position = 1))
         val c = dao.insert(tab(url = "https://c.example/", position = 2))
 
-        dao.setPinnedAndOrder(c, isPinned = true, orderedIds = listOf(c, a, b))
+        dao.setPinnedAndOrder(setOf(c), isPinned = true, orderedIds = listOf(c, a, b))
 
         val rows = dao.byPosition()
         assertEquals(listOf(c, a, b), rows.map { it.id })
@@ -139,10 +142,73 @@ class TabsDaoTest {
         val b = dao.insert(tab(position = 1))
         val c = dao.insert(tab(position = 2))
 
-        dao.deleteActivateAndReorder(b, nextId = null, orderedIds = listOf(a, c))
+        dao.deleteActivateAndReorder(setOf(b), nextId = null, orderedIds = listOf(a, c))
 
         assertEquals(listOf(a, c), dao.byPosition().map { it.id })
         assertEquals(listOf(0, 1), dao.byPosition().map { it.position })
+    }
+
+    @Test
+    fun `session state is one-to-one with its tab and cascades on delete`() = runTest {
+        val a = dao.insert(tab(position = 0))
+        val b = dao.insert(tab(position = 1))
+
+        dao.upsertSessionState(a, byteArrayOf(1, 2, 3))
+        dao.upsertSessionState(a, byteArrayOf(4, 5))
+        dao.upsertSessionState(b, byteArrayOf(9))
+
+        assertArrayEquals(byteArrayOf(4, 5), dao.sessionState(a))
+        dao.deleteActivateAndReorder(setOf(a), nextId = null, orderedIds = listOf(b))
+        assertNull(dao.sessionState(a))
+        assertArrayEquals(byteArrayOf(9), dao.sessionState(b))
+
+        dao.replaceWithActive(tab(position = 0))
+        assertNull(dao.sessionState(b))
+    }
+
+    @Test
+    fun `session state upsert for a missing tab is a no-op`() = runTest {
+        dao.upsertSessionState(tabId = 404, state = byteArrayOf(1))
+
+        assertNull(dao.sessionState(404))
+    }
+
+    @Test
+    fun `deleting an opener nulls the pointer unless children are re-parented first`() = runTest {
+        val root = dao.insert(tab(position = 0))
+        val middle = dao.insert(tab(position = 1, openerTabId = root))
+        val child = dao.insert(tab(position = 2, openerTabId = middle))
+        val orphan = dao.insert(tab(position = 3, openerTabId = middle))
+
+        dao.deleteActivateAndReorder(
+            ids = setOf(middle),
+            nextId = null,
+            orderedIds = listOf(root, child, orphan),
+            openerUpdates = mapOf(child to root),
+        )
+
+        val rows = dao.byPosition().associateBy { it.id }
+        assertEquals(root, rows.getValue(child).openerTabId)
+        // Not re-parented explicitly: the SET NULL foreign key prevents a dangling pointer.
+        assertNull(rows.getValue(orphan).openerTabId)
+    }
+
+    @Test
+    fun `insertAtAndActivate restores position and state atomically`() = runTest {
+        val a = dao.insertAndActivate(tab(position = 0))
+        val b = dao.insert(tab(position = 1))
+
+        val reopened = dao.insertAtAndActivate(
+            entity = tab(url = "https://reopened.example/", position = 1, isActive = true),
+            orderedExistingIds = listOf(a, b),
+            index = 1,
+            sessionState = byteArrayOf(7),
+        )
+
+        assertEquals(listOf(a, reopened, b), dao.byPosition().map { it.id })
+        assertEquals(listOf(0, 1, 2), dao.byPosition().map { it.position })
+        assertEquals(reopened, dao.activeTab()?.id)
+        assertArrayEquals(byteArrayOf(7), dao.sessionState(reopened))
     }
 }
 

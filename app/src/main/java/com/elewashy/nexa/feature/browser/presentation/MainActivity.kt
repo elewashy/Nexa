@@ -72,6 +72,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -116,6 +117,7 @@ import com.elewashy.nexa.feature.browser.presentation.webview.WebViewContentBloc
 import com.elewashy.nexa.feature.browser.presentation.webview.PrivateWebViewProfile
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewConfigurator
+import com.elewashy.nexa.feature.browser.presentation.webview.WebViewSessionState
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuResult
 import com.elewashy.nexa.feature.browser.presentation.screen.ContextMenuAction
 import com.elewashy.nexa.feature.browser.presentation.screen.Base64ImageDialog
@@ -149,6 +151,7 @@ import com.elewashy.nexa.feature.splash.presentation.screen.LoadingScreen
 import com.elewashy.nexa.feature.splash.presentation.screen.NoInternetScreen
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
+import com.elewashy.nexa.feature.tabs.domain.usecase.BackNavigation
 import com.elewashy.nexa.ui.components.navigation.BrowserNavBar
 import com.elewashy.nexa.ui.components.navigation.BrowserNavBarActions
 import com.elewashy.nexa.ui.components.navigation.BrowserTopNavBar
@@ -158,6 +161,7 @@ import com.elewashy.nexa.ui.components.navigation.BrowserOmniboxOverlay
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.theme.NexaTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -183,11 +187,18 @@ import javax.inject.Inject
  *    exactly one attached to the Compose tree at a time. WebViews are created
  *    lazily (active tab first after restore, others on first switch) and are
  *    never stored in Room.
+ *  - Session restoration: each tab's complete navigation state (back/forward
+ *    list, page state) is captured with [WebViewSessionState] and persisted
+ *    through the repository — on tab detach, before eviction, shortly after
+ *    every committed navigation, and in onStop. A WebView created later (cold
+ *    start, process death, eviction, recreation) restores that state, so
+ *    Back/Forward work exactly as before the app was closed.
  *
  * Lifecycle:
  *  - onCreate: Initialize UI, permissions, and the VM observer.
  *  - onNewIntent: Route new intents (deep-link, download page).
- *  - onStop: Force coalesced tab URL/title writes to disk.
+ *  - onStop: Capture every tab's navigation state and force all coalesced tab
+ *    writes to disk, before the process becomes killable.
  *  - onDestroy: Tear down every WebView and clear KEEP_SCREEN_ON defensively.
  */
 @AndroidEntryPoint
@@ -227,16 +238,8 @@ class MainActivity : AppCompatActivity() {
     /** The chrome client whose file chooser is awaiting a picker result. */
     private var pendingFileChooserClient: NexaWebChromeClient? = null
 
-    private var restoredFromProcessDeath = false
-
-    /**
-     * The active tab's WebView state bundle from a process-death
-     * savedInstanceState, consumed exactly once by the first WebView created
-     * after restore. Never written to Room — opaque WebView state is
-     * instance-state only.
-     */
-    private var pendingProcessDeathState: Bundle? = null
-    private var pendingProcessDeathTabId: Long? = null
+    /** Debounced post-navigation state captures, keyed by tab id. Main thread only. */
+    private val sessionCaptureJobs = HashMap<Long, Job>()
 
     private var requestedRoute by mutableStateOf<String?>(null)
     private val updateViewModel: UpdateViewModel by viewModels()
@@ -268,8 +271,8 @@ class MainActivity : AppCompatActivity() {
         private const val ROUTE_SETTINGS = "settings"
         private const val ROUTE_UPDATE = "update"
 
-        private const val STATE_WEB_VIEW = "web_view_state"
-        private const val STATE_WEB_VIEW_TAB_ID = "web_view_tab_id"
+        /** Coalesces redirect chains and History API bursts into one state capture. */
+        private const val SESSION_CAPTURE_DEBOUNCE_MS = 1_500L
         private const val BROWSER_REFRESH_TRIGGER_DP = 80f
         private const val BROWSER_REFRESH_MIN_VISIBLE_MS = 300L
         private const val DOWNLOAD_MATCH_TOLERANCE_MS = 2_000L
@@ -287,15 +290,6 @@ class MainActivity : AppCompatActivity() {
                 detail: RenderProcessGoneDetail,
             ): Boolean = true
         }
-
-        /**
-         * In-memory marker: survives activity recreation but is cleared when
-         * the process is killed. Distinguishes a process-death restore (full
-         * WebView state restore) from a plain recreation (reload the URL —
-         * restoring the full WebView state after a recreation can leave a
-         * black renderer surface).
-         */
-        private var processInstanceAlive = false
     }
 
     // ========== Lifecycle ==========
@@ -304,16 +298,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        restoredFromProcessDeath = savedInstanceState != null && !processInstanceAlive
-        processInstanceAlive = true
         // Idempotent: also started from the splash; covers launches that skip it.
         filterUpdateScheduler.start()
-        if (restoredFromProcessDeath) {
-            pendingProcessDeathState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
-            pendingProcessDeathTabId = savedInstanceState
-                ?.takeIf { it.containsKey(STATE_WEB_VIEW_TAB_ID) }
-                ?.getLong(STATE_WEB_VIEW_TAB_ID)
-        }
 
         enableEdgeToEdge()
 
@@ -619,6 +605,8 @@ class MainActivity : AppCompatActivity() {
 
         fun openTabSwitcher() {
             captureAttachedTabThumbnail()
+            // Closing from the overview retains this state for undo; capture the latest first.
+            attachedTabId?.let { id -> webViews[id]?.let { persistSessionState(id, it) } }
             showTabSwitcher = true
         }
 
@@ -659,18 +647,21 @@ class MainActivity : AppCompatActivity() {
                 activeChromeClient.onHideCustomView()
                 return@BackHandler
             }
-            var canGoBack = false
-            safeWebViewOperation { wv ->
-                canGoBack = wv.canGoBack()
-                if (canGoBack) {
+            val canGoBackInPage = attachedWebView()
+                ?.let { runCatching { it.canGoBack() }.getOrDefault(false) } == true
+            when (browserViewModel.onBackPressed(canGoBackInPage)) {
+                BackNavigation.PageHistory -> safeWebViewOperation { wv ->
                     // Stepping through the history list revisits an
                     // already-recorded page — not a fresh visit.
                     (wv.webViewClient as? NexaWebViewClient)
                         ?.suppressNextVisitCommit = true
                     wv.goBack()
                 }
+                // The popup tab is closing; its opener becomes active and is
+                // re-attached with its retained (or restored) exact state.
+                is BackNavigation.ReturnToOpener -> Unit
+                BackNavigation.Exit -> finish()
             }
-            if (!canGoBack) finish()
         }
 
         Box(modifier = modifier.fillMaxSize()) {
@@ -724,34 +715,55 @@ class MainActivity : AppCompatActivity() {
                             // retained WebViews live in the Activity's map.
                             if (tabsRestored && activeTabId != null && !showTabSwitcher) {
                                 key(activeTabId, webViewGeneration.intValue) {
-                                    var tabEntered by remember { mutableStateOf(false) }
-                                    LaunchedEffect(Unit) { tabEntered = true }
-                                    val tabContentAlpha by animateFloatAsState(
-                                        targetValue = if (tabEntered) 1f else 0f,
-                                        animationSpec = tween(180),
-                                        label = "activeTabContentAlpha",
-                                    )
-                                    WebViewContent(
-                                        isRefreshing = isRefreshing,
-                                        modifier = Modifier.graphicsLayer {
-                                            alpha = tabContentAlpha
-                                            translationY = (1f - tabContentAlpha) * 8.dp.toPx()
+                                    // A retained WebView already holds its live history. A WebView
+                                    // about to be created first reads the tab's stored navigation
+                                    // state off the main thread (one primary-key lookup).
+                                    val restoreSnapshot by produceState(
+                                        initialValue = if (webViews.containsKey(activeTabId)) {
+                                            SessionSnapshot.Retained
+                                        } else {
+                                            null
                                         },
-                                        onPullDistanceChange = { pullDistancePx = it },
-                                        onPullRefresh = ::startBrowserRefresh,
-                                        onRefreshComplete = {
-                                            composableScope.launch {
-                                                delay(BROWSER_REFRESH_MIN_VISIBLE_MS)
-                                                isRefreshing = false
-                                                pullDistancePx = 0f
-                                            }
-                                        },
-                                        onShowMessage = { message ->
-                                            composableScope.launch { snackbarHostState.showSnackbar(message) }
-                                        },
-                                        onDownloadStarted = ::showDownloadSnackbar,
-                                        onShowBase64Image = { imageDialogDataUrl = it },
-                                    )
+                                    ) {
+                                        if (value == null) {
+                                            value = SessionSnapshot(
+                                                browserViewModel.tabSessionState(activeTabId)
+                                            )
+                                        }
+                                    }
+                                    val snapshot = restoreSnapshot
+                                    if (snapshot != null) {
+                                        var tabEntered by remember { mutableStateOf(false) }
+                                        LaunchedEffect(Unit) { tabEntered = true }
+                                        val tabContentAlpha by animateFloatAsState(
+                                            targetValue = if (tabEntered) 1f else 0f,
+                                            animationSpec = tween(180),
+                                            label = "activeTabContentAlpha",
+                                        )
+                                        WebViewContent(
+                                            tabId = activeTabId,
+                                            sessionState = snapshot.state,
+                                            isRefreshing = isRefreshing,
+                                            modifier = Modifier.graphicsLayer {
+                                                alpha = tabContentAlpha
+                                                translationY = (1f - tabContentAlpha) * 8.dp.toPx()
+                                            },
+                                            onPullDistanceChange = { pullDistancePx = it },
+                                            onPullRefresh = ::startBrowserRefresh,
+                                            onRefreshComplete = {
+                                                composableScope.launch {
+                                                    delay(BROWSER_REFRESH_MIN_VISIBLE_MS)
+                                                    isRefreshing = false
+                                                    pullDistancePx = 0f
+                                                }
+                                            },
+                                            onShowMessage = { message ->
+                                                composableScope.launch { snackbarHostState.showSnackbar(message) }
+                                            },
+                                            onDownloadStarted = ::showDownloadSnackbar,
+                                            onShowBase64Image = { imageDialogDataUrl = it },
+                                        )
+                                    }
                                 }
                             }
 
@@ -1042,11 +1054,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Force coalesced URL/title writes so a backgrounded kill loses nothing.
+        // The process is killable from here on (swipe from Recents, low memory): capture every
+        // tab's navigation state and force all coalesced writes so a kill loses nothing.
+        persistAllSessionStates()
         browserViewModel.flushTabs()
     }
 
     override fun onDestroy() {
+        // Background pages can still navigate between onStop and here.
+        persistAllSessionStates()
+        browserViewModel.flushTabs()
+        sessionCaptureJobs.values.forEach(Job::cancel)
+        sessionCaptureJobs.clear()
         cleanUpAllWebViews()
         if (!isChangingConfigurations) {
             browserViewModel.closeTabs(BrowsingMode.Private)
@@ -1078,6 +1097,8 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     @Composable
     private fun WebViewContent(
+        tabId: Long,
+        sessionState: ByteArray?,
         isRefreshing: Boolean,
         modifier: Modifier = Modifier,
         onPullDistanceChange: (Float) -> Unit,
@@ -1100,11 +1121,7 @@ class MainActivity : AppCompatActivity() {
         val pullBridge = remember { PullToRefreshTouchBridge() }
 
         AndroidView(
-            factory = { ctx ->
-                val tabId = browserViewModel.workspace.value.activeTabId
-                    ?: return@AndroidView View(ctx)
-                attachTab(ctx, tabId, pullBridge)
-            },
+            factory = { ctx -> attachTab(ctx, tabId, sessionState, pullBridge) },
             modifier = modifier.fillMaxSize(),
             update = { view ->
                 // reconcileWebViews can destroy a closed tab's WebView before
@@ -1121,7 +1138,6 @@ class MainActivity : AppCompatActivity() {
                 view.bindDownloadListener(
                     onDownloadStarted = { currentOnDownloadStarted(it) },
                 )
-                val tabId = tabIdOf(view)
                 (view.webChromeClient as? NexaWebChromeClient)?.let { client ->
                     client.updateCallbacks(
                         onProgressChangedEvent = { browserViewModel.onProgressChanged(tabId, it) },
@@ -1179,11 +1195,13 @@ class MainActivity : AppCompatActivity() {
     /**
      * Attaches [tabId]'s WebView to the Compose tree, creating it lazily if
      * this is the first time the tab is materialized in this Activity
-     * instance. Detaches (pauses) the previously attached WebView.
+     * instance (restoring [sessionState] when available). Detaches (pauses)
+     * the previously attached WebView after capturing its navigation state.
      */
     private fun attachTab(
         context: Context,
         tabId: Long,
+        sessionState: ByteArray?,
         pullBridge: PullToRefreshTouchBridge,
     ): WebView {
         val previousId = attachedTabId
@@ -1193,13 +1211,14 @@ class MainActivity : AppCompatActivity() {
             webViews[tabId] = it
             (it.parent as? ViewGroup)?.removeView(it)
             it.installPullToRefreshTouchBridge(pullBridge)
-        } ?: createWebView(context, tabId, pullBridge)
+        } ?: createWebView(context, tabId, sessionState, pullBridge)
 
         if (previousId != null && previousId != tabId) {
             // A pending long-press menu belongs to the old tab; its actions
             // would dispatch against the new tab's WebView.
             contextMenuActions.value = emptyList()
             webViews[previousId]?.apply {
+                persistSessionState(previousId, this)
                 // A tab switch leaves fullscreen video behind — the overlay
                 // sits in an Activity-wide container above every tab.
                 (webChromeClient as? NexaWebChromeClient)
@@ -1225,14 +1244,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Creates and registers a WebView for [tabId], loading the tab's
-     * persisted URL (Room is the source of truth). The process-death
-     * savedInstanceState bundle — when present — restores the full history
-     * stack of the ACTIVE tab only, exactly once.
+     * Creates and registers a WebView for [tabId]. When the tab has a stored
+     * navigation [sessionState] it is restored — complete back/forward list,
+     * current entry reloaded — otherwise the tab's persisted URL is loaded.
      */
     private fun createWebView(
         context: Context,
         tabId: Long,
+        sessionState: ByteArray?,
         pullBridge: PullToRefreshTouchBridge,
     ): WebView {
         val tab = tabItem(tabId)
@@ -1294,6 +1313,7 @@ class MainActivity : AppCompatActivity() {
                 onPageLoadErrorEvent = { browserViewModel.onPageLoadError(tabId) },
                 onVisitCommittedEvent = { url, isReload ->
                     browserViewModel.onVisitCommitted(tabId, url, isReload)
+                    scheduleSessionCapture(tabId)
                 },
                 onRenderProcessGoneEvent = { handleRenderProcessGone(tabId) },
             )
@@ -1335,57 +1355,26 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     },
-                    openInNewTab = { url ->
-                        browserViewModel.openPopupTab(
-                            url,
-                            if (tab?.isPrivate == true) BrowsingMode.Private else BrowsingMode.Normal,
-                        )
-                    },
+                    openInNewTab = { url -> browserViewModel.openPopupTab(url, openerTabId = tabId) },
                 ),
                 onCloseWindowEvent = { browserViewModel.closeTab(tabId) },
             )
             webChromeClient = chromeClient
 
-            // ── Initial load / state restore ──────────────────
-            // Process death (active tab only): restore the full history stack
-            // from the instance-state bundle. Everything else — cold restart,
-            // lazy background tabs, plain recreation (locale change) — loads
-            // the persisted URL, since restoring the full WebView state after
-            // a recreation can leave a black renderer surface.
-            val processDeathState = pendingProcessDeathState.takeIf {
-                pendingProcessDeathTabId == tabId
-            }
-            // The first materialized tab is the restored active tab. A mismatched bundle is stale
-            // and must never be applied later to another tab identity.
-            pendingProcessDeathState = null
-            pendingProcessDeathTabId = null
-            val restoredHistory = if (processDeathState != null) {
-                try {
-                    // The restored stack reloads its current entry; that
-                    // commit is not a fresh user visit.
-                    historyClient.suppressNextVisitCommit = true
-                    restoreState(processDeathState)
-                } catch (e: Exception) {
-                    Log.w(TAG, "WebView state restore failed: ${e.message}", e)
-                    null
-                }
-            } else {
-                null
-            }
-            if (restoredHistory != null) {
-                // The restored entry must pass the same safe-URL check.
-                if (!isSafeLoadableUrl(url)) {
+            // ── Initial load / navigation-state restore ───────
+            // Restoring reloads the current entry, and an initial load is
+            // programmatic: neither is a fresh user visit.
+            historyClient.suppressNextVisitCommit = true
+            val restored = sessionState?.let { WebViewSessionState.restore(this, it) }
+            when {
+                restored == null -> loadUrl(persistedUrl)
+                // The restored entry must pass the same safe-URL check as any load.
+                !isSafeLoadableUrl(restored.currentItem?.url) -> {
                     clearHistory()
-                    // Still a restore, not a user visit — re-arm suppression
-                    // (the restore's own commit may have consumed the flag).
+                    // Re-arm: the restore's own commit may consume the flag.
                     historyClient.suppressNextVisitCommit = true
                     loadUrl(persistedUrl)
                 }
-            } else {
-                // Programmatic initial load (cold restart, lazily materialized
-                // background tab, plain recreation) — not a user visit.
-                historyClient.suppressNextVisitCommit = true
-                loadUrl(persistedUrl)
             }
         }
 
@@ -1409,6 +1398,14 @@ class MainActivity : AppCompatActivity() {
                 },
                 onDownloadStarted = onDownloadStarted,
             )
+        }
+    }
+
+    /** Navigation state resolved for a tab's WebView before its AndroidView factory runs. */
+    private class SessionSnapshot(val state: ByteArray?) {
+        companion object {
+            /** The tab's WebView is still materialized; its live history wins. */
+            val Retained = SessionSnapshot(null)
         }
     }
 
@@ -1510,23 +1507,6 @@ class MainActivity : AppCompatActivity() {
         val linearTension = overshootPercent.coerceIn(0f, 2f)
         val tensionPercent = linearTension - linearTension * linearTension / 4f
         return thresholdPx + thresholdPx * tensionPercent
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        // Full history stack of the ACTIVE tab for process-death restoration.
-        // Nested bundle so WebView's own keys can't collide with Compose/
-        // NavHost state. The persistent tab list itself lives in Room.
-        attachedWebView()?.takeUnless { tabItem(tabIdOf(it))?.isPrivate == true }?.let { wv ->
-            try {
-                val webViewState = Bundle()
-                wv.saveState(webViewState)
-                outState.putBundle(STATE_WEB_VIEW, webViewState)
-                outState.putLong(STATE_WEB_VIEW_TAB_ID, tabIdOf(wv))
-            } catch (e: Exception) {
-                Log.w(TAG, "WebView saveState failed: ${e.message}", e)
-            }
-        }
     }
 
     // ========== WebView helpers ==========
@@ -1646,7 +1626,32 @@ class MainActivity : AppCompatActivity() {
         val protectedId = attachedTabId
         while (webViews.size > maxRetained.coerceAtLeast(1)) {
             val candidate = webViews.keys.firstOrNull { it != protectedId } ?: break
+            // The tab stays open: keep its history so re-materializing restores it exactly.
+            webViews[candidate]?.let { persistSessionState(candidate, it) }
             destroyWebView(candidate, removeVisuals = false)
+        }
+    }
+
+    /** Captures [webView]'s navigation state for [tabId] now, superseding a debounced capture. */
+    private fun persistSessionState(tabId: Long, webView: WebView) {
+        sessionCaptureJobs.remove(tabId)?.cancel()
+        WebViewSessionState.capture(webView)?.let { browserViewModel.saveTabSessionState(tabId, it) }
+    }
+
+    private fun persistAllSessionStates() {
+        webViews.forEach { (tabId, webView) -> persistSessionState(tabId, webView) }
+    }
+
+    /**
+     * Captures [tabId]'s navigation state shortly after a committed navigation, so even a crash
+     * (no onStop) loses at most the last debounce window of history.
+     */
+    private fun scheduleSessionCapture(tabId: Long) {
+        sessionCaptureJobs.remove(tabId)?.cancel()
+        sessionCaptureJobs[tabId] = lifecycleScope.launch {
+            delay(SESSION_CAPTURE_DEBOUNCE_MS)
+            sessionCaptureJobs.remove(tabId)
+            webViews[tabId]?.let { persistSessionState(tabId, it) }
         }
     }
 
@@ -1655,6 +1660,7 @@ class MainActivity : AppCompatActivity() {
             tabThumbnails.remove(tabId)?.takeUnless { it.isRecycled }?.recycle()
             privateTabFavicons.remove(tabId)?.takeUnless { it.isRecycled }?.recycle()
         }
+        sessionCaptureJobs.remove(tabId)?.cancel()
         val webView = webViews.remove(tabId) ?: return
         try {
             if (pendingFileChooserClient === webView.webChromeClient) {
@@ -1678,9 +1684,10 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Recovers from a renderer-process death: the dead WebView is destroyed
-     * and the composable factory recreates a fresh one for the tab (loading
-     * the persisted URL as a programmatic load, so no history entry). Without
-     * this, one crashed renderer would kill the whole app process.
+     * and the composable factory recreates a fresh one for the tab, restoring
+     * its last captured navigation state (a dead WebView must not be touched
+     * again, so no capture happens here). Without this, one crashed renderer
+     * would kill the whole app process.
      */
     private fun handleRenderProcessGone(tabId: Long) {
         Log.w(TAG, "Recreating WebView for tab $tabId after renderer death")

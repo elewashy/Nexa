@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** The default filter lists now match uBlock Origin's (uBlock filters, badware, privacy, quick fixes, unbreak, EasyList, EasyPrivacy, Peter Lowe's list), plus Liste AR when the app language is Arabic.
 - **Ad blocking:** Filter updates use conditional requests, verify downloads before replacing them, and keep the last working filters when an update fails.
 - **Browser:** Links and pop-ups that open a new window now open in a new tab instead of replacing the current page.
+- **Tabs:** Closing a tab that was opened by another page now returns to the tab that opened it.
+- **Tabs:** Undoing a tab close now restores its position, pin state, and back/forward history.
 
 ### Fixed
 
@@ -33,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** Fixed YouTube videos not playing: requests whose type WebView cannot report (such as YouTube's video stream uploads) are no longer matched by filters meant for other request types.
 - **Ad blocking:** Element-hiding styles now survive pages that replace `document.adoptedStyleSheets`.
 - **Ad blocking:** Fixed embedded video players such as VideoTube and UpDown not loading: filters that guard built-in page functions (such as `addEventListener` or `document.documentElement`) against ad scripts no longer hide those functions from the rest of the page.
+- **Tabs:** Reopening the app now restores every tab's complete back and forward history instead of only its last page.
+- **Tabs:** Pressing Back on the first page of a tab opened by another page now closes it and returns to the tab that opened it, instead of exiting the app.
+- **Tabs:** Background tabs unloaded to save memory now keep their history when reopened.
 
 ## [1.3.1] - 2026-10-02
 

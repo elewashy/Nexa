@@ -16,6 +16,8 @@ import com.elewashy.nexa.feature.tabs.data.TabRepository
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
 import com.elewashy.nexa.feature.tabs.domain.model.TabWorkspaceState
+import com.elewashy.nexa.feature.tabs.domain.usecase.BackNavigation
+import com.elewashy.nexa.feature.tabs.domain.usecase.ResolveBackNavigationUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Deferred
@@ -64,6 +66,7 @@ class BrowserViewModel @Inject constructor(
     private val searchSuggestionRepository: SearchSuggestionRepository,
     private val searchHistoryRepository: SearchHistoryRepository,
     private val appPreferences: AppPreferences,
+    private val resolveBackNavigation: ResolveBackNavigationUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -361,24 +364,34 @@ class BrowserViewModel @Inject constructor(
         if (id == null) _tabLimitEvent.trySend(Unit)
     }
 
-    /** Opens an allowed popup (new-window request) of a page as a new active tab. */
-    fun openPopupTab(url: String, mode: BrowsingMode) {
+    /**
+     * Opens an allowed popup (new-window request) of [openerTabId]'s page as a new active tab in
+     * the opener's mode. The relation lets Back at the popup's first page return to the opener.
+     */
+    fun openPopupTab(url: String, openerTabId: Long) {
+        val mode = tabRepository.workspace.value.tabs.firstOrNull { it.id == openerTabId }
+            ?.browsingMode ?: return
         viewModelScope.launch {
-            if (tabRepository.newTab(url, mode) == null) _tabLimitEvent.trySend(Unit)
+            if (tabRepository.newTab(url, mode, openerTabId) == null) _tabLimitEvent.trySend(Unit)
         }
     }
 
+    /** Undo of a tab close: restores the tab, its position, pin state, opener, and history. */
     fun reopenTab(tab: TabItem) {
         viewModelScope.launch {
-            val id = tabRepository.newTab(tab.url, tab.browsingMode)
-            if (id == null) {
-                _tabLimitEvent.trySend(Unit)
-            } else {
-                if (tab.title.isNotBlank()) tabRepository.titleReceived(id, tab.title)
-                if (tab.isPinned) tabRepository.pinTab(id)
-                tabRepository.reorderTab(id, tab.position)
-            }
+            if (tabRepository.reopenClosedTab(tab) == null) _tabLimitEvent.trySend(Unit)
         }
+    }
+
+    /**
+     * Resolves a Back press against the current workspace. Returning to an opener closes the
+     * active tab here (the repository then activates the opener); the caller performs the other
+     * outcomes, which need the WebView or the Activity.
+     */
+    fun onBackPressed(canGoBackInPage: Boolean): BackNavigation {
+        val action = resolveBackNavigation(tabRepository.workspace.value, canGoBackInPage)
+        if (action is BackNavigation.ReturnToOpener) closeTab(action.closingTabId)
+        return action
     }
 
     fun setTabPinned(tabId: Long, pinned: Boolean) {
@@ -420,8 +433,17 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
-    /** Forces coalesced URL/title writes to disk (Activity onStop) without depending on this scope. */
+    /** Forces coalesced tab writes to disk (Activity onStop) without depending on this scope. */
     fun flushTabs() = tabRepository.requestFlush()
+
+    // ── Tab navigation state ─────────────────────────────────────────
+
+    /** Records a tab WebView's opaque navigation state (coalesced; normal tabs persist it). */
+    fun saveTabSessionState(tabId: Long, state: ByteArray) =
+        tabRepository.saveSessionState(tabId, state)
+
+    /** The navigation state to restore when [tabId]'s WebView is (re)created. */
+    suspend fun tabSessionState(tabId: Long): ByteArray? = tabRepository.sessionState(tabId)
 
     // ── Bookmarks ────────────────────────────────────────────────────
 

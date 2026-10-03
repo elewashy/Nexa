@@ -16,6 +16,7 @@ import com.elewashy.nexa.feature.downloads.data.persistence.DownloadsDao
 import com.elewashy.nexa.feature.history.data.persistence.HistoryDao
 import com.elewashy.nexa.feature.history.data.persistence.HistoryEntity
 import com.elewashy.nexa.feature.tabs.data.persistence.TabEntity
+import com.elewashy.nexa.feature.tabs.data.persistence.TabSessionStateEntity
 import com.elewashy.nexa.feature.tabs.data.persistence.TabsDao
 
 /**
@@ -39,8 +40,9 @@ import com.elewashy.nexa.feature.tabs.data.persistence.TabsDao
         BookmarkEntity::class,
         BookmarkFolderEntity::class,
         SearchHistoryEntity::class,
+        TabSessionStateEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class NexaDatabase : RoomDatabase() {
@@ -229,5 +231,75 @@ abstract class NexaDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v8 → v9: complete tab session restoration.
+         *  - `tabs.opener_tab_id`: self-referencing parent/child relation (`ON DELETE SET NULL`).
+         *    SQLite cannot add a foreign key with ALTER TABLE, so the table is rebuilt; ids and
+         *    the AUTOINCREMENT high-water mark are preserved so a closed tab id is never reused.
+         *  - drops `index_tabs_position`, made redundant by `index_tabs_is_pinned_position`.
+         *  - `tab_session_states`: one-to-one WebView navigation state, cascading on tab delete.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `tabs_v9` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`url` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`position` INTEGER NOT NULL, " +
+                        "`is_pinned` INTEGER NOT NULL DEFAULT 0, " +
+                        "`is_active` INTEGER NOT NULL, " +
+                        "`created_at` INTEGER NOT NULL, " +
+                        "`last_accessed_at` INTEGER NOT NULL, " +
+                        "`opener_tab_id` INTEGER, " +
+                        "FOREIGN KEY(`opener_tab_id`) REFERENCES `tabs`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE SET NULL)"
+                )
+                db.execSQL(
+                    "INSERT INTO `tabs_v9` (`id`, `url`, `title`, `position`, `is_pinned`, " +
+                        "`is_active`, `created_at`, `last_accessed_at`) " +
+                        "SELECT `id`, `url`, `title`, `position`, `is_pinned`, `is_active`, " +
+                        "`created_at`, `last_accessed_at` FROM `tabs`"
+                )
+                // Carry the AUTOINCREMENT high-water mark over: ids of closed tabs stay retired.
+                db.execSQL("DELETE FROM `sqlite_sequence` WHERE `name` = 'tabs_v9'")
+                db.execSQL(
+                    "INSERT INTO `sqlite_sequence` (`name`, `seq`) " +
+                        "SELECT 'tabs_v9', `seq` FROM `sqlite_sequence` WHERE `name` = 'tabs'"
+                )
+                db.execSQL("DROP TABLE `tabs`")
+                db.execSQL("ALTER TABLE `tabs_v9` RENAME TO `tabs`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_tabs_is_pinned_position` " +
+                        "ON `tabs` (`is_pinned`, `position`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_tabs_is_active` ON `tabs` (`is_active`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_tabs_opener_tab_id` ON `tabs` (`opener_tab_id`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `tab_session_states` (" +
+                        "`tab_id` INTEGER NOT NULL, " +
+                        "`state` BLOB NOT NULL, " +
+                        "PRIMARY KEY(`tab_id`), " +
+                        "FOREIGN KEY(`tab_id`) REFERENCES `tabs`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+            }
+        }
+
+        /** Every migration in order; the single list used by production and tests. */
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+            MIGRATION_8_9,
+        )
     }
 }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -580,5 +581,215 @@ class TabRepositoryTest {
 
         awaitRoom { dao.count() == 1 }
         assertEquals(first, dao.byPosition().single().id)
+    }
+
+    // ── Opener relation (Back at the first page of a popup tab) ─────────
+
+    @Test
+    fun `popup tab records a live same-mode opener only`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val opener = repository.workspace.value.activeTabId!!
+
+        val child = repository.newTab("https://child.example/", openerTabId = opener)!!
+        val unknownOpener = repository.newTab("https://x.example/", openerTabId = 9_999L)!!
+        val crossMode = repository.newTab("https://p.example/", BrowsingMode.Private, openerTabId = opener)!!
+
+        val tabs = repository.workspace.value.tabs.associateBy { it.id }
+        assertEquals(opener, tabs.getValue(child).openerTabId)
+        assertNull(tabs.getValue(unknownOpener).openerTabId)
+        assertNull(tabs.getValue(crossMode).openerTabId)
+        assertEquals(opener, dao.byPosition().single { it.id == child }.openerTabId)
+    }
+
+    @Test
+    fun `closing an active popup returns to its opener and preserves it`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val opener = repository.workspace.value.activeTabId!!
+        repository.urlCommitted(opener, "https://opener.example/page")
+        repository.saveSessionState(opener, byteArrayOf(1, 2, 3))
+        val unrelated = repository.newTab("https://unrelated.example/")!!
+        repository.switchTo(opener)
+        val child = repository.newTab("https://child.example/", openerTabId = opener)!!
+
+        repository.closeTab(child)
+
+        val workspace = repository.workspace.value
+        // Without the opener rule the next position (unrelated) would win; the opener must.
+        assertEquals(opener, workspace.activeTabId)
+        assertEquals(listOf(opener, unrelated), workspace.tabs.map { it.id })
+        assertEquals("https://opener.example/page", workspace.activeTab!!.url)
+        assertArrayEquals(byteArrayOf(1, 2, 3), repository.sessionState(opener))
+    }
+
+    @Test
+    fun `closing an opener re-parents its children to the nearest surviving ancestor`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val root = repository.workspace.value.activeTabId!!
+        val middle = repository.newTab("https://middle.example/", openerTabId = root)!!
+        val leaf = repository.newTab("https://leaf.example/", openerTabId = middle)!!
+
+        repository.closeTab(middle)
+        assertEquals(root, repository.workspace.value.tabs.single { it.id == leaf }.openerTabId)
+        assertEquals(root, dao.byPosition().single { it.id == leaf }.openerTabId)
+
+        // Back from the leaf's first page now returns to the root.
+        repository.closeTab(leaf)
+        assertEquals(root, repository.workspace.value.activeTabId)
+    }
+
+    @Test
+    fun `private popup returns to its private opener`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val first = repository.newTab("https://one.example/", BrowsingMode.Private)!!
+        repository.newTab("https://two.example/", BrowsingMode.Private)
+        repository.switchTo(first)
+        val child = repository.newTab("https://child.example/", BrowsingMode.Private, openerTabId = first)!!
+
+        repository.closeTab(child)
+
+        assertEquals(first, repository.workspace.value.activeTabId)
+    }
+
+    @Test
+    fun `opener relation survives a restart`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val opener = repository.workspace.value.activeTabId!!
+        val child = repository.newTab("https://child.example/", openerTabId = opener)!!
+
+        repository = newRepository()
+        repository.restore()
+
+        assertEquals(child, repository.workspace.value.activeTabId)
+        assertEquals(opener, repository.workspace.value.openerOf(child)?.id)
+    }
+
+    // ── Navigation (session) state ───────────────────────────────────────
+
+    @Test
+    fun `session state is readable immediately and persisted by a flush`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val id = repository.workspace.value.activeTabId!!
+
+        repository.saveSessionState(id, byteArrayOf(1))
+        repository.saveSessionState(id, byteArrayOf(2, 3))
+        assertArrayEquals(byteArrayOf(2, 3), repository.sessionState(id))
+
+        repository.flushPending()
+        assertArrayEquals(byteArrayOf(2, 3), dao.sessionState(id))
+
+        // A new process restores the exact navigation state from Room.
+        repository = newRepository()
+        repository.restore()
+        assertArrayEquals(byteArrayOf(2, 3), repository.sessionState(id))
+    }
+
+    @Test
+    fun `oversized session state clears the stored one`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val id = repository.workspace.value.activeTabId!!
+        repository.saveSessionState(id, byteArrayOf(1))
+        repository.flushPending()
+
+        repository.saveSessionState(id, ByteArray(TabRepository.MAX_SESSION_STATE_BYTES + 1))
+        assertNull(repository.sessionState(id))
+        repository.flushPending()
+
+        assertNull(dao.sessionState(id))
+    }
+
+    @Test
+    fun `session state of an unknown or closed tab is never stored`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val first = repository.workspace.value.activeTabId!!
+        val second = repository.newTab("https://a.example/")!!
+        repository.saveSessionState(second, byteArrayOf(5))
+        repository.flushPending()
+
+        repository.closeTab(second)
+        repository.saveSessionState(second, byteArrayOf(6))
+        repository.saveSessionState(9_999L, byteArrayOf(7))
+        repository.flushPending()
+
+        assertNull(repository.sessionState(second))
+        assertNull(dao.sessionState(second))
+        assertNull(dao.sessionState(9_999L))
+        assertEquals(listOf(first), dao.byPosition().map { it.id })
+    }
+
+    @Test
+    fun `private session state stays in memory and ends with the private session`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val privateId = repository.newTab("https://p.example/", BrowsingMode.Private)!!
+
+        repository.saveSessionState(privateId, byteArrayOf(4))
+        repository.flushPending()
+        assertArrayEquals(byteArrayOf(4), repository.sessionState(privateId))
+
+        repository.closeTabs(BrowsingMode.Private)
+        assertNull(repository.sessionState(privateId))
+    }
+
+    @Test
+    fun `restore drops navigation state of tabs whose url is unsafe`() = runTest {
+        val bad = dao.insert(TabEntity(url = "javascript:alert(1)", position = 0, isActive = true, createdAt = 1, lastAccessedAt = 1))
+        dao.upsertSessionState(bad, byteArrayOf(1))
+        repository = newRepository()
+
+        repository.restore()
+
+        assertNull(repository.sessionState(bad))
+    }
+
+    // ── Undo close ───────────────────────────────────────────────────────
+
+    @Test
+    fun `reopening a closed tab restores position pin opener title and history`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val first = repository.workspace.value.activeTabId!!
+        val second = repository.newTab("https://second.example/", openerTabId = first)!!
+        repository.newTab("https://third.example/")
+        repository.titleReceived(second, "Second")
+        repository.saveSessionState(second, byteArrayOf(8, 9))
+        val closed = repository.workspace.value.tabs.single { it.id == second }
+
+        repository.closeTab(second)
+        val reopened = repository.reopenClosedTab(closed)!!
+
+        val workspace = repository.workspace.value
+        val tab = workspace.tabs.single { it.id == reopened }
+        assertEquals(reopened, workspace.activeTabId)
+        assertEquals(1, tab.position)
+        assertEquals("Second", tab.title)
+        assertEquals("https://second.example/", tab.url)
+        assertEquals(first, tab.openerTabId)
+        assertEquals(listOf(0, 1, 2), dao.byPosition().map { it.position })
+        assertArrayEquals(byteArrayOf(8, 9), repository.sessionState(reopened))
+        assertArrayEquals(byteArrayOf(8, 9), dao.sessionState(reopened))
+    }
+
+    @Test
+    fun `reopening a pinned tab keeps it inside the pinned segment`() = runTest {
+        repository = newRepository()
+        repository.restore()
+        val first = repository.workspace.value.activeTabId!!
+        val second = repository.newTab("https://second.example/")!!
+        repository.pinTab(second)
+        val closed = repository.workspace.value.tabs.single { it.id == second }
+
+        repository.closeTab(second)
+        val reopened = repository.reopenClosedTab(closed)!!
+
+        assertEquals(listOf(reopened, first), repository.workspace.value.tabs.map { it.id })
+        assertEquals(listOf(true, false), repository.workspace.value.tabs.map { it.isPinned })
     }
 }

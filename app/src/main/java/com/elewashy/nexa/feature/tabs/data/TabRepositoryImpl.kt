@@ -1,5 +1,6 @@
 package com.elewashy.nexa.feature.tabs.data
 
+import android.util.Log
 import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.core.common.BrowserUrls
 import com.elewashy.nexa.core.common.DispatcherProvider
@@ -12,6 +13,7 @@ import com.elewashy.nexa.feature.tabs.domain.model.TabWorkspaceState
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,18 +28,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Workspace (tab list + active pointer) persistence coordinator.
+ * Workspace (tab list + active pointer + per-tab navigation state) persistence coordinator.
  *
- * Write policy — the Phase 2 download-store lesson applied to tabs:
- *  - Structural events (create / close / switch / restore healing) commit
+ * Write policy:
+ *  - Structural events (create / close / switch / reopen / restore healing) commit
  *    immediately, one transaction each, so any kill leaves a valid workspace.
- *  - URL commits and title updates are high-frequency and non-structural:
- *    they are coalesced for [COALESCE_WINDOW_MS] and written as plain
- *    UPDATEs. Losing up to one window of them on a kill is harmless —
- *    restore degrades to the last persisted URL/title.
+ *  - URL commits, title updates, and navigation-state snapshots are high-frequency and
+ *    non-structural: they are coalesced for [COALESCE_WINDOW_MS] and written as plain
+ *    UPSERT/UPDATEs. The host forces a flush in `onStop`, before the process becomes killable.
  *
- * All mutations are serialized on [mutex]. [workspace] is the UI's single source of truth and
- * publishes the ordered tabs, active pointer, and restore status atomically while Room catches up.
+ * All structural mutations are serialized on [mutex]. [workspace] is the UI's single source of
+ * truth and publishes the ordered tabs, active pointer, and restore status atomically while Room
+ * catches up.
  */
 @Singleton
 class TabRepositoryImpl @Inject constructor(
@@ -60,9 +62,16 @@ class TabRepositoryImpl @Inject constructor(
 
     private data class PendingWrite(val url: String? = null, val title: String? = null)
 
+    /**
+     * Pending navigation-state write; null [bytes] deletes the stored state. Compared by identity
+     * so a drain removes only the exact snapshot it wrote.
+     */
+    private class SessionStateWrite(val bytes: ByteArray?)
+
     private sealed interface MetadataMutation {
         data class Url(val tabId: Long, val value: String) : MetadataMutation
         data class Title(val tabId: Long, val value: String) : MetadataMutation
+        data object SessionState : MetadataMutation
         data class Flush(val completion: CompletableDeferred<Unit>) : MetadataMutation
     }
 
@@ -71,12 +80,30 @@ class TabRepositoryImpl @Inject constructor(
     /** Preserves WebView callback order and serializes metadata with structural workspace changes. */
     private val metadataMutations = Channel<MetadataMutation>(Channel.UNLIMITED)
 
+    /**
+     * Makes "is the tab still live?" + "record its state" atomic against a close, which publishes
+     * the workspace without the tab first and then discards its states under this lock.
+     */
+    private val sessionStateLock = Any()
+    private val pendingSessionStates = ConcurrentHashMap<Long, SessionStateWrite>()
+    private val privateSessionStates = ConcurrentHashMap<Long, ByteArray>()
+
+    /**
+     * Navigation state of the most recently closed tabs, keyed by their former id, so undo
+     * restores history too. Bounded; guarded by [mutex].
+     */
+    private val recentlyClosedStates = object : LinkedHashMap<Long, ByteArray>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>?) =
+            size > MAX_RECENTLY_CLOSED_STATES
+    }
+
     init {
         appScope.launch {
             for (mutation in metadataMutations) {
                 when (mutation) {
                     is MetadataMutation.Url -> applyUrlMutation(mutation.tabId, mutation.value)
                     is MetadataMutation.Title -> applyTitleMutation(mutation.tabId, mutation.value)
+                    MetadataMutation.SessionState -> scheduleFlush()
                     is MetadataMutation.Flush -> {
                         flushJob?.cancel()
                         flushJob = null
@@ -100,10 +127,11 @@ class TabRepositoryImpl @Inject constructor(
             if (rows.withIndex().any { (position, row) -> row.position != position }) {
                 dao.reorder(rows.map { it.id })
             }
-            // A persisted URL that can never load (javascript:, file:, …)
-            // keeps its tab but becomes home — silently dropping tabs reads as data loss.
+            // A persisted URL that can never load (javascript:, file:, …) keeps its tab but
+            // becomes a fresh home tab — silently dropping tabs reads as data loss.
             rows.filter { !isSafeLoadableUrl(it.url) }.forEach { bad ->
                 dao.updateUrl(bad.id, BrowserUrls.HOME)
+                dao.deleteSessionState(bad.id)
             }
             // Self-heal the exactly-one-active invariant against corrupted persistent state.
             val actives = rows.filter { it.isActive }
@@ -115,10 +143,15 @@ class TabRepositoryImpl @Inject constructor(
         refreshStateLocked(isRestored = true)
     }
 
-    override suspend fun newTab(url: String, mode: BrowsingMode): Long? = mutex.withLock {
+    override suspend fun newTab(
+        url: String,
+        mode: BrowsingMode,
+        openerTabId: Long?,
+    ): Long? = mutex.withLock {
         if (_workspace.value.tabs.size >= TabRepository.MAX_TABS) return null
         val now = System.currentTimeMillis()
         val safeUrl = url.takeIf { isSafeLoadableUrl(it) } ?: BrowserUrls.HOME
+        val opener = liveOpenerLocked(openerTabId, mode)
         if (mode == BrowsingMode.Private) {
             val id = nextPrivateId--
             privateTabs = (privateTabs + TabItem(
@@ -130,6 +163,7 @@ class TabRepositoryImpl @Inject constructor(
                 createdAt = now,
                 lastAccessedAt = now,
                 browsingMode = BrowsingMode.Private,
+                openerTabId = opener,
             )).canonicalized()
             publishStateLocked(activeTabId = id)
             return id
@@ -143,7 +177,60 @@ class TabRepositoryImpl @Inject constructor(
                 isActive = true,
                 createdAt = now,
                 lastAccessedAt = now,
+                openerTabId = opener,
             )
+        )
+        refreshStateLocked(activeTabId = id)
+        id
+    }
+
+    override suspend fun reopenClosedTab(tab: TabItem): Long? = mutex.withLock {
+        if (_workspace.value.tabs.size >= TabRepository.MAX_TABS) return null
+        val now = System.currentTimeMillis()
+        val safeUrl = tab.url.takeIf { isSafeLoadableUrl(it) } ?: BrowserUrls.HOME
+        val opener = liveOpenerLocked(tab.openerTabId, tab.browsingMode)
+        // History is only meaningful for the page it was captured on.
+        val state = recentlyClosedStates.remove(tab.id)?.takeIf { safeUrl == tab.url }
+
+        if (tab.isPrivate) {
+            val id = nextPrivateId--
+            val index = insertionIndex(privateTabs.map { it.isPinned }, tab.isPinned, tab.position)
+            privateTabs = privateTabs.toMutableList()
+                .apply {
+                    add(
+                        index,
+                        tab.copy(
+                            id = id,
+                            url = safeUrl,
+                            isActive = true,
+                            lastAccessedAt = now,
+                            openerTabId = opener,
+                        ),
+                    )
+                }
+                .mapIndexed { position, item -> item.copy(position = position) }
+            // The id is not published yet, so no concurrent save can race this write.
+            if (state != null) privateSessionStates[id] = state
+            publishStateLocked(activeTabId = id)
+            return id
+        }
+
+        val rows = dao.byPosition()
+        val index = insertionIndex(rows.map { it.isPinned }, tab.isPinned, tab.position)
+        val id = dao.insertAtAndActivate(
+            entity = TabEntity(
+                url = safeUrl,
+                title = tab.title,
+                position = index,
+                isPinned = tab.isPinned,
+                isActive = true,
+                createdAt = tab.createdAt,
+                lastAccessedAt = now,
+                openerTabId = opener,
+            ),
+            orderedExistingIds = rows.map { it.id },
+            index = index,
+            sessionState = state,
         )
         refreshStateLocked(activeTabId = id)
         id
@@ -162,9 +249,9 @@ class TabRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun pinTab(tabId: Long) = setPinned(tabId, isPinned = true)
+    override suspend fun pinTab(tabId: Long) = setTabsPinned(setOf(tabId), isPinned = true)
 
-    override suspend fun unpinTab(tabId: Long) = setPinned(tabId, isPinned = false)
+    override suspend fun unpinTab(tabId: Long) = setTabsPinned(setOf(tabId), isPinned = false)
 
     override suspend fun setTabsPinned(tabIds: Set<Long>, isPinned: Boolean): Unit = mutex.withLock {
         if (tabIds.isEmpty()) return
@@ -208,53 +295,64 @@ class TabRepositoryImpl @Inject constructor(
     override suspend fun closeTabs(tabIds: Set<Long>): Unit = mutex.withLock {
         if (tabIds.isEmpty()) return
         val currentWorkspace = _workspace.value
-        val existingIds = currentWorkspace.tabs.asSequence()
-            .filter { it.id in tabIds }
-            .mapTo(mutableSetOf()) { it.id }
-        if (existingIds.isEmpty()) return
+        val closing = currentWorkspace.tabs.filter { it.id in tabIds }
+        if (closing.isEmpty()) return
+        val closingIds = closing.mapTo(mutableSetOf()) { it.id }
+        val activeId = currentWorkspace.activeTabId
 
-        val privateIds = existingIds.filterTo(mutableSetOf()) { it < 0L }
+        retainRecentlyClosedStatesLocked(closing)
+
+        val privateIds = closingIds.filterTo(mutableSetOf()) { it < 0L }
+        var privateSuccessor: Long? = null
         if (privateIds.isNotEmpty()) {
-            privateTabs = privateTabs.filterNot { it.id in privateIds }.canonicalized()
+            val openerById = privateTabs.associate { it.id to it.openerTabId }
+            if (activeId != null && activeId in privateIds) {
+                privateSuccessor = successorOf(activeId, privateTabs.map { it.id }, openerById, privateIds)
+            }
+            privateTabs = privateTabs
+                .filterNot { it.id in privateIds }
+                .map { tab ->
+                    if (tab.openerTabId in privateIds) {
+                        tab.copy(openerTabId = survivingAncestor(tab.openerTabId, openerById, privateIds))
+                    } else {
+                        tab
+                    }
+                }
+                .canonicalized()
         }
 
-        val normalIds = existingIds.filterTo(mutableSetOf()) { it >= 0L }
+        val normalIds = closingIds.filterTo(mutableSetOf()) { it >= 0L }
         var persistedActiveId = dao.activeTab()?.id
         if (normalIds.isNotEmpty()) {
-            val currentRows = dao.byPosition()
-            val remaining = currentRows.filterNot { it.id in normalIds }
+            val rows = dao.byPosition()
+            val remaining = rows.filterNot { it.id in normalIds }
             if (remaining.isEmpty()) {
                 val now = System.currentTimeMillis()
                 persistedActiveId = dao.replaceWithActive(homeTab(position = 0, timestamp = now))
             } else {
-                val currentActiveIndex = currentRows.indexOfFirst { it.id == persistedActiveId }
-                val nextId = if (persistedActiveId in normalIds) {
-                    currentRows.asSequence().drop(currentActiveIndex + 1)
-                        .firstOrNull { it.id !in normalIds }?.id
-                        ?: currentRows.asSequence().take(currentActiveIndex)
-                            .lastOrNull { it.id !in normalIds }?.id
+                val openerById = rows.associate { it.id to it.openerTabId }
+                val currentPersistedActive = persistedActiveId
+                val nextId = if (currentPersistedActive != null && currentPersistedActive in normalIds) {
+                    successorOf(currentPersistedActive, rows.map { it.id }, openerById, normalIds)
                 } else {
                     null
                 }
-                dao.deleteActivateAndReorder(normalIds, nextId, remaining.map { it.id })
+                val openerUpdates = remaining
+                    .filter { it.openerTabId in normalIds }
+                    .associate { it.id to survivingAncestor(it.openerTabId, openerById, normalIds) }
+                dao.deleteActivateAndReorder(normalIds, nextId, remaining.map { it.id }, openerUpdates)
                 if (nextId != null) persistedActiveId = nextId
             }
             normalIds.forEach(pending::remove)
         }
 
-        val activeId = currentWorkspace.activeTabId
         val resolvedActiveId = when {
-            activeId !in existingIds -> activeId
-            privateTabs.isNotEmpty() && activeId in privateIds -> {
-                val closedIndex = currentWorkspace.tabs
-                    .filter { it.isPrivate }
-                    .indexOfFirst { it.id == activeId }
-                privateTabs.getOrNull(closedIndex)?.id ?: privateTabs.lastOrNull()?.id
-                    ?: persistedActiveId
-            }
+            activeId !in closingIds -> activeId
+            activeId in privateIds -> privateSuccessor ?: persistedActiveId
             else -> persistedActiveId
         }
         publishStateLocked(activeTabId = resolvedActiveId)
+        discardSessionStates(closingIds)
     }
 
     override suspend fun closeTabs(mode: BrowsingMode): Unit = mutex.withLock {
@@ -264,16 +362,21 @@ class TabRepositoryImpl @Inject constructor(
             val activeId = if (_workspace.value.activeTabId in privateIds) dao.activeTab()?.id
                 else _workspace.value.activeTabId
             publishStateLocked(activeTabId = activeId)
+            discardSessionStates(privateIds)
+            // Ending the private session must leave nothing of it behind, undo state included.
+            recentlyClosedStates.keys.removeAll { it < 0L }
             return
         }
 
-        dao.byPosition().forEach { row -> pending.remove(row.id) }
+        val normalIds = dao.byPosition().map { it.id }
+        normalIds.forEach(pending::remove)
         val now = System.currentTimeMillis()
         val id = dao.replaceWithActive(homeTab(position = 0, timestamp = now))
         val activeId = _workspace.value.activeTabId
             .takeIf { current -> privateTabs.any { it.id == current } }
             ?: id
         publishStateLocked(activeTabId = activeId)
+        discardSessionStates(normalIds)
     }
 
     override fun discardPrivateTabs() {
@@ -298,6 +401,35 @@ class TabRepositoryImpl @Inject constructor(
         metadataMutations.trySend(MetadataMutation.Title(tabId, title))
     }
 
+    override fun saveSessionState(tabId: Long, state: ByteArray) {
+        val bounded = state.takeIf { it.isNotEmpty() && it.size <= TabRepository.MAX_SESSION_STATE_BYTES }
+        synchronized(sessionStateLock) {
+            if (_workspace.value.tabs.none { it.id == tabId }) return
+            if (tabId < 0L) {
+                if (bounded == null) privateSessionStates.remove(tabId) else privateSessionStates[tabId] = bounded
+                return
+            }
+            pendingSessionStates[tabId] = SessionStateWrite(bounded)
+        }
+        metadataMutations.trySend(MetadataMutation.SessionState)
+    }
+
+    override suspend fun sessionState(tabId: Long): ByteArray? {
+        if (tabId < 0L) return privateSessionStates[tabId]
+        pendingSessionStates[tabId]?.let { return it.bytes }
+        return try {
+            dao.sessionState(tabId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // An unreadable row (corruption, oversized blob from an older build) must never block
+            // the tab from opening: drop it and fall back to the persisted URL.
+            Log.w(TAG, "Discarding unreadable session state for tab $tabId", e)
+            runCatching { dao.deleteSessionState(tabId) }
+            null
+        }
+    }
+
     override fun requestFlush() {
         metadataMutations.trySend(MetadataMutation.Flush(CompletableDeferred()))
     }
@@ -306,10 +438,6 @@ class TabRepositoryImpl @Inject constructor(
         val completion = CompletableDeferred<Unit>()
         metadataMutations.send(MetadataMutation.Flush(completion))
         completion.await()
-    }
-
-    private suspend fun setPinned(tabId: Long, isPinned: Boolean) {
-        setTabsPinned(setOf(tabId), isPinned)
     }
 
     private suspend fun applyUrlMutation(tabId: Long, url: String) = mutex.withLock {
@@ -339,6 +467,7 @@ class TabRepositoryImpl @Inject constructor(
         scheduleFlush()
     }
 
+    /** Called only from the metadata actor, which owns [flushJob]. */
     private fun scheduleFlush() {
         if (flushJob?.isActive == true) return
         flushJob = appScope.launch(dispatchers.io) {
@@ -353,8 +482,8 @@ class TabRepositoryImpl @Inject constructor(
      * Drains all pending writes to Room.
      *
      * Serialized on [flushMutex] so two drains can never interleave their
-     * writes (which would let an older URL land after a newer one), and an
-     * entry leaves [pending] only after its writes were issued — a drain
+     * writes (which would let an older value land after a newer one), and an
+     * entry leaves its pending map only after its writes were issued — a drain
      * cancelled mid-flight therefore loses nothing: the remainder stays
      * queued for the next drain.
      */
@@ -362,7 +491,8 @@ class TabRepositoryImpl @Inject constructor(
         flushMutex.withLock {
             while (true) {
                 val writes = HashMap(pending)
-                if (writes.isEmpty()) break
+                val states = HashMap(pendingSessionStates)
+                if (writes.isEmpty() && states.isEmpty()) break
                 writes.forEach { (id, write) ->
                     write.url?.let { dao.updateUrl(id, it) }
                     write.title?.let { dao.updateTitle(id, it) }
@@ -370,9 +500,37 @@ class TabRepositoryImpl @Inject constructor(
                     // writes were in flight — only remove the exact snapshot.
                     pending.remove(id, write)
                 }
+                states.forEach { (id, write) ->
+                    val bytes = write.bytes
+                    if (bytes != null) dao.upsertSessionState(id, bytes) else dao.deleteSessionState(id)
+                    pendingSessionStates.remove(id, write)
+                }
             }
         }
     }
+
+    /** Keeps the navigation state of the last closed tabs so [reopenClosedTab] restores history. */
+    private suspend fun retainRecentlyClosedStatesLocked(closing: List<TabItem>) {
+        closing.takeLast(MAX_RECENTLY_CLOSED_STATES).forEach { tab ->
+            sessionState(tab.id)?.let { recentlyClosedStates[tab.id] = it }
+        }
+    }
+
+    /** Drops in-memory states of tabs that are no longer published. Room rows cascade. */
+    private fun discardSessionStates(tabIds: Collection<Long>) {
+        synchronized(sessionStateLock) {
+            tabIds.forEach { id ->
+                pendingSessionStates.remove(id)
+                privateSessionStates.remove(id)
+            }
+        }
+    }
+
+    /** [openerTabId] when it names a live tab in [mode]; otherwise null. Callers hold [mutex]. */
+    private fun liveOpenerLocked(openerTabId: Long?, mode: BrowsingMode): Long? =
+        openerTabId?.takeIf { id ->
+            _workspace.value.tabs.any { it.id == id && it.browsingMode == mode }
+        }
 
     /** Re-reads Room and publishes. Callers hold [mutex]. */
     private suspend fun refreshStateLocked(
@@ -382,7 +540,7 @@ class TabRepositoryImpl @Inject constructor(
         val rows = dao.byPosition()
         val resolvedActiveId = activeTabId
             .takeIf { id -> privateTabs.any { it.id == id } }
-            ?: dao.activeTab()?.id
+            ?: rows.firstOrNull { it.isActive }?.id
         publishStateLocked(rows, resolvedActiveId, isRestored)
     }
 
@@ -438,6 +596,7 @@ class TabRepositoryImpl @Inject constructor(
         createdAt = createdAt,
         lastAccessedAt = lastAccessedAt,
         isPinned = isPinned,
+        openerTabId = openerTabId,
     )
 
     /**
@@ -482,6 +641,54 @@ class TabRepositoryImpl @Inject constructor(
         movedWithinPinSegmentBy(tabId, newPosition, TabEntity::id, TabEntity::isPinned) { copy(position = it) }
 
     private companion object {
+        const val TAG = "TabRepository"
         const val COALESCE_WINDOW_MS = 800L
+        const val MAX_RECENTLY_CLOSED_STATES = 3
+
+        /**
+         * The tab that becomes active when [activeId] closes: its nearest surviving opener (the
+         * page that spawned it), else the next surviving position, else the previous one.
+         */
+        fun successorOf(
+            activeId: Long,
+            orderedIds: List<Long>,
+            openerById: Map<Long, Long?>,
+            closing: Set<Long>,
+        ): Long? {
+            survivingAncestor(openerById[activeId], openerById, closing)?.let { return it }
+            val index = orderedIds.indexOf(activeId)
+            if (index < 0) return null
+            return orderedIds.subList(index + 1, orderedIds.size).firstOrNull { it !in closing }
+                ?: orderedIds.subList(0, index).lastOrNull { it !in closing }
+        }
+
+        /**
+         * Walks up the opener chain from [openerId] (inclusive) to the first live tab that is not
+         * being closed. The visited set makes corrupted (cyclic) data terminate safely.
+         */
+        fun survivingAncestor(
+            openerId: Long?,
+            openerById: Map<Long, Long?>,
+            closing: Set<Long>,
+        ): Long? {
+            var candidate = openerId
+            val visited = HashSet<Long>()
+            while (candidate != null && visited.add(candidate)) {
+                if (candidate !in openerById) return null
+                if (candidate !in closing) return candidate
+                candidate = openerById[candidate]
+            }
+            return null
+        }
+
+        /** Canonical insertion index for a tab with [isPinned] near [requested] in its segment. */
+        fun insertionIndex(pinnedFlags: List<Boolean>, isPinned: Boolean, requested: Int): Int {
+            val pinnedCount = pinnedFlags.count { it }
+            return if (isPinned) {
+                requested.coerceIn(0, pinnedCount)
+            } else {
+                requested.coerceIn(pinnedCount, pinnedFlags.size)
+            }
+        }
     }
 }

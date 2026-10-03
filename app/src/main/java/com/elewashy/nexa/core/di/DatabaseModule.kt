@@ -22,14 +22,6 @@ object DatabaseModule {
     @Singleton
     fun provideNexaDatabase(@ApplicationContext context: Context): NexaDatabase =
         Room.databaseBuilder(context, NexaDatabase::class.java, "nexa.db")
-            .addMigrations(
-                NexaDatabase.MIGRATION_1_2,
-                NexaDatabase.MIGRATION_2_3,
-                NexaDatabase.MIGRATION_3_4,
-                NexaDatabase.MIGRATION_4_5,
-                NexaDatabase.MIGRATION_5_6,
-                NexaDatabase.MIGRATION_6_7,
-                NexaDatabase.MIGRATION_7_8,
-            )
+            .addMigrations(*NexaDatabase.ALL_MIGRATIONS)
             .build()
 }

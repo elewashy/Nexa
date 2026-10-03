@@ -4,7 +4,11 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.elewashy.nexa.feature.tabs.data.persistence.TabEntity
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,8 +19,10 @@ import org.robolectric.RobolectricTestRunner
  * must upgrade through [NexaDatabase.MIGRATION_1_2],
  * [NexaDatabase.MIGRATION_2_3], [NexaDatabase.MIGRATION_3_4], and
  * [NexaDatabase.MIGRATION_4_5], [NexaDatabase.MIGRATION_5_6],
- * [NexaDatabase.MIGRATION_6_7], and [NexaDatabase.MIGRATION_7_8] with every
- * row intact; a version 2 database must upgrade to 8.
+ * [NexaDatabase.MIGRATION_6_7], [NexaDatabase.MIGRATION_7_8], and
+ * [NexaDatabase.MIGRATION_8_9] with every row intact; a version 2 database
+ * must upgrade to 9. Opening through Room also validates the migrated schema
+ * against the entities.
  */
 @RunWith(RobolectricTestRunner::class)
 class NexaDatabaseMigrationTest {
@@ -24,7 +30,7 @@ class NexaDatabaseMigrationTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
-    fun `migration 1 to 8 preserves history and adds download tab and bookmark tables`() {
+    fun `migration 1 to 9 preserves history and adds download tab and bookmark tables`() {
         val dbName = "migration-1-5-test.db"
 
         // Build a genuine version-1 database (Phase 1 schema) outside Room.
@@ -55,15 +61,7 @@ class NexaDatabaseMigrationTest {
 
         // Open through Room with the full production migration chain.
         val db = Room.databaseBuilder(context, NexaDatabase::class.java, dbName)
-            .addMigrations(
-                NexaDatabase.MIGRATION_1_2,
-                NexaDatabase.MIGRATION_2_3,
-                NexaDatabase.MIGRATION_3_4,
-                NexaDatabase.MIGRATION_4_5,
-                NexaDatabase.MIGRATION_5_6,
-                NexaDatabase.MIGRATION_6_7,
-                NexaDatabase.MIGRATION_7_8,
-            )
+            .addMigrations(*NexaDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 
@@ -86,7 +84,7 @@ class NexaDatabaseMigrationTest {
             // Version advanced to the end of the chain.
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(8, cursor.getInt(0))
+                assertEquals(9, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -94,7 +92,7 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `migration 2 to 8 preserves history and all download data`() {
+    fun `migration 2 to 9 preserves history and all download data`() {
         val dbName = "migration-2-4-test.db"
 
         // Build a genuine version-2 database (Phase 2 schema) outside Room.
@@ -168,15 +166,7 @@ class NexaDatabaseMigrationTest {
         }
 
         val db = Room.databaseBuilder(context, NexaDatabase::class.java, dbName)
-            .addMigrations(
-                NexaDatabase.MIGRATION_1_2,
-                NexaDatabase.MIGRATION_2_3,
-                NexaDatabase.MIGRATION_3_4,
-                NexaDatabase.MIGRATION_4_5,
-                NexaDatabase.MIGRATION_5_6,
-                NexaDatabase.MIGRATION_6_7,
-                NexaDatabase.MIGRATION_7_8,
-            )
+            .addMigrations(*NexaDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 
@@ -221,7 +211,7 @@ class NexaDatabaseMigrationTest {
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(8, cursor.getInt(0))
+                assertEquals(9, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -229,7 +219,7 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `migration 3 to 8 normalizes tabs and keeps existing data`() {
+    fun `migration 3 to 9 normalizes tabs keeps ids and adds session restoration`() {
         val dbName = "migration-3-4-test.db"
 
         context.deleteDatabase(dbName)
@@ -311,6 +301,12 @@ class NexaDatabaseMigrationTest {
                     "('https://later.example/', 'Later', 9, 1, 20, 20), " +
                     "('https://earlier.example/', 'Earlier', 3, 0, 10, 10)"
             )
+            // A closed tab leaves the AUTOINCREMENT high-water mark above the max live id.
+            v3.execSQL(
+                "INSERT INTO tabs (url, title, position, is_active, created_at, last_accessed_at) " +
+                    "VALUES ('https://closed.example/', 'Closed', 10, 0, 30, 30)"
+            )
+            v3.execSQL("DELETE FROM tabs WHERE url = 'https://closed.example/'")
 
             v3.execSQL(
                 "CREATE TABLE IF NOT EXISTS `bookmarks` (" +
@@ -328,13 +324,7 @@ class NexaDatabaseMigrationTest {
         }
 
         val db = Room.databaseBuilder(context, NexaDatabase::class.java, dbName)
-            .addMigrations(
-                NexaDatabase.MIGRATION_3_4,
-                NexaDatabase.MIGRATION_4_5,
-                NexaDatabase.MIGRATION_5_6,
-                NexaDatabase.MIGRATION_6_7,
-                NexaDatabase.MIGRATION_7_8,
-            )
+            .addMigrations(*NexaDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 
@@ -353,9 +343,32 @@ class NexaDatabaseMigrationTest {
                 assertEquals(1, cursor.getInt(1))
                 assertEquals(0, cursor.getInt(2))
             }
+            // v9: ids kept, no opener yet, and closed ids are never reused.
+            sqliteDb.query("SELECT id, opener_tab_id FROM tabs ORDER BY id").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(1L, cursor.getLong(0))
+                assertTrue(cursor.isNull(1))
+                cursor.moveToNext()
+                assertEquals(2L, cursor.getLong(0))
+            }
+            val newId = runBlocking {
+                db.tabsDao().insert(
+                    TabEntity(url = "https://new.example/", position = 2, isActive = false, createdAt = 40, lastAccessedAt = 40)
+                )
+            }
+            assertEquals(4L, newId)
+            // Foreign keys are live on the rebuilt table: state cascades, openers null out.
+            runBlocking {
+                val dao = db.tabsDao()
+                dao.updateOpener(newId, openerTabId = 1L)
+                dao.upsertSessionState(1L, byteArrayOf(1))
+                dao.delete(setOf(1L))
+                assertNull(dao.sessionState(1L))
+                assertNull(dao.byPosition().single { it.id == newId }.openerTabId)
+            }
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(8, cursor.getInt(0))
+                assertEquals(9, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -363,19 +376,11 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `fresh install creates version 8 directly`() {
+    fun `fresh install creates version 9 directly`() {
         val dbName = "fresh-test.db"
         context.deleteDatabase(dbName)
         val db = Room.databaseBuilder(context, NexaDatabase::class.java, dbName)
-            .addMigrations(
-                NexaDatabase.MIGRATION_1_2,
-                NexaDatabase.MIGRATION_2_3,
-                NexaDatabase.MIGRATION_3_4,
-                NexaDatabase.MIGRATION_4_5,
-                NexaDatabase.MIGRATION_5_6,
-                NexaDatabase.MIGRATION_6_7,
-                NexaDatabase.MIGRATION_7_8,
-            )
+            .addMigrations(*NexaDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
         try {
@@ -385,7 +390,7 @@ class NexaDatabaseMigrationTest {
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(8, cursor.getInt(0))
+                assertEquals(9, cursor.getInt(0))
             }
             assertDownloadTablesPresent(sqliteDb)
             assertPhase3TablesPresent(sqliteDb)
@@ -455,6 +460,7 @@ class NexaDatabaseMigrationTest {
         assertTrue(tables.contains("tabs"))
         assertTrue(tables.contains("bookmarks"))
         assertTrue(tables.contains("bookmark_folders"))
+        assertTrue(tables.contains("tab_session_states"))
 
         val tabColumns = mutableSetOf<String>()
         sqliteDb.query("PRAGMA table_info(tabs)").use { cursor ->
@@ -463,7 +469,7 @@ class NexaDatabaseMigrationTest {
         assertEquals(
             setOf(
                 "id", "url", "title", "position", "is_pinned", "is_active",
-                "created_at", "last_accessed_at"
+                "created_at", "last_accessed_at", "opener_tab_id"
             ),
             tabColumns
         )
@@ -489,9 +495,11 @@ class NexaDatabaseMigrationTest {
         }
         assertTrue(indexes.contains("index_bookmarks_url"))
         assertTrue(indexes.contains("index_bookmarks_created_at"))
-        assertTrue(indexes.contains("index_tabs_position"))
+        // Redundant with the (is_pinned, position) composite since v9.
+        assertFalse(indexes.contains("index_tabs_position"))
         assertTrue(indexes.contains("index_tabs_is_pinned_position"))
         assertTrue(indexes.contains("index_tabs_is_active"))
+        assertTrue(indexes.contains("index_tabs_opener_tab_id"))
         sqliteDb.query("PRAGMA index_info(index_bookmarks_url)").use { cursor ->
             cursor.moveToFirst()
             assertEquals("url", cursor.getString(2))

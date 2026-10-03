@@ -12,7 +12,9 @@ internal fun BrowserUiState.toNavBarState(
     val activeMode = workspace.activeTab?.browsingMode ?: BrowsingMode.Normal
     return BrowserNavBarState(
         toolbarVisible = toolbarVisible,
-        backEnabled = backButtonEnabled,
+        // At the start of a popup tab's history Back still works: it returns to the opener.
+        backEnabled = backButtonEnabled ||
+            workspace.activeTabId?.let(workspace::openerOf) != null,
         forwardEnabled = forwardButtonEnabled,
         refreshVisible = refreshButtonVisible,
         homeVisible = goButtonVisible,
