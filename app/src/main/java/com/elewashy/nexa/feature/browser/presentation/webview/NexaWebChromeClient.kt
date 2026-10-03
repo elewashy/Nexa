@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Message
 import android.util.Log
 import android.view.View
 import android.webkit.PermissionRequest
@@ -63,6 +64,13 @@ class NexaWebChromeClient(
     private var fileChooserLauncher: ((Intent) -> Boolean)? = null,
     /** Whether this client's WebView is the attached (visible) tab. */
     private val isAttachedToUi: () -> Boolean = { true },
+    /** New-window requests (`window.open`, `target=_blank`); see [PopupWindowHandler]. */
+    private val popupWindowHandler: PopupWindowHandler? = null,
+    /**
+     * The page called `window.close()` and Blink allowed it (the tab was
+     * opened by a script or has a single history entry, as in Chrome).
+     */
+    private val onCloseWindowEvent: () -> Unit = {},
 ) : WebChromeClient() {
 
     companion object {
@@ -166,6 +174,22 @@ class NexaWebChromeClient(
         // Maintaining a second teardown path previously invoked the callback
         // before clearing state, allowing a reentrant onHideCustomView call.
         onHideCustomView()
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  Windows
+    // ────────────────────────────────────────────────────────────
+
+    override fun onCreateWindow(
+        view: WebView,
+        isDialog: Boolean,
+        isUserGesture: Boolean,
+        resultMsg: Message,
+    ): Boolean = popupWindowHandler?.onCreateWindow(view, isUserGesture, resultMsg) ?: false
+
+    override fun onCloseWindow(window: WebView?) {
+        super.onCloseWindow(window)
+        if (window === webView) onCloseWindowEvent()
     }
 
     // ────────────────────────────────────────────────────────────

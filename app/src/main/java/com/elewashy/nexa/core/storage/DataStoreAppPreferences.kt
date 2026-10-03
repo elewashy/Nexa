@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
@@ -65,6 +66,7 @@ class DataStoreAppPreferences @Inject constructor(
     override val autoRetryDownloads: Flow<Boolean> = settings.map { it.autoRetryDownloads }.distinctUntilChanged()
     override val visualVideoPresentation: Flow<Boolean> = settings.map { it.visualVideoPresentation }.distinctUntilChanged()
     override val showDownloadFilterCounts: Flow<Boolean> = settings.map { it.showDownloadFilterCounts }.distinctUntilChanged()
+    override val filterUpdateIntervalHours: Flow<Int> = settings.map { it.filterUpdateIntervalHours }.distinctUntilChanged()
 
     override suspend fun setThemeMode(mode: Int) {
         ThemeModeSeed.mirrorThemeMode(context, mode)
@@ -147,6 +149,10 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { it[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] = show }
     }
 
+    override suspend fun setFilterUpdateIntervalHours(hours: Int) {
+        dataStore.edit { it[KEY_FILTER_UPDATE_INTERVAL_HOURS] = FilterUpdateInterval.fromStoredValue(hours).hours }
+    }
+
     private data class ThemeSeedSnapshot(
         val themeMode: Int,
         val dynamicColor: Boolean,
@@ -193,6 +199,9 @@ class DataStoreAppPreferences @Inject constructor(
             autoRetryDownloads = this[KEY_AUTO_RETRY_DOWNLOADS] ?: true,
             visualVideoPresentation = this[KEY_VISUAL_VIDEO_PRESENTATION] ?: true,
             showDownloadFilterCounts = this[KEY_SHOW_DOWNLOAD_FILTER_COUNTS] ?: true,
+            filterUpdateIntervalHours = FilterUpdateInterval.fromStoredValue(
+                this[KEY_FILTER_UPDATE_INTERVAL_HOURS] ?: FilterUpdateInterval.DEFAULT.hours
+            ).hours,
         )
     }
 
@@ -216,5 +225,6 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_AUTO_RETRY_DOWNLOADS = booleanPreferencesKey("download_auto_retry")
         val KEY_VISUAL_VIDEO_PRESENTATION = booleanPreferencesKey("download_visual_video_presentation")
         val KEY_SHOW_DOWNLOAD_FILTER_COUNTS = booleanPreferencesKey("download_show_filter_counts")
+        val KEY_FILTER_UPDATE_INTERVAL_HOURS = intPreferencesKey("filter_update_interval_hours")
     }
 }

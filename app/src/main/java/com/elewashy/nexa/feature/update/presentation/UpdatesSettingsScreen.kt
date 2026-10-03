@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LoadingIndicator
@@ -32,10 +35,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,7 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,13 +65,17 @@ import com.elewashy.nexa.R
 import com.elewashy.nexa.core.util.relativeTime
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.components.common.AppSnackbarHost
+import com.elewashy.nexa.feature.browser.data.adblock.AdBlockStatus
+import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
 import com.elewashy.nexa.ui.components.settings.ListSection
+import com.elewashy.nexa.ui.components.settings.SettingsListItem
 import com.elewashy.nexa.ui.components.settings.SwitchSettingsItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.FilterAlt
 import com.elewashy.nexa.ui.icons.UpdateFilled
 import com.elewashy.nexa.ui.icons.Work
 import kotlinx.coroutines.launch
+import java.text.NumberFormat
 import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -88,6 +99,9 @@ fun UpdatesSettingsScreen(
     val updateReleasedAt by viewModel.updateReleasedAt.collectAsStateWithLifecycle()
     val preferencesState by viewModel.preferencesState.collectAsStateWithLifecycle()
     val lastFiltersUpdateTime by viewModel.lastFiltersUpdateTime.collectAsStateWithLifecycle()
+    val adBlockStatus by viewModel.adBlockStatus.collectAsStateWithLifecycle()
+    val filterUpdateInterval by viewModel.filterUpdateInterval.collectAsStateWithLifecycle()
+    var showIntervalDialog by rememberSaveable { mutableStateOf(false) }
 
     val autoUpdateCheck = preferencesState?.autoUpdateCheck
     val showUpdateDialogOnLaunch = preferencesState?.showUpdateDialogOnLaunch
@@ -335,7 +349,7 @@ fun UpdatesSettingsScreen(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier.size(52.dp),
                             ) {
-                                if (isChecking) {
+                                if (isChecking || adBlockStatus.phase != AdBlockStatus.Phase.Ready) {
                                     CircularWavyProgressIndicator(
                                         modifier = Modifier.size(52.dp),
                                     )
@@ -369,12 +383,117 @@ fun UpdatesSettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                FilterStatusText(adBlockStatus)
                             }
                         }
                     }
                 }
+
+                val interval = filterUpdateInterval
+                SettingsListItem(
+                    headlineContent = stringResource(R.string.filter_update_interval),
+                    supportingContent = interval?.let { stringResource(it.labelRes()) },
+                    enabled = interval != null,
+                    onClick = { showIntervalDialog = true },
+                )
             }
             }
         }
     }
+
+    val selectedInterval = filterUpdateInterval
+    if (showIntervalDialog && selectedInterval != null) {
+        FilterUpdateIntervalDialog(
+            selected = selectedInterval,
+            onSelect = {
+                viewModel.setFilterUpdateInterval(it)
+                showIntervalDialog = false
+            },
+            onDismiss = { showIntervalDialog = false },
+        )
+    }
+}
+
+/** Rule counts, active lists and the last update's failures of the content blocker. */
+@Composable
+private fun FilterStatusText(status: AdBlockStatus) {
+    val numberFormat = remember { NumberFormat.getIntegerInstance() }
+    val lines = buildList {
+        when (status.phase) {
+            AdBlockStatus.Phase.Loading -> add(stringResource(R.string.adblock_status_loading))
+            AdBlockStatus.Phase.Updating -> add(stringResource(R.string.adblock_status_updating))
+            AdBlockStatus.Phase.Ready -> Unit
+        }
+        if (status.totalFilters > 0) {
+            add(
+                stringResource(
+                    R.string.adblock_status_rules,
+                    numberFormat.format(status.networkFilters),
+                    numberFormat.format(status.cosmeticFilters),
+                    numberFormat.format(status.scriptletFilters),
+                )
+            )
+        }
+        if (status.enabledLists > 0) {
+            add(stringResource(R.string.adblock_status_lists, status.activeLists, status.enabledLists))
+        }
+        if (status.failedLists > 0) {
+            add(pluralStringResource(R.plurals.adblock_status_failed_lists, status.failedLists, status.failedLists))
+        }
+    }
+    for (line in lines) {
+        Text(
+            text = line,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun FilterUpdateIntervalDialog(
+    selected: FilterUpdateInterval,
+    onSelect: (FilterUpdateInterval) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.filter_update_interval)) },
+        text = {
+            Column(modifier = Modifier.selectableGroup()) {
+                FilterUpdateInterval.entries.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .selectable(
+                                selected = option == selected,
+                                onClick = { onSelect(option) },
+                                role = Role.RadioButton,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        RadioButton(selected = option == selected, onClick = null)
+                        Text(
+                            text = stringResource(option.labelRes()),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.back)) }
+        },
+    )
+}
+
+private fun FilterUpdateInterval.labelRes(): Int = when (this) {
+    FilterUpdateInterval.Manual -> R.string.filter_update_interval_manual
+    FilterUpdateInterval.SixHours -> R.string.filter_update_interval_6h
+    FilterUpdateInterval.TwelveHours -> R.string.filter_update_interval_12h
+    FilterUpdateInterval.Daily -> R.string.filter_update_interval_daily
+    FilterUpdateInterval.ThreeDays -> R.string.filter_update_interval_3d
+    FilterUpdateInterval.Weekly -> R.string.filter_update_interval_weekly
 }

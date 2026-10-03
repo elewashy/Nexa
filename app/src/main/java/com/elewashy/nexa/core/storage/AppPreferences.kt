@@ -139,4 +139,10 @@ interface AppPreferences {
 
     suspend fun setShowDownloadFilterCounts(show: Boolean)
 
+    /** Automatic filter-list update interval in hours; 0 disables automatic updates. */
+    val filterUpdateIntervalHours: Flow<Int>
+
+    /** Updates [filterUpdateIntervalHours]. Unknown values are sanitized by readers. */
+    suspend fun setFilterUpdateIntervalHours(hours: Int)
+
 }

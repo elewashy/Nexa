@@ -1,90 +1,104 @@
 package com.elewashy.nexa.feature.browser.data.resources
 
-enum class BrowserResourceKind {
-    Filter,
-    JavaScript,
-}
-
-enum class BrowserResourceOwner {
-    Nexa,
-    External,
-}
-
-private const val NEXA_CHECK_EVERY_RUN = 0L
-private const val EXTERNAL_FILTER_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
-
+/**
+ * Remote resources downloaded and cached by [BrowserResourceRepository]:
+ * the content-blocking filter lists.
+ *
+ * The default selection mirrors uBlock Origin's defaults (uBO filters,
+ * badware, privacy, quick fixes, unbreak, EasyList, EasyPrivacy, Peter
+ * Lowe's list) plus Nexa's own list. uBO lists and Nexa's list are
+ * [trusted]: like uBO, only they may use trusted-only scriptlets.
+ * Regional lists are enabled for matching UI languages only.
+ *
+ * @property mirrorUrls fallbacks tried in order when the primary URL fails.
+ * @property languages UI language codes enabling a regional list; empty = always enabled.
+ */
 enum class BrowserResourceId(
-    val kind: BrowserResourceKind,
-    val owner: BrowserResourceOwner,
     val cacheFileName: String,
     val remoteUrl: String,
-    val updateIntervalMs: Long,
+    val trusted: Boolean,
+    val mirrorUrls: List<String> = emptyList(),
+    val languages: Set<String> = emptySet(),
 ) {
-    InternalAdFilters(
-        kind = BrowserResourceKind.Filter,
-        owner = BrowserResourceOwner.Nexa,
-        cacheFileName = "filters/blocklist.txt",
+    NexaFilters(
+        cacheFileName = "filters/nexa.txt",
         remoteUrl = "https://raw.githubusercontent.com/elewashy/Nexa/main/web_resources/filters/blocklist.txt",
-        updateIntervalMs = NEXA_CHECK_EVERY_RUN,
+        trusted = true,
     ),
-    ValidLinks(
-        kind = BrowserResourceKind.Filter,
-        owner = BrowserResourceOwner.Nexa,
-        cacheFileName = "filters/allowlist.txt",
-        remoteUrl = "https://raw.githubusercontent.com/elewashy/Nexa/main/web_resources/filters/allowlist.txt",
-        updateIntervalMs = NEXA_CHECK_EVERY_RUN,
+    UBlockFilters(
+        cacheFileName = "filters/ublock_filters.txt",
+        remoteUrl = "https://ublockorigin.github.io/uAssets/filters/filters.min.txt",
+        trusted = true,
+        mirrorUrls = listOf("https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/filters.min.txt"),
     ),
-    PreLoadScript(
-        kind = BrowserResourceKind.JavaScript,
-        owner = BrowserResourceOwner.Nexa,
-        cacheFileName = "scripts/pre_load.js",
-        remoteUrl = "https://raw.githubusercontent.com/elewashy/Nexa/main/web_resources/scripts/pre_load.js",
-        updateIntervalMs = NEXA_CHECK_EVERY_RUN,
+    UBlockBadware(
+        cacheFileName = "filters/ublock_badware.txt",
+        remoteUrl = "https://ublockorigin.github.io/uAssets/filters/badware.min.txt",
+        trusted = true,
+        mirrorUrls = listOf("https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/badware.min.txt"),
     ),
-    PostLoadScript(
-        kind = BrowserResourceKind.JavaScript,
-        owner = BrowserResourceOwner.Nexa,
-        cacheFileName = "scripts/post_load.js",
-        remoteUrl = "https://raw.githubusercontent.com/elewashy/Nexa/main/web_resources/scripts/post_load.js",
-        updateIntervalMs = NEXA_CHECK_EVERY_RUN,
+    UBlockPrivacy(
+        cacheFileName = "filters/ublock_privacy.txt",
+        remoteUrl = "https://ublockorigin.github.io/uAssets/filters/privacy.min.txt",
+        trusted = true,
+        mirrorUrls = listOf("https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/privacy.min.txt"),
+    ),
+    UBlockQuickFixes(
+        cacheFileName = "filters/ublock_quick_fixes.txt",
+        remoteUrl = "https://ublockorigin.github.io/uAssets/filters/quick-fixes.min.txt",
+        trusted = true,
+        mirrorUrls = listOf("https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/quick-fixes.min.txt"),
+    ),
+    UBlockUnbreak(
+        cacheFileName = "filters/ublock_unbreak.txt",
+        remoteUrl = "https://ublockorigin.github.io/uAssets/filters/unbreak.min.txt",
+        trusted = true,
+        mirrorUrls = listOf("https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/unbreak.min.txt"),
     ),
     EasyList(
-        kind = BrowserResourceKind.Filter,
-        owner = BrowserResourceOwner.External,
-        cacheFileName = "filters/external_easylist.txt",
+        cacheFileName = "filters/easylist.txt",
         remoteUrl = "https://easylist.to/easylist/easylist.txt",
-        updateIntervalMs = EXTERNAL_FILTER_CHECK_INTERVAL_MS,
+        trusted = false,
+        mirrorUrls = listOf("https://ublockorigin.github.io/uAssets/thirdparties/easylist.txt"),
     ),
     EasyPrivacy(
-        kind = BrowserResourceKind.Filter,
-        owner = BrowserResourceOwner.External,
-        cacheFileName = "filters/external_easyprivacy.txt",
+        cacheFileName = "filters/easyprivacy.txt",
         remoteUrl = "https://easylist.to/easylist/easyprivacy.txt",
-        updateIntervalMs = EXTERNAL_FILTER_CHECK_INTERVAL_MS,
+        trusted = false,
+        mirrorUrls = listOf("https://ublockorigin.github.io/uAssets/thirdparties/easyprivacy.txt"),
     ),
-    OneHostsLite(
-        kind = BrowserResourceKind.Filter,
-        owner = BrowserResourceOwner.External,
-        cacheFileName = "filters/external_1hosts_lite.txt",
-        remoteUrl = "https://badmojr.github.io/1Hosts/Lite/adblock.txt",
-        updateIntervalMs = EXTERNAL_FILTER_CHECK_INTERVAL_MS,
+    PeterLoweList(
+        cacheFileName = "filters/peter_lowe.txt",
+        remoteUrl = "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=1&mimetype=plaintext",
+        trusted = false,
+    ),
+    ListeAr(
+        cacheFileName = "filters/liste_ar.txt",
+        remoteUrl = "https://easylist-downloads.adblockplus.org/Liste_AR.txt",
+        trusted = false,
+        languages = setOf("ar"),
     );
 
-    companion object {
-        val adBlockFilters: List<BrowserResourceId> = listOf(
-            InternalAdFilters,
-            EasyList,
-            EasyPrivacy,
-            OneHostsLite,
-        )
+    /** Whether this list belongs to the active selection for UI [language] (ISO 639 code). */
+    fun isEnabledFor(language: String): Boolean = languages.isEmpty() || language in languages
 
-        val scripts: List<BrowserResourceId> = listOf(PreLoadScript, PostLoadScript)
+    companion object {
+        fun enabledFor(language: String): List<BrowserResourceId> = entries.filter { it.isEnabledFor(language) }
     }
 }
 
+/**
+ * Outcome of one refresh attempt.
+ *
+ * @property checked a network check was performed (false when not yet due).
+ * @property updated the cached content changed.
+ * @property failed the check failed (network/HTTP error or invalid content); the previous cache is kept.
+ * @property available a usable cached copy exists.
+ */
 data class BrowserResourceRefreshResult(
     val id: BrowserResourceId,
     val checked: Boolean,
     val updated: Boolean,
+    val failed: Boolean,
     val available: Boolean,
 )

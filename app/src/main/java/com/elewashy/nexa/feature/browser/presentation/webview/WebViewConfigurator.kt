@@ -67,7 +67,9 @@ object WebViewConfigurator {
 
             // ── 6. Mobile UX ───────────────────────────────────────
             setNeedInitialFocus(false)
-            setSupportMultipleWindows(false)
+            // New windows go through onCreateWindow (PopupWindowHandler): allowed
+            // popups open as tabs instead of replacing the opener page.
+            setSupportMultipleWindows(true)
             setGeolocationEnabled(false)
             textZoom = 100
             minimumFontSize = 8

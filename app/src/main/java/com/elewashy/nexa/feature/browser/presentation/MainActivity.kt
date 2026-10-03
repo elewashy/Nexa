@@ -102,14 +102,17 @@ import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.presentation.screen.BookmarksRoute
+import com.elewashy.nexa.feature.browser.data.adblock.AdBlockAssets
 import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
-import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
-import com.elewashy.nexa.feature.browser.data.scripts.ScriptRepository
+import com.elewashy.nexa.feature.browser.data.adblock.FilterUpdateScheduler
+import com.elewashy.nexa.feature.browser.presentation.webview.BlockedPageRenderer
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.DownloadHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebChromeClient
 import com.elewashy.nexa.feature.browser.presentation.webview.StartedDownload
 import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebViewClient
+import com.elewashy.nexa.feature.browser.presentation.webview.PopupWindowHandler
+import com.elewashy.nexa.feature.browser.presentation.webview.WebViewContentBlocker
 import com.elewashy.nexa.feature.browser.presentation.webview.PrivateWebViewProfile
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewConfigurator
@@ -245,8 +248,8 @@ class MainActivity : AppCompatActivity() {
     // ========== Injected ==========
 
     @Inject lateinit var adBlockRepository: AdBlockRepository
-    @Inject lateinit var validLinkRepository: ValidLinkRepository
-    @Inject lateinit var scriptRepository: ScriptRepository
+    @Inject lateinit var adBlockAssets: AdBlockAssets
+    @Inject lateinit var filterUpdateScheduler: FilterUpdateScheduler
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var refreshRateManager: RefreshRateManager
     @Inject lateinit var downloadRepository: DownloadRepository
@@ -303,6 +306,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         restoredFromProcessDeath = savedInstanceState != null && !processInstanceAlive
         processInstanceAlive = true
+        // Idempotent: also started from the splash; covers launches that skip it.
+        filterUpdateScheduler.start()
         if (restoredFromProcessDeath) {
             pendingProcessDeathState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
             pendingProcessDeathTabId = savedInstanceState
@@ -1264,12 +1269,18 @@ class MainActivity : AppCompatActivity() {
 
             bindDownloadListener(onDownloadStarted = { _ -> })
 
+            // ── Content blocking (before the first load) ──────
+            val contentBlocker = WebViewContentBlocker(
+                repository = adBlockRepository,
+                assets = adBlockAssets,
+                blockPage = BlockedPageRenderer(context),
+            )
+            contentBlocker.install(this)
+
             // ── WebViewClient (events carry this tab's id) ─────
             val historyClient = NexaWebViewClient(
                 appContext = context.applicationContext,
-                adBlockRepository = adBlockRepository,
-                validLinkRepository = validLinkRepository,
-                scriptRepository = scriptRepository,
+                contentBlocker = contentBlocker,
                 onPageStartedEvent = { url, isImmersiveHost ->
                     browserViewModel.onPageStarted(tabId, url, isImmersiveHost)
                 },
@@ -1314,6 +1325,24 @@ class MainActivity : AppCompatActivity() {
                     }
                 },
                 isAttachedToUi = { attachedTabId == tabId },
+                popupWindowHandler = PopupWindowHandler(
+                    contentBlocker = contentBlocker,
+                    createProbeWebView = {
+                        WebView(context).also { probe ->
+                            if (tab?.isPrivate == true && !privateWebViewProfile.attach(probe)) {
+                                probe.destroy()
+                                throw IllegalStateException("Private WebView profiles are unavailable")
+                            }
+                        }
+                    },
+                    openInNewTab = { url ->
+                        browserViewModel.openPopupTab(
+                            url,
+                            if (tab?.isPrivate == true) BrowsingMode.Private else BrowsingMode.Normal,
+                        )
+                    },
+                ),
+                onCloseWindowEvent = { browserViewModel.closeTab(tabId) },
             )
             webChromeClient = chromeClient
 

@@ -333,13 +333,7 @@
     <string name="download_notification_channel_description">تقدم التنزيل وحالته</string>
     <string name="adblock_channel_name">تحديثات مانع الإعلانات</string>
     <string name="adblock_channel_description">إشعارات تحديث قوائم مانع الإعلانات</string>
-    <string name="checking_adblock_lists">جارٍ فحص قوائم مانع الإعلانات</string>
-    <string name="checking_for_changes">جارٍ البحث عن تغييرات…</string>
-    <string name="error_updating_adblock_lists">حدث خطأ أثناء تحديث قوائم مانع الإعلانات</string>
-    <string name="downloading_updated_list_progress">جارٍ تنزيل القائمة المحدّثة (%1$d/%2$d)</string>
-    <string name="checking_lists_progress">جارٍ فحص القوائم (%1$d/%2$d)</string>
     <string name="adblock_update">تحديث مانع الإعلانات</string>
-    <string name="adblock_update_error">خطأ في تحديث مانع الإعلانات</string>
     <string name="image_saved_to_gallery">تم حفظ الصورة في المعرض بنجاح</string>
     <string name="failed_to_save_image">فشل حفظ الصورة</string>
     <string name="invalid_link">الرابط غير صالح</string>
@@ -471,4 +465,30 @@
     <string name="downloads_no_matches">لا توجد تنزيلات مطابقة</string>
     <string name="downloads_no_matches_desc">جرّب بحثًا أو فلتر ملفات آخر.</string>
     <string name="finish">إنهاء</string>
+
+    <!-- Content blocking -->
+    <string name="adblock_page_blocked_title">تم حظر الصفحة</string>
+    <string name="adblock_page_blocked_message">حظر Nexa هذه الصفحة لأن أحد الفلاتر في قوائم الحظر يصنّفها كإعلان أو أداة تتبّع أو موقع ضار.</string>
+    <string name="adblock_page_blocked_filter">الفلتر المطابق:</string>
+    <string name="adblock_page_blocked_back">رجوع</string>
+    <string name="adblock_page_blocked_proceed">المتابعة على أي حال</string>
+    <string name="filter_update_interval">التحديث التلقائي للفلاتر</string>
+    <string name="filter_update_interval_manual">متوقف (تحديث يدوي)</string>
+    <string name="filter_update_interval_6h">كل 6 ساعات</string>
+    <string name="filter_update_interval_12h">كل 12 ساعة</string>
+    <string name="filter_update_interval_daily">يوميًا</string>
+    <string name="filter_update_interval_3d">كل 3 أيام</string>
+    <string name="filter_update_interval_weekly">أسبوعيًا</string>
+    <string name="adblock_status_loading">جارٍ تحميل الفلاتر…</string>
+    <string name="adblock_status_updating">جارٍ تحديث الفلاتر…</string>
+    <string name="adblock_status_rules">%1$s شبكة · %2$s تجميلية · %3$s سكربتات</string>
+    <string name="adblock_status_lists">قوائم الفلاتر النشطة: %1$d من %2$d</string>
+    <plurals name="adblock_status_failed_lists">
+        <item quantity="zero">تعذّر تحديث %d قائمة — تبقى آخر نسخة منزّلة نشطة</item>
+        <item quantity="one">تعذّر تحديث قائمة واحدة — تبقى آخر نسخة منزّلة منها نشطة</item>
+        <item quantity="two">تعذّر تحديث قائمتين — تبقى آخر نسخة منزّلة منهما نشطة</item>
+        <item quantity="few">تعذّر تحديث %d قوائم — تبقى آخر نسخها المنزّلة نشطة</item>
+        <item quantity="many">تعذّر تحديث %d قائمة — تبقى آخر نسخها المنزّلة نشطة</item>
+        <item quantity="other">تعذّر تحديث %d قائمة — تبقى آخر نسخها المنزّلة نشطة</item>
+    </plurals>
 </resources>

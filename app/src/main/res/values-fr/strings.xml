@@ -324,13 +324,7 @@
     <string name="download_notification_channel_description">Progression et état des téléchargements</string>
     <string name="adblock_channel_name">Mises à jour AdBlock</string>
     <string name="adblock_channel_description">Notifications des mises à jour des listes AdBlock</string>
-    <string name="checking_adblock_lists">Vérification des listes AdBlock</string>
-    <string name="checking_for_changes">Recherche de changements…</string>
-    <string name="error_updating_adblock_lists">Erreur lors de la mise à jour des listes AdBlock</string>
-    <string name="downloading_updated_list_progress">Téléchargement de la liste mise à jour (%1$d/%2$d)</string>
-    <string name="checking_lists_progress">Vérification des listes (%1$d/%2$d)</string>
     <string name="adblock_update">Mise à jour AdBlock</string>
-    <string name="adblock_update_error">Erreur de mise à jour AdBlock</string>
     <string name="image_saved_to_gallery">Image enregistrée dans la galerie</string>
     <string name="failed_to_save_image">Échec de l’enregistrement de l’image</string>
     <string name="invalid_link">Lien non valide</string>
@@ -441,4 +435,27 @@
     <string name="downloads_no_matches">Aucun téléchargement correspondant</string>
     <string name="downloads_no_matches_desc">Essayez une autre recherche ou un autre filtre.</string>
     <string name="finish">Terminer</string>
+
+    <!-- Content blocking -->
+    <string name="adblock_page_blocked_title">Page bloquée</string>
+    <string name="adblock_page_blocked_message">Nexa a bloqué cette page car un filtre de vos listes de blocage la signale comme publicité, traqueur ou site malveillant.</string>
+    <string name="adblock_page_blocked_filter">Filtre correspondant :</string>
+    <string name="adblock_page_blocked_back">Retour</string>
+    <string name="adblock_page_blocked_proceed">Continuer quand même</string>
+    <string name="filter_update_interval">Mises à jour automatiques des filtres</string>
+    <string name="filter_update_interval_manual">Désactivées (mise à jour manuelle)</string>
+    <string name="filter_update_interval_6h">Toutes les 6 heures</string>
+    <string name="filter_update_interval_12h">Toutes les 12 heures</string>
+    <string name="filter_update_interval_daily">Tous les jours</string>
+    <string name="filter_update_interval_3d">Tous les 3 jours</string>
+    <string name="filter_update_interval_weekly">Toutes les semaines</string>
+    <string name="adblock_status_loading">Chargement des filtres…</string>
+    <string name="adblock_status_updating">Mise à jour des filtres…</string>
+    <string name="adblock_status_rules">%1$s réseau · %2$s cosmétiques · %3$s scriptlets</string>
+    <string name="adblock_status_lists">Listes de filtres actives : %1$d sur %2$d</string>
+    <plurals name="adblock_status_failed_lists">
+        <item quantity="one">%d liste n\'a pas pu être mise à jour — sa dernière version téléchargée reste active</item>
+        <item quantity="many">%d listes n\'ont pas pu être mises à jour — leurs dernières versions téléchargées restent actives</item>
+        <item quantity="other">%d listes n\'ont pas pu être mises à jour — leurs dernières versions téléchargées restent actives</item>
+    </plurals>
 </resources>

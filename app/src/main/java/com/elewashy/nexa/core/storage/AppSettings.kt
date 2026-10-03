@@ -2,6 +2,7 @@ package com.elewashy.nexa.core.storage
 
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
 import com.elewashy.nexa.ui.theme.AppThemeMode
@@ -28,4 +29,6 @@ data class AppSettings(
     val autoRetryDownloads: Boolean = true,
     val visualVideoPresentation: Boolean = true,
     val showDownloadFilterCounts: Boolean = true,
+    /** Automatic filter-list update interval in hours ([FilterUpdateInterval]); 0 = manual only. */
+    val filterUpdateIntervalHours: Int = FilterUpdateInterval.DEFAULT.hours,
 )

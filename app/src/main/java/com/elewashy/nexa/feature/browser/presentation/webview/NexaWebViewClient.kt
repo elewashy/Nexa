@@ -15,25 +15,16 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
-import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
-import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
-import com.elewashy.nexa.feature.browser.data.regex.RegexPatterns
-import com.elewashy.nexa.feature.browser.data.scripts.ScriptRepository
-import com.elewashy.nexa.feature.browser.data.scripts.ScriptType
-import java.io.ByteArrayInputStream
 import java.net.URISyntaxException
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * WebView client for URL interception, ad blocking, script injection and page
- * lifecycle events.
+ * WebView client for URL interception, content blocking (delegated to
+ * [WebViewContentBlocker]) and page lifecycle events.
  */
 @SuppressLint("MissingOnRenderProcessGone") // Implemented below; AndroidX lint misses the Kotlin override.
 class NexaWebViewClient(
     private val appContext: Context,
-    private val adBlockRepository: AdBlockRepository,
-    private val validLinkRepository: ValidLinkRepository,
-    private val scriptRepository: ScriptRepository,
+    private val contentBlocker: WebViewContentBlocker,
     private val onPageStartedEvent: (url: String?, isImmersiveHost: Boolean) -> Unit = { _, _ -> },
     private val onPageFinishedEvent: () -> Unit = {},
     private val onNavigationConsumedEvent: () -> Unit = {},
@@ -67,21 +58,9 @@ class NexaWebViewClient(
         private const val TAG = "NexaWebViewClient"
         private const val TRACE = "URLTrace"
 
-        private const val AD_HOSTS_CACHE_MAX_SIZE = 512
-
-        /** Bound regex input so pathological URLs can't stall the interceptor. */
-        private const val MAX_REGEX_URL_CHARS = 2048
-
         private const val KEY_BROWSER_FALLBACK_URL = "browser_fallback_url"
 
         private val IMMERSIVE_HOSTS = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be")
-        private val EMPTY_BYTES = ByteArray(0)
-
-        private fun blockedResponse() = WebResourceResponse(
-            "text/plain",
-            "utf-8",
-            ByteArrayInputStream(EMPTY_BYTES),
-        )
 
         private fun normalizeUrlHost(url: String?): String? = try {
             if (url.isNullOrBlank()) null else url.toUri().host?.trim('.')?.lowercase()?.takeIf { it.isNotBlank() }
@@ -100,19 +79,15 @@ class NexaWebViewClient(
         }
     }
 
-    private val adHostsCache: MutableSet<String> = ConcurrentHashMap.newKeySet(64)
-    private val safeHostsCache: MutableSet<String> = ConcurrentHashMap.newKeySet(512)
-    private val whitelist: Set<String> = setOf("google.com")
-    private val combinedAdRegex: Regex = RegexPatterns.combinedRegex
-
     @Volatile
     private var currentPageHost: String? = null
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        return handleUrlLoading(view, request.url.toString())
+        return handleUrlLoading(view, request)
     }
 
-    private fun handleUrlLoading(view: WebView, url: String): Boolean {
+    private fun handleUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        val url = request.url.toString()
         Log.d(TRACE, "[NAV] $url")
 
         // Sites open about:blank for popup/document.write flows; let the
@@ -123,24 +98,39 @@ class NexaWebViewClient(
 
         val uri = url.toUri()
 
-        // Non-http(s) schemes dispatch BEFORE the allowlist check: intent://
-        // URLs carry their target host, and an allowlisted host there must
-        // still go through intent parsing rather than dead-end.
+        // Non-http(s) schemes dispatch before content filtering: intent://
+        // URLs carry their target host and must go through intent parsing
+        // rather than being matched as web navigations.
         val scheme = uri.scheme?.lowercase()
+        if (scheme == WebViewContentBlocker.ACTION_SCHEME) {
+            handleBlockPageAction(view, url)
+            return true
+        }
         if (scheme != null && scheme != "http" && scheme != "https") {
             onNavigationConsumedEvent()
             return if (scheme == "intent") handleIntentUrl(view, url) else dispatchExternalUrl(url, scheme)
         }
 
-        val host = uri.host
-        if (host != null && isGloballyWhitelisted(host)) return false
-
-        if (shouldBlockUrl(url, host)) {
+        // Page-initiated navigations to popup targets or blocked documents are
+        // cancelled in place; only links the user tapped reach the block page.
+        val hit = view.hitTestResult
+        val tappedLink = if (hit.type == WebView.HitTestResult.SRC_ANCHOR_TYPE) hit.extra else null
+        if (contentBlocker.checkNavigation(request, tappedLink)) {
+            Log.d(TRACE, "[NAVIGATION BLOCKED] $url")
             onNavigationConsumedEvent()
             return true
         }
 
         return false
+    }
+
+    /** "Go back" / "Proceed" links of the content blocker's block page. */
+    private fun handleBlockPageAction(view: WebView, url: String) {
+        if (url == WebViewContentBlocker.BACK_URL) {
+            if (view.canGoBack()) view.goBack()
+            return
+        }
+        contentBlocker.consumeProceedRequest(url)?.let(view::loadUrl)
     }
 
     /** Hands a custom-scheme URL (tel:, mailto:, app://…) to the OS via ACTION_VIEW. */
@@ -224,40 +214,11 @@ class NexaWebViewClient(
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         // Chromium invokes this callback on an IO thread. Never read or mutate `view` here;
         // WebView methods are UI-thread-confined and newer WebView builds fail fast on misuse.
-        val uri = request.url
-        val host = uri.host
-        val scheme = uri.scheme
-
-        if (scheme == "about") return null
-
-        val isWhitelistedRequest = if (host == null) {
-            false
-        } else if (request.isForMainFrame) {
-            isGloballyWhitelisted(host)
-        } else {
-            isWhitelistedForPage(host, currentPageHost)
-        }
-        if (isWhitelistedRequest) return null
-
-        if (host != null) {
-            val norm = normalizeHost(host)
-            if (safeHostsCache.contains(norm)) return null
-            if (isHostCached(norm)) return blockedResponse()
-            if (adBlockRepository.isAdHost(norm)) {
-                if (adHostsCache.size < AD_HOSTS_CACHE_MAX_SIZE) adHostsCache.add(norm)
-                return blockedResponse()
-            }
-        }
-
-        val url = uri.toString().take(MAX_REGEX_URL_CHARS)
         return try {
-            if (combinedAdRegex.matches(url)) {
-                blockedResponse()
-            } else {
-                if (host != null && safeHostsCache.size < 512) safeHostsCache.add(normalizeHost(host))
-                null
-            }
-        } catch (_: Exception) {
+            contentBlocker.intercept(request)
+        } catch (e: RuntimeException) {
+            // Filtering must never break page loads.
+            Log.e(TAG, "Content blocking failed for ${request.url}", e)
             null
         }
     }
@@ -268,7 +229,7 @@ class NexaWebViewClient(
         // redirects/reloads), but not History API or fragment-only changes.
         documentLoadPending = true
         pendingErrorVisit = false
-        scriptRepository.inject(view, ScriptType.PRE_LOAD)
+        view?.let { contentBlocker.onPageStarted(it, url) }
         currentPageHost = normalizeUrlHost(url)
         onPageStartedEvent(url, isImmersiveUrl(url))
         onUrlUpdatedEvent(url)
@@ -277,7 +238,6 @@ class NexaWebViewClient(
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         view?.requestLayout()
-        scriptRepository.inject(view, ScriptType.POST_LOAD)
         onPageFinishedEvent()
         onUrlUpdatedEvent(url)
     }
@@ -285,7 +245,7 @@ class NexaWebViewClient(
     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
         currentPageHost = normalizeUrlHost(url)
-        scriptRepository.inject(view, ScriptType.PRE_LOAD)
+        contentBlocker.onUrlCommitted(url)
         onUrlUpdatedEvent(url)
 
         // URL comparison cannot identify same-document navigation: pushState
@@ -367,43 +327,4 @@ class NexaWebViewClient(
     }
 
     private fun normalizeHost(host: String): String = host.trim('.').lowercase().removePrefix("www.")
-
-    private fun isGloballyWhitelisted(host: String): Boolean {
-        val norm = normalizeHost(host)
-        return whitelist.any { norm == it || norm.endsWith(".$it") } || validLinkRepository.isValidHost(host)
-    }
-
-    private fun isWhitelistedForPage(host: String, pageHost: String?): Boolean {
-        val norm = normalizeHost(host)
-        return whitelist.any { norm == it || norm.endsWith(".$it") } || validLinkRepository.isValidHostOnPage(host, pageHost)
-    }
-
-    private fun shouldBlockUrl(url: String, host: String?): Boolean {
-        host ?: return false
-        val norm = normalizeHost(host)
-        if (isHostCached(norm)) return true
-        if (adBlockRepository.isAdHost(norm)) {
-            if (adHostsCache.size < AD_HOSTS_CACHE_MAX_SIZE) adHostsCache.add(norm)
-            return true
-        }
-        return try {
-            combinedAdRegex.matches(url.take(MAX_REGEX_URL_CHARS))
-        } catch (e: Exception) {
-            Log.e(TAG, "Regex error for: $url", e)
-            false
-        }
-    }
-
-    private fun isHostCached(host: String): Boolean {
-        if (host in adHostsCache) return true
-        var dotIndex = host.indexOf('.')
-        while (dotIndex != -1) {
-            val parent = host.substring(dotIndex + 1)
-            if (parent.indexOf('.') == -1) break
-            if (parent in adHostsCache) return true
-            dotIndex = host.indexOf('.', dotIndex + 1)
-        }
-        return false
-    }
-
 }

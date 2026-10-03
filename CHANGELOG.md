@@ -4,6 +4,35 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ad blocking:** Added uBlock Origin–compatible scriptlets, redirect resources, element hiding (including procedural filters), and `$popup` blocking.
+- **Ad blocking:** Added an automatic filter update interval setting and a filter status summary in Settings → Updates.
+- **Ad blocking:** Added the remaining uBlock Origin scriptlets used by the default lists, including response pruning for XML, HLS, and DASH ads, the `json-edit` family, and safeguards against ClickFix-style clipboard attacks.
+- **Ad blocking:** Added support for `$removeparam` on page loads and `$csp` policies, generic `#@#` exceptions, uBlock Origin's `site>>` and regex hostname syntax, and the `:others()`, `:shadow()`, `:matches-prop()`, and `:watch-attr()` operators.
+- **Ad blocking:** Added the remaining uBlock Origin replacement resources.
+- **Browser:** Pages opened in a new tab can now close themselves, as in Chrome.
+
+### Changed
+
+- **Ad blocking:** Filters load several times faster at startup by restoring the last compiled filter engine instead of recompiling the lists.
+- **Ad blocking:** Changes made by the ad blocker to page functions are now hidden from page scripts, so sites can't detect them.
+
+- **Ad blocking:** Replaced host-only blocking with a full filter engine that understands resource types, `domain=` and party options, exception rules, `$important`, and `$badfilter`, so filters block only the requests they target.
+- **Ad blocking:** The default filter lists now match uBlock Origin's (uBlock filters, badware, privacy, quick fixes, unbreak, EasyList, EasyPrivacy, Peter Lowe's list), plus Liste AR when the app language is Arabic.
+- **Ad blocking:** Filter updates use conditional requests, verify downloads before replacing them, and keep the last working filters when an update fails.
+- **Browser:** Links and pop-ups that open a new window now open in a new tab instead of replacing the current page.
+
+### Fixed
+
+- **Ad blocking:** Blocked pop-ups from embedded video players are now closed silently instead of replacing the page with the block page, which caused a reload loop when going back.
+- **Ad blocking:** Pop-up ads opened by embedded players to unrelated sites are now blocked even when their rotating domains are not yet in any filter list.
+- **Ad blocking:** Pop-up ads opened by a page from a tap on a non-link element (as mycima.bid does) are now blocked when they lead to another site, while legitimate same-site pop-ups and taps on real links keep opening.
+- **Ad blocking:** Fixed YouTube videos not playing: requests whose type WebView cannot report (such as YouTube's video stream uploads) are no longer matched by filters meant for other request types.
+- **Ad blocking:** Element-hiding styles now survive pages that replace `document.adoptedStyleSheets`.
+
 ## [1.3.1] - 2026-10-02
 
 ### Added

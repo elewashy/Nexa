@@ -361,6 +361,13 @@ class BrowserViewModel @Inject constructor(
         if (id == null) _tabLimitEvent.trySend(Unit)
     }
 
+    /** Opens an allowed popup (new-window request) of a page as a new active tab. */
+    fun openPopupTab(url: String, mode: BrowsingMode) {
+        viewModelScope.launch {
+            if (tabRepository.newTab(url, mode) == null) _tabLimitEvent.trySend(Unit)
+        }
+    }
+
     fun reopenTab(tab: TabItem) {
         viewModelScope.launch {
             val id = tabRepository.newTab(tab.url, tab.browsingMode)

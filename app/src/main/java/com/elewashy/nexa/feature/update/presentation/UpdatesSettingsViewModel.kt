@@ -1,25 +1,27 @@
 package com.elewashy.nexa.feature.update.presentation
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.storage.FilterTimestampStore
 import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
-import com.elewashy.nexa.feature.browser.data.links.ValidLinkRepository
-import com.elewashy.nexa.feature.browser.data.scripts.ScriptRepository
+import com.elewashy.nexa.feature.browser.data.adblock.AdBlockStatus
+import com.elewashy.nexa.feature.browser.data.adblock.FilterUpdateResult
+import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
 import com.elewashy.nexa.feature.update.data.GitHubRateLimitedException
 import com.elewashy.nexa.feature.update.domain.ManagerUpdateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -28,9 +30,7 @@ class UpdatesSettingsViewModel @Inject constructor(
     private val managerUpdateRepository: ManagerUpdateRepository,
     private val appPreferences: AppPreferences,
     private val adBlockRepository: AdBlockRepository,
-    private val validLinkRepository: ValidLinkRepository,
-    private val scriptRepository: ScriptRepository,
-    private val filterTimestampStore: FilterTimestampStore,
+    filterTimestampStore: FilterTimestampStore,
 ) : ViewModel() {
 
     val managerVersion: StateFlow<String?> = managerUpdateRepository.version
@@ -47,6 +47,13 @@ class UpdatesSettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val lastFiltersUpdateTime: StateFlow<Long> = filterTimestampStore.lastUpdate
+
+    /** Active filter engine state (rule counts, lists, update phase). */
+    val adBlockStatus: StateFlow<AdBlockStatus> = adBlockRepository.status
+
+    val filterUpdateInterval: StateFlow<FilterUpdateInterval?> = appPreferences.filterUpdateIntervalHours
+        .map { FilterUpdateInterval.fromStoredValue(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     suspend fun checkUpdates(): CheckUpdateResult {
         return try {
@@ -74,32 +81,28 @@ class UpdatesSettingsViewModel @Inject constructor(
         viewModelScope.launch { appPreferences.setShowUpdateDialogOnLaunch(enabled) }
     }
 
-    suspend fun updateAllFilters(): FilterUpdateResult = withContext(Dispatchers.IO) {
-        val adBlockSuccess = runCatching { adBlockRepository.updateAllAdBlockLists() }.getOrDefault(false)
-        val validLinksSuccess = runCatching { validLinkRepository.updateValidLinks() }.getOrDefault(false)
-        val scriptsSuccess = runCatching { scriptRepository.forceUpdateAll() }.isSuccess
-        val success = adBlockSuccess && validLinksSuccess && scriptsSuccess
-        if (success) filterTimestampStore.save()
+    /** The automatic update loop observes this setting and reschedules itself. */
+    fun setFilterUpdateInterval(interval: FilterUpdateInterval) {
+        viewModelScope.launch { appPreferences.setFilterUpdateIntervalHours(interval.hours) }
+    }
 
-        FilterUpdateResult(
-            adBlockSuccess = adBlockSuccess,
-            validLinksSuccess = validLinksSuccess,
-            scriptsSuccess = scriptsSuccess,
-        )
+    /** Checks every filter list now (conditional requests), recompiling if anything changed. */
+    suspend fun updateAllFilters(): FilterUpdateResult {
+        val interval = FilterUpdateInterval.fromStoredValue(appPreferences.filterUpdateIntervalHours.first())
+        return try {
+            adBlockRepository.refresh(interval.intervalMs, force = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Filter update failed", e)
+            FilterUpdateResult(checked = 0, updated = 0, failed = 1)
+        }
     }
 
     data class UpdatesPreferencesState(
         val autoUpdateCheck: Boolean,
         val showUpdateDialogOnLaunch: Boolean,
     )
-
-    data class FilterUpdateResult(
-        val adBlockSuccess: Boolean,
-        val validLinksSuccess: Boolean,
-        val scriptsSuccess: Boolean,
-    ) {
-        val success: Boolean = adBlockSuccess && validLinksSuccess && scriptsSuccess
-    }
 
     sealed interface CheckUpdateResult {
         data object UpdateAvailable : CheckUpdateResult
@@ -108,5 +111,9 @@ class UpdatesSettingsViewModel @Inject constructor(
 
         /** GitHub rejected the check with 403/429; [message] is user-facing. */
         data class RateLimited(val message: String) : CheckUpdateResult
+    }
+
+    private companion object {
+        const val TAG = "UpdatesSettingsVM"
     }
 }
