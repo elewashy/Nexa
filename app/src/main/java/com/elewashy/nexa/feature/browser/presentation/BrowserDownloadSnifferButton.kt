@@ -26,8 +26,8 @@ import com.elewashy.nexa.ui.icons.Close
 import com.elewashy.nexa.ui.icons.Download
 
 /**
- * Floating affordance shown when the current page belongs to a supported
- * video platform.
+ * Floating affordance shown while the current page offers downloadable
+ * media on a supported platform (see `ResolveDownloadableMediaUseCase`).
  *
  * Interaction model:
  * - Tap opens the download sheet for the current page.

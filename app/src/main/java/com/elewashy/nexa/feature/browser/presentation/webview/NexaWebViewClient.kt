@@ -25,7 +25,7 @@ import java.net.URISyntaxException
 class NexaWebViewClient(
     private val appContext: Context,
     private val contentBlocker: WebViewContentBlocker,
-    private val onPageStartedEvent: (url: String?, isImmersiveHost: Boolean) -> Unit = { _, _ -> },
+    private val onPageStartedEvent: (url: String?) -> Unit = {},
     private val onPageFinishedEvent: () -> Unit = {},
     private val onNavigationConsumedEvent: () -> Unit = {},
     private val onUrlUpdatedEvent: (String?) -> Unit = {},
@@ -60,22 +60,10 @@ class NexaWebViewClient(
 
         private const val KEY_BROWSER_FALLBACK_URL = "browser_fallback_url"
 
-        private val IMMERSIVE_HOSTS = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be")
-
         private fun normalizeUrlHost(url: String?): String? = try {
             if (url.isNullOrBlank()) null else url.toUri().host?.trim('.')?.lowercase()?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
             null
-        }
-
-        /**
-         * Fullscreen-first hosts where the toolbar stays hidden even outside
-         * video fullscreen. Shared with `BrowserViewModel` so fullscreen
-         * exit restores the right toolbar state.
-         */
-        fun isImmersiveUrl(url: String?): Boolean {
-            val host = normalizeUrlHost(url) ?: return false
-            return IMMERSIVE_HOSTS.any { host == it || host.endsWith(".$it") }
         }
     }
 
@@ -231,7 +219,7 @@ class NexaWebViewClient(
         pendingErrorVisit = false
         view?.let { contentBlocker.onPageStarted(it, url) }
         currentPageHost = normalizeUrlHost(url)
-        onPageStartedEvent(url, isImmersiveUrl(url))
+        onPageStartedEvent(url)
         onUrlUpdatedEvent(url)
     }
 

@@ -112,6 +112,7 @@ import com.elewashy.nexa.feature.browser.presentation.webview.DownloadHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebChromeClient
 import com.elewashy.nexa.feature.browser.presentation.webview.StartedDownload
 import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebViewClient
+import com.elewashy.nexa.feature.browser.presentation.webview.PageMediaProbe
 import com.elewashy.nexa.feature.browser.presentation.webview.PopupWindowHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewContentBlocker
 import com.elewashy.nexa.feature.browser.presentation.webview.PrivateWebViewProfile
@@ -142,8 +143,6 @@ import com.elewashy.nexa.feature.onboarding.OnboardingScreen
 import com.elewashy.nexa.feature.onboarding.OnboardingViewModel
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsNavigation
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
-import com.elewashy.nexa.feature.share.domain.model.SharePlatform
-import com.elewashy.nexa.feature.share.data.SharePlatformDetector
 import com.elewashy.nexa.feature.share.presentation.ShareActivity
 import com.elewashy.nexa.feature.splash.presentation.SplashUiState
 import com.elewashy.nexa.feature.splash.presentation.SplashViewModel
@@ -252,6 +251,7 @@ class MainActivity : AppCompatActivity() {
 
     @Inject lateinit var adBlockRepository: AdBlockRepository
     @Inject lateinit var adBlockAssets: AdBlockAssets
+    @Inject lateinit var pageMediaProbe: PageMediaProbe
     @Inject lateinit var filterUpdateScheduler: FilterUpdateScheduler
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var refreshRateManager: RefreshRateManager
@@ -518,24 +518,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Video download sniffer: appears on pages of supported video
-        // platforms until dismissed for the current page load. A new
-        // page load (navigation or refresh) changes the key, so a
-        // dismissal never survives a refresh or navigation.
-        val videoDownloadButtonEnabled by appPreferences.videoDownloadButton
-            .collectAsStateWithLifecycle(initialValue = null as Boolean?)
+        // Media download sniffer: appears only while the active page
+        // offers downloadable media (see ResolveDownloadableMediaUseCase),
+        // until dismissed for the current page load. A new page load
+        // (navigation or refresh) changes the key, so a dismissal never
+        // survives a refresh or navigation. downloadableMediaUrl is already
+        // null while the button is disabled in settings.
+        val downloadableMediaUrl by browserViewModel.downloadableMediaUrl.collectAsStateWithLifecycle()
         var snifferDismissMode by rememberSaveable { mutableStateOf(false) }
         var dismissedSnifferKey by rememberSaveable { mutableStateOf<String?>(null) }
-        val snifferUrl = state.topSearchBarText
-        val snifferKey = "${state.pageLoadId}:$snifferUrl"
-        val snifferVisible = videoDownloadButtonEnabled == true &&
-        state.toolbarVisible &&
-        !omniboxState.mode.isOverlayVisible &&
-        snifferUrl.isNotBlank() &&
-        SharePlatformDetector.detect(snifferUrl) != SharePlatform.VIDEO &&
-        dismissedSnifferKey != snifferKey
+        val snifferKey = "${state.pageLoadId}:${state.topSearchBarText}"
+        val snifferVisible = state.toolbarVisible &&
+            !omniboxState.mode.isOverlayVisible &&
+            downloadableMediaUrl != null &&
+            dismissedSnifferKey != snifferKey
 
-        LaunchedEffect(state.pageLoadId, snifferUrl) {
+        LaunchedEffect(state.pageLoadId, state.topSearchBarText) {
             snifferDismissMode = false
         }
         fun showDownloadSnackbar(started: StartedDownload) {
@@ -858,7 +856,7 @@ class MainActivity : AppCompatActivity() {
                             dismissedSnifferKey = snifferKey
                             snifferDismissMode = false
                         } else {
-                            launchVideoDownloadSheet(snifferUrl)
+                            downloadableMediaUrl?.let(::launchVideoDownloadSheet)
                         }
                     },
                     onLongClick = { snifferDismissMode = !snifferDismissMode },
@@ -1296,13 +1294,17 @@ class MainActivity : AppCompatActivity() {
             )
             contentBlocker.install(this)
 
+            // ── Media probe (confirms media on tweets / posts) ─
+            val mediaProbeInstalled = pageMediaProbe.install(this) { url, hasMedia ->
+                browserViewModel.onPageMediaReported(tabId, url, hasMedia)
+            }
+            if (!mediaProbeInstalled) browserViewModel.onPageMediaProbeUnavailable(tabId)
+
             // ── WebViewClient (events carry this tab's id) ─────
             val historyClient = NexaWebViewClient(
                 appContext = context.applicationContext,
                 contentBlocker = contentBlocker,
-                onPageStartedEvent = { url, isImmersiveHost ->
-                    browserViewModel.onPageStarted(tabId, url, isImmersiveHost)
-                },
+                onPageStartedEvent = { url -> browserViewModel.onPageStarted(tabId, url) },
                 onPageFinishedEvent = {
                     browserViewModel.onPageFinished(tabId, canGoBack(), canGoForward())
                 },

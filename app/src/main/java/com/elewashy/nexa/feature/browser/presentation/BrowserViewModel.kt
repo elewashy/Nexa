@@ -8,10 +8,15 @@ import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.data.BookmarkRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchHistoryRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchSuggestionRepository
+import com.elewashy.nexa.feature.browser.domain.model.PageMediaProbeResult
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
+import com.elewashy.nexa.feature.browser.domain.usecase.ResolveDownloadableMediaUseCase
 import com.elewashy.nexa.feature.history.data.HistoryRepository
 import com.elewashy.nexa.feature.history.domain.model.HistorySuggestion
-import com.elewashy.nexa.feature.browser.presentation.webview.NexaWebViewClient
+import com.elewashy.nexa.feature.share.data.MediaAvailabilityRepository
+import com.elewashy.nexa.feature.share.domain.model.MediaPage
+import com.elewashy.nexa.feature.share.domain.MediaPageClassifier
+import com.elewashy.nexa.feature.share.domain.model.MediaPresence
 import com.elewashy.nexa.feature.tabs.data.TabRepository
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
@@ -26,14 +31,17 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -67,6 +75,8 @@ class BrowserViewModel @Inject constructor(
     private val searchHistoryRepository: SearchHistoryRepository,
     private val appPreferences: AppPreferences,
     private val resolveBackNavigation: ResolveBackNavigationUseCase,
+    private val resolveDownloadableMedia: ResolveDownloadableMediaUseCase,
+    private val mediaAvailabilityRepository: MediaAvailabilityRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -80,6 +90,46 @@ class BrowserViewModel @Inject constructor(
 
     /** Atomic immutable workspace snapshot consumed by the browser UI. */
     val workspace: StateFlow<TabWorkspaceState> = tabRepository.workspace
+
+    /** Latest in-page media probe result per tab; pruned when tabs close. */
+    private val pageMediaProbes = MutableStateFlow<Map<Long, PageMediaProbeResult>>(emptyMap())
+
+    /**
+     * URL of the active tab's page when it offers downloadable media, else
+     * null. Drives the download button: it appears only for pages whose
+     * content the share extractors can actually download.
+     *
+     * Nothing is classified or fetched while the button is disabled in
+     * settings or no UI collects this flow. For pages that need confirmation,
+     * the platform lookup restarts on every page change (cancelling the
+     * previous one) and is cached by the repository, so revisits are free.
+     */
+    val downloadableMediaUrl: StateFlow<String?> = combine(
+        appPreferences.videoDownloadButton.distinctUntilChanged(),
+        _uiState.map { it.topSearchBarText }.distinctUntilChanged(),
+        tabRepository.workspace.map { it.activeTabId }.distinctUntilChanged(),
+    ) { enabled, url, activeTabId -> Triple(enabled, url, activeTabId) }
+        .flatMapLatest { (enabled, url, activeTabId) ->
+            val page = if (enabled) MediaPageClassifier.classify(url) else null
+            when {
+                page == null -> flowOf(null)
+                page.presence == MediaPresence.GUARANTEED -> flowOf(url)
+                else -> combine(
+                    pageMediaProbes.map { probes -> activeTabId?.let(probes::get) }.distinctUntilChanged(),
+                    platformMediaReport(page),
+                ) { probe, report ->
+                    url.takeIf { resolveDownloadableMedia(page, probe, report) }
+                }
+            }
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Unknown (null) until the platform answers; the in-page probe covers the wait. */
+    private fun platformMediaReport(page: MediaPage): Flow<Boolean?> = flow {
+        emit(null)
+        emit(mediaAvailabilityRepository.hasDownloadableMedia(page))
+    }
 
     /** Bookmark state for every tab URL, synchronized with the shared Room repository. */
     val bookmarkedUrls: StateFlow<Set<String>> = bookmarkRepository.observeBookmarkedUrls()
@@ -130,6 +180,7 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch { historyRepository.prune() }
         viewModelScope.launch {
             tabRepository.workspace.collect { workspace ->
+                prunePageMediaProbes(workspace)
                 val activeId = workspace.activeTabId
                 val activeTab = workspace.activeTab
                 _uiState.update { current ->
@@ -216,12 +267,12 @@ class BrowserViewModel @Inject constructor(
 
     // ── Page lifecycle events (from NexaWebViewClient, tab-scoped) ────
 
-    fun onPageStarted(tabId: Long, url: String?, isImmersiveHost: Boolean) {
+    fun onPageStarted(tabId: Long, url: String?) {
         if (tabId != activeTabId) return
         _uiState.update {
             it.copy(
                 progress = ProgressState.Loading(0),
-                toolbarVisible = !isImmersiveHost,
+                toolbarVisible = true,
                 topSearchBarText = url ?: "",
                 // History affordances intentionally NOT reset here — they
                 // keep their previous values until onPageFinished refreshes
@@ -321,9 +372,30 @@ class BrowserViewModel @Inject constructor(
                 forwardButtonEnabled = canGoForward,
                 progress = ProgressState.Hidden,
                 pageLoadError = false,
-                toolbarVisible = !NexaWebViewClient.isImmersiveUrl(url),
+                toolbarVisible = true,
                 pageLoadId = it.pageLoadId + 1,
             )
+        }
+    }
+
+    // ── In-page media probe (from PageMediaProbe, tab-scoped) ────────
+
+    /** The probe in [tabId]'s top document inspected [url] and found media or not. */
+    fun onPageMediaReported(tabId: Long, url: String, hasMedia: Boolean) {
+        val result = PageMediaProbeResult.Reported(MediaPageClassifier.classify(url)?.contentKey, hasMedia)
+        pageMediaProbes.update { it + (tabId to result) }
+    }
+
+    /** [tabId]'s WebView cannot run the probe; fall back to URL-only detection. */
+    fun onPageMediaProbeUnavailable(tabId: Long) {
+        pageMediaProbes.update { it + (tabId to PageMediaProbeResult.Unavailable) }
+    }
+
+    private fun prunePageMediaProbes(workspace: TabWorkspaceState) {
+        if (!workspace.isRestored) return
+        val liveIds = workspace.tabs.mapTo(HashSet()) { it.id }
+        pageMediaProbes.update { probes ->
+            if (probes.keys.all(liveIds::contains)) probes else probes.filterKeys(liveIds::contains)
         }
     }
 
@@ -344,7 +416,7 @@ class BrowserViewModel @Inject constructor(
         }
         _uiState.update {
             it.copy(
-                toolbarVisible = !NexaWebViewClient.isImmersiveUrl(it.topSearchBarText),
+                toolbarVisible = true,
                 keepScreenOn = false
             )
         }
