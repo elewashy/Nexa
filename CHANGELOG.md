@@ -9,7 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 ### Added
 
 - **Ad blocking:** Added uBlock Origin–compatible scriptlets, redirect resources, element hiding (including procedural filters), and `$popup` blocking.
-- **Ad blocking:** Added an automatic filter update interval setting and a filter status summary in Settings → Updates.
+- **Ad blocking:** Added an Ad blocker page, opened directly from the browser's More options menu or from Settings, with the ad blocker's status, an on/off switch, filter updates (update now, last and next check, and the automatic update interval), and blocking statistics: requests, pop-ups, and pages blocked, tracking parameters removed, estimated data saved, a 7-day chart, and the most blocked domains.
+- **Ad blocking:** Choose which filter lists to use from a catalog grouped by purpose (ads, privacy, malware, annoyances, regions), see each list's status and rule count, and import any uBlock Origin or Adblock Plus list by its address.
+- **Ad blocking:** Added custom rules, like uBlock Origin's "My filters": block or allow an address or domain, or write any supported filter. Each rule can be edited, turned off, or deleted with undo, and follows the same precedence as list rules, including exceptions, `$important`, and `$badfilter`.
+- **Ad blocking:** Ad blocking can now be turned off for a site, and its subdomains, from the More options menu, which also shows how much was blocked on the current page. Every site setting, including element hiding and pop-up blocking per site, can be managed from the Ad blocker page without revisiting the site.
 - **Ad blocking:** Added the remaining uBlock Origin scriptlets used by the default lists, including response pruning for XML, HLS, and DASH ads, the `json-edit` family, and safeguards against ClickFix-style clipboard attacks.
 - **Ad blocking:** Added support for `$removeparam` on page loads and `$csp` policies, generic `#@#` exceptions, uBlock Origin's `site>>` and regex hostname syntax, and the `:others()`, `:shadow()`, `:matches-prop()`, and `:watch-attr()` operators.
 - **Ad blocking:** Added the remaining uBlock Origin replacement resources.
@@ -20,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 - **Ad blocking:** Filters load several times faster at startup by restoring the last compiled filter engine instead of recompiling the lists.
 - **Ad blocking:** Changes made by the ad blocker to page functions are now hidden from page scripts, so sites can't detect them.
+- **Updates:** Settings → Updates now only checks for app updates; filter updates are managed from the Ad blocker page.
 
 - **Ad blocking:** Replaced host-only blocking with a full filter engine that understands resource types, `domain=` and party options, exception rules, `$important`, and `$badfilter`, so filters block only the requests they target.
 - **Ad blocking:** The default filter lists now match uBlock Origin's (uBlock filters, badware, privacy, quick fixes, unbreak, EasyList, EasyPrivacy, Peter Lowe's list), plus Liste AR when the app language is Arabic.
