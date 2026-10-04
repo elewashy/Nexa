@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** Added support for `$removeparam` on page loads and `$csp` policies, generic `#@#` exceptions, uBlock Origin's `site>>` and regex hostname syntax, and the `:others()`, `:shadow()`, `:matches-prop()`, and `:watch-attr()` operators.
 - **Ad blocking:** Added the remaining uBlock Origin replacement resources.
 - **Browser:** Pages opened in a new tab can now close themselves, as in Chrome.
+- **Share:** Images can now be downloaded from shared posts — Instagram posts and carousels, TikTok photo posts, X/Twitter tweets, Threads posts, and Facebook photos. When a post has several images, choose which ones to download.
 
 ### Changed
 
@@ -26,9 +27,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Browser:** Links and pop-ups that open a new window now open in a new tab instead of replacing the current page.
 - **Tabs:** Closing a tab that was opened by another page now returns to the tab that opened it.
 - **Tabs:** Undoing a tab close now restores its position, pin state, and back/forward history.
+- **Browser:** The navigation bar no longer hides itself on YouTube; it now only hides while a video plays in full screen, as on every other site.
+- **Share:** X/Twitter videos now download straight from X in seconds instead of going through a third-party site, which could take 40 seconds and then fail.
+- **Share:** Extraction reads only the part of each page it needs and stops, downloading and keeping in memory a fraction of what it did before, and closing the share sheet now cancels any extraction still in progress.
+- **Share:** A failed extraction now says why: no connection, a post without downloadable media, or an unsupported link.
 
 ### Fixed
 
+- **Browser:** The download button now appears only on pages with downloadable media — a specific video, reel, or post, and for tweets, Threads posts, and Facebook posts only when the post itself shows a video or image — instead of on every page of a supported site.
+- **Share:** Instagram and Threads posts now download the shared post's own media instead of a video from a related post on the same page.
+- **Browser:** The download button now appears on X/Twitter posts that have a video or photo; the post's media is checked with X directly, and the page check now also works when you're not signed in to X.
+- **Share:** Fixed Instagram links that failed to extract: Instagram's current post format, `instagram.com/share/` links, and posts where Instagram serves a page without post data are now handled, and carousel photos download at full resolution.
+- **Share:** Threads text posts with a link preview no longer offer the preview image or another post's video.
+- **Share:** Fixed YouTube downloads, which had stopped working after the download service changed how it signs and encrypts its responses. Videos the service already has ready now show up in under a second and download directly, without waiting for a conversion.
 - **Ad blocking:** Blocked pop-ups from embedded video players are now closed silently instead of replacing the page with the block page, which caused a reload loop when going back.
 - **Ad blocking:** Pop-up ads opened by embedded players to unrelated sites are now blocked even when their rotating domains are not yet in any filter list.
 - **Ad blocking:** Pop-up ads opened by a page from a tap on a non-link element (as mycima.bid does) are now blocked when they lead to another site, while legitimate same-site pop-ups and taps on real links keep opening.
