@@ -17,6 +17,8 @@ import com.elewashy.nexa.core.notifications.NotificationChannels
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.share.data.SharePlatformDetector
 import com.elewashy.nexa.feature.share.data.VideoExtractorRepository
+import com.elewashy.nexa.feature.share.domain.model.ExtractionError
+import com.elewashy.nexa.feature.share.domain.model.MediaImage
 import com.elewashy.nexa.feature.share.domain.model.MediaLabel
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -42,6 +44,10 @@ data class ShareUiState(
     val sharedUrl: String? = null,
     val platform: String = "",
     val qualities: List<VideoQuality> = emptyList(),
+    /** Images of the shared post, in display order. */
+    val images: List<MediaImage> = emptyList(),
+    /** URLs of the images the user chose to download; all of them by default. */
+    val selectedImageUrls: Set<String> = emptySet(),
     val isLoading: Boolean = false,
     val sizeLoading: Boolean = false,
     val showSheet: Boolean = false,
@@ -75,35 +81,41 @@ class ShareViewModel @Inject constructor(
 
         _uiState.value = ShareUiState(sharedUrl = url, isLoading = true, showSheet = true)
         viewModelScope.launch {
-            try {
-                val result = videoExtractorRepository.extract(url)
-                if (!result.success || result.videos.isEmpty()) {
-                    result.error?.let { Log.w(TAG, "Extractor failed: $it") }
-                    throw IllegalStateException(appContext.getString(R.string.failed_to_extract_video))
-                }
-
-                val qualities = result.videos
-                    .map { (quality, videoUrl) -> parseVideoQuality(quality, videoUrl) }
-                    .sortedByDescending { it.getSortPriority() }
-
-                _uiState.update {
-                    it.copy(
-                        platform = result.platform ?: PLATFORM_DEFAULT,
-                        qualities = qualities,
-                        isLoading = false,
-                        showSheet = true,
-                    )
-                }
-
-                fetchFileSizesAsync(qualities, referer = url)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Error extracting shared video", e)
-                closeWithMessage(appContext.getString(R.string.share_error, e.message ?: appContext.getString(R.string.unknown_error)))
+            // The repository is main-safe and reports failures as results.
+            val result = videoExtractorRepository.extract(url)
+            if (!result.success || !result.hasMedia) {
+                Log.w(TAG, "Extraction failed (${result.failure}): ${result.error}")
+                closeWithMessage(failureMessage(result.failure))
+                return@launch
             }
+
+            val qualities = result.videos
+                .map { (quality, videoUrl) -> parseVideoQuality(quality, videoUrl) }
+                .sortedByDescending { it.getSortPriority() }
+
+            _uiState.update {
+                it.copy(
+                    platform = result.platform ?: PLATFORM_DEFAULT,
+                    qualities = qualities,
+                    images = result.images,
+                    selectedImageUrls = result.images.mapTo(LinkedHashSet()) { image -> image.url },
+                    isLoading = false,
+                    showSheet = true,
+                )
+            }
+
+            fetchFileSizesAsync(qualities, referer = url)
         }
     }
+
+    /** Tells the user what went wrong in terms they can act on. */
+    private fun failureMessage(failure: ExtractionError?): String = appContext.getString(
+        when (failure) {
+            ExtractionError.NETWORK -> R.string.share_error_network
+            ExtractionError.UNSUPPORTED -> R.string.share_error_unsupported
+            ExtractionError.NO_MEDIA, null -> R.string.share_error_no_media
+        }
+    )
 
     private fun fetchFileSizesAsync(qualities: List<VideoQuality>, referer: String) {
         val urlsToFetch = qualities
@@ -158,6 +170,54 @@ class ShareViewModel @Inject constructor(
                 closeWithMessage(appContext.getString(R.string.download_queued_tap_to_start))
             }
         }
+    }
+
+    fun onImageSelectionToggled(image: MediaImage) {
+        _uiState.update { state ->
+            val selected = state.selectedImageUrls
+            state.copy(selectedImageUrls = if (image.url in selected) selected - image.url else selected + image.url)
+        }
+    }
+
+    /** Selects every image, or clears the selection when all are already selected. */
+    fun onAllImagesSelectionToggled() {
+        _uiState.update { state ->
+            val all = state.images.mapTo(LinkedHashSet()) { it.url }
+            state.copy(selectedImageUrls = if (state.selectedImageUrls.containsAll(all)) emptySet() else all)
+        }
+    }
+
+    /** Starts one download per selected image, in display order. */
+    fun onDownloadSelectedImages() {
+        val state = uiState.value
+        val selected = state.images.withIndex().filter { (_, image) -> image.url in state.selectedImageUrls }
+        if (selected.isEmpty() || !downloadStarted.compareAndSet(false, true)) return
+        _uiState.update { it.copy(showSheet = false) }
+
+        val timestamp = System.currentTimeMillis()
+        // Every download is attempted even when an earlier one fell back to a notification.
+        val allStarted = selected
+            .map { (index, image) -> startImageDownload(image, position = index + 1, timestamp = timestamp) }
+            .all { it }
+        closeWithMessage(
+            if (allStarted) {
+                appContext.resources.getQuantityString(R.plurals.image_downloads_started, selected.size, selected.size)
+            } else {
+                appContext.getString(R.string.download_queued_tap_to_start)
+            }
+        )
+    }
+
+    private fun startImageDownload(image: MediaImage, position: Int, timestamp: Long): Boolean {
+        val format = image.format
+        val platform = uiState.value.platform.ifBlank { PLATFORM_DEFAULT }
+        return startDownload(
+            url = image.url,
+            fileName = "${platform}_image_${position}_$timestamp.${format.extension}",
+            mimeType = format.mimeType,
+            forceExtension = null,
+            referer = uiState.value.sharedUrl,
+        )
     }
 
     private fun parseVideoQuality(rawLabel: String, videoUrl: String): VideoQuality {
@@ -221,11 +281,20 @@ class ShareViewModel @Inject constructor(
      * posted instead — callers must not claim the download is running.
      */
     private fun startDownload(quality: VideoQuality, referer: String? = uiState.value.sharedUrl): Boolean {
-        val fileName = generateFileName(quality, referer)
         val (mimeType, forceExtension) = getFileProperties(quality)
+        return startDownload(quality.url, generateFileName(quality), mimeType, forceExtension, referer)
+    }
+
+    private fun startDownload(
+        url: String,
+        fileName: String,
+        mimeType: String,
+        forceExtension: String?,
+        referer: String?,
+    ): Boolean {
         val intent = DownloadService.createStartIntent(
             context = appContext,
-            url = quality.url,
+            url = url,
             fileName = fileName,
             mimeType = mimeType,
             userAgent = USER_AGENT,
@@ -301,7 +370,7 @@ class ShareViewModel @Inject constructor(
         }
     }
 
-    private fun generateFileName(quality: VideoQuality, referer: String?): String {
+    private fun generateFileName(quality: VideoQuality): String {
         val platform = uiState.value.platform.ifBlank { PLATFORM_DEFAULT }
         val cleanQuality = quality.quality.replace(" ", "_")
         val extension = if (quality.type == VideoQuality.MediaType.AUDIO) EXTENSION_MP3 else EXTENSION_MP4

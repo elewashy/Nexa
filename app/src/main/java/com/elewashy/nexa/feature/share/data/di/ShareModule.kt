@@ -1,7 +1,9 @@
 package com.elewashy.nexa.feature.share.data.di
 
 import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.feature.share.data.DefaultMediaAvailabilityRepository
 import com.elewashy.nexa.feature.share.data.DefaultVideoExtractorRepository
+import com.elewashy.nexa.feature.share.data.MediaAvailabilityRepository
 import com.elewashy.nexa.feature.share.data.VideoExtractorRepository
 import com.elewashy.nexa.feature.share.data.YouTubeExtractor
 import com.elewashy.nexa.feature.share.data.platform.FacebookVideoExtractor
@@ -27,6 +29,10 @@ internal abstract class ShareModule {
     @Singleton
     abstract fun bindVideoExtractorRepository(impl: DefaultVideoExtractorRepository): VideoExtractorRepository
 
+    @Binds
+    @Singleton
+    abstract fun bindMediaAvailabilityRepository(impl: DefaultMediaAvailabilityRepository): MediaAvailabilityRepository
+
     @Binds @IntoSet
     abstract fun bindFacebookExtractor(impl: FacebookVideoExtractor): PlatformVideoExtractor
 
@@ -46,7 +52,7 @@ internal abstract class ShareModule {
     abstract fun bindYouTubeExtractor(impl: YouTubeVideoExtractor): PlatformVideoExtractor
 
     companion object {
-        /** Singleton so the scraped auth token is fetched once per process. */
+        /** Singleton so refreshed API credentials are shared by every extraction in the process. */
         @Provides
         @Singleton
         fun provideYouTubeBackend(httpClientProvider: HttpClientProvider): YouTubeExtractor =

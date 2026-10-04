@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.share.data
 
 import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.feature.share.domain.model.SharePlatform
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,6 +20,13 @@ class ShareLinkResolverTest {
     private val resolver = ShareLinkResolver(HttpClientProvider())
 
     // ── needsResolution ─────────────────────────────────────────────────
+
+    @Test
+    fun `instagram share links need resolution, post links do not`() {
+        assertTrue(resolver.needsResolution("https://www.instagram.com/share/reel/BAabc123/", SharePlatform.INSTAGRAM))
+        assertTrue(resolver.needsResolution("https://www.instagram.com/share/BAabc123", SharePlatform.INSTAGRAM))
+        assertFalse(resolver.needsResolution("https://www.instagram.com/p/CxYz123/", SharePlatform.INSTAGRAM))
+    }
 
     @Test
     fun `known platform canonical urls skip resolution`() {

@@ -142,7 +142,7 @@ import com.elewashy.nexa.feature.onboarding.OnboardingScreen
 import com.elewashy.nexa.feature.onboarding.OnboardingViewModel
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsNavigation
 import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
-import com.elewashy.nexa.feature.share.data.SharePlatform
+import com.elewashy.nexa.feature.share.domain.model.SharePlatform
 import com.elewashy.nexa.feature.share.data.SharePlatformDetector
 import com.elewashy.nexa.feature.share.presentation.ShareActivity
 import com.elewashy.nexa.feature.splash.presentation.SplashUiState

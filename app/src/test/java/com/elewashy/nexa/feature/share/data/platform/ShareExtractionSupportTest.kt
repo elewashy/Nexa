@@ -157,4 +157,34 @@ class ShareExtractionSupportTest {
         // Sub-megabyte values round down to 0.0 MB rather than failing.
         assertEquals("0.0 MB", ShareExtractionSupport.formatBytes(1024L))
     }
+
+    // ── multiVideoOptions ───────────────────────────────────────────────
+
+    @Test
+    fun `multiVideoOptions keeps the first video's labels and numbers later videos`() {
+        val options = ShareExtractionSupport.multiVideoOptions(
+            listOf(
+                listOf(VideoVersion("https://v/1-hd", 1080, 1920), VideoVersion("https://v/1-sd", 720, 1280)),
+                listOf(VideoVersion("https://v/2-hd", 1080, 1920), VideoVersion("https://v/1-hd", 1080, 1920)),
+            )
+        ) { "${it.width}x${it.height}" }
+
+        assertEquals(
+            mapOf(
+                "1080x1920" to "https://v/1-hd",
+                "720x1280" to "https://v/1-sd",
+                "Video 2 (1080p)" to "https://v/2-hd",
+            ),
+            options,
+        )
+    }
+
+    @Test
+    fun `multiVideoOptions suffixes colliding labels instead of dropping renditions`() {
+        val options = ShareExtractionSupport.multiVideoOptions(
+            listOf(listOf(VideoVersion("https://v/a", 0, 0), VideoVersion("https://v/b", 0, 0), VideoVersion("https://v/c", 0, 0)))
+        ) { "Video" }
+
+        assertEquals(mapOf("Video" to "https://v/a", "Video (2)" to "https://v/b", "Video (3)" to "https://v/c"), options)
+    }
 }

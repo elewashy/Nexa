@@ -324,6 +324,10 @@
     <string name="error_installing_apk">Error installing APK: %s</string>
     <string name="audio">Audio</string>
     <string name="video">Video</string>
+    <string name="images">Images</string>
+    <string name="select_images">Select Images</string>
+    <string name="deselect_all">Deselect all</string>
+    <string name="share_image_description">Image %1$d of %2$d</string>
     <string name="watermark">Watermark</string>
     <string name="download_starting">Download starting…</string>
     <string name="browser_download_snackbar_title">Downloading file…</string>
@@ -378,8 +382,9 @@
     <string name="sharing_url">Sharing URL</string>
     <string name="failed_to_save_image_for_sharing">Failed to save image for sharing</string>
     <string name="no_url_found_in_shared_content">No URL found in shared content</string>
-    <string name="failed_to_extract_video">Failed to extract video</string>
-    <string name="share_error">Error: %s</string>
+    <string name="share_error_network">Couldn’t reach the service. Check your connection and try again.</string>
+    <string name="share_error_no_media">No downloadable media found in this post</string>
+    <string name="share_error_unsupported">This link isn’t supported</string>
 
     <!-- Browser load error -->
     <string name="page_load_error_title">Can\'t load page</string>
@@ -397,6 +402,14 @@
     <plurals name="selected_count">
         <item quantity="one">%d selected</item>
         <item quantity="other">%d selected</item>
+    </plurals>
+    <plurals name="download_images">
+        <item quantity="one">Download %d image</item>
+        <item quantity="other">Download %d images</item>
+    </plurals>
+    <plurals name="image_downloads_started">
+        <item quantity="one">Downloading %d image</item>
+        <item quantity="other">Downloading %d images</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="one">Updated %d list</item>

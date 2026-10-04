@@ -2,11 +2,14 @@ package com.elewashy.nexa.feature.share.data
 
 import android.util.Log
 import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.core.network.awaitResponse
 import com.elewashy.nexa.feature.share.data.platform.ShareExtractionSupport.Companion.USER_AGENT_DESKTOP
 import com.elewashy.nexa.feature.share.data.platform.ShareExtractionSupport.Companion.USER_AGENT_MOBILE
+import com.elewashy.nexa.feature.share.domain.model.SharePlatform
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,7 +19,7 @@ import javax.inject.Singleton
  * platform detection and extraction.
  *
  * Some platforms share links that only 302 to the actual post page, e.g.
- * Threads `/share/<code>/` links or Twitter `t.co` short links. Extractors
+ * Threads and Instagram `/share/<token>/` links or Twitter `t.co` short links. Extractors
  * that parse post IDs out of the URL cannot work with those, so the redirect
  * chain is followed first and the final URL is used when it is safe to do so.
  *
@@ -43,7 +46,7 @@ internal class ShareLinkResolver @Inject constructor(
      * untrusted.
      */
     suspend fun resolve(url: String): String {
-        if (!needsResolution(url)) return url
+        if (url.toHttpUrlOrNull() == null || !needsResolution(url)) return url
 
         val finalUrl = finalUrlOrNull(url) ?: return url
         if (!isUsable(original = url, resolved = finalUrl)) return url
@@ -52,30 +55,26 @@ internal class ShareLinkResolver @Inject constructor(
         return finalUrl
     }
 
-    /**
-     * Only links that cannot be processed as-is are resolved:
-     * - Unknown hosts may be short links (t.co, bit.ly, ...) pointing at a
-     *   supported platform.
-     * - Threads `/share/<code>/` links are redirects to `/post/<id>` pages.
-     * Every other platform receives canonical share links, and extractors
-     * that fetch pages follow redirects themselves.
-     */
+    /** See the [platform]-explicit overload; the platform is detected from [url]. */
     private fun needsResolution(url: String): Boolean = needsResolution(url, SharePlatformDetector.detect(url))
 
     /**
      * Only links that cannot be processed as-is are resolved:
      * - Unknown hosts may be short links (t.co, bit.ly, ...) pointing at a
      *   supported platform.
-     * - Threads `/share/<code>/` links are redirects to `/post/<id>` pages.
+     * - Threads `/share/<code>/` links are redirects to `/post/<id>` pages,
+     *   Instagram `/share/<token>/` links to `/p/<code>` or `/reel/<code>`.
      * Every other platform receives canonical share links, and extractors
      * that fetch pages follow redirects themselves.
      *
-     * [platform] is a defaulted parameter (detected at runtime) so the gate
-     * is unit-testable on the JVM, where `android.net.Uri` is unavailable.
+     * [platform] is passed explicitly (production detects it from [url]) so
+     * the gate is unit-testable on the JVM, where `android.net.Uri` is
+     * unavailable.
      */
     internal fun needsResolution(url: String, platform: SharePlatform): Boolean = when (platform) {
         SharePlatform.VIDEO -> isProbeCandidate(url)
         SharePlatform.THREADS -> !THREADS_POST_RE.containsMatchIn(url)
+        SharePlatform.INSTAGRAM -> url.toHttpUrlOrNull()?.pathSegments?.firstOrNull() == "share"
         else -> false
     }
 
@@ -99,7 +98,7 @@ internal class ShareLinkResolver @Inject constructor(
      * that probe goes first and resolves the common redirect case with a
      * single request. GET is used only for servers that rejected HEAD.
      */
-    private fun finalUrlOrNull(url: String): String? {
+    private suspend fun finalUrlOrNull(url: String): String? {
         var sawHeadFailure = false
 
         for (userAgent in USER_AGENTS) {
@@ -142,7 +141,7 @@ internal class ShareLinkResolver @Inject constructor(
         data object Failed : Probe
     }
 
-    private fun followWithHead(url: String, userAgent: String): Probe = runCatching {
+    private suspend fun followWithHead(url: String, userAgent: String): Probe = try {
         execute(url, userAgent) { head() }.use { response ->
             if (response.isSuccessful) {
                 Probe.Final(response.request.url.toString())
@@ -150,7 +149,7 @@ internal class ShareLinkResolver @Inject constructor(
                 Probe.Failed
             }
         }
-    }.getOrElse { e ->
+    } catch (e: IOException) {
         Log.w(TAG, "HEAD resolution failed for $url: ${e.message}")
         Probe.Failed
     }
@@ -159,16 +158,17 @@ internal class ShareLinkResolver @Inject constructor(
      * Fallback for servers that reject HEAD. The body is never read; only the
      * final request URL after the redirect chain is needed.
      */
-    private fun followWithGet(url: String, userAgent: String): String? = runCatching {
+    private suspend fun followWithGet(url: String, userAgent: String): String? = try {
         execute(url, userAgent) { }.use { response ->
             if (response.isSuccessful) response.request.url.toString() else null
         }
-    }.getOrElse { e ->
+    } catch (e: IOException) {
         Log.w(TAG, "GET resolution failed for $url: ${e.message}")
         null
     }
 
-    private inline fun execute(url: String, userAgent: String, configure: Request.Builder.() -> Unit) =
+    /** Cancellable: closing the share sheet cancels an in-flight probe. */
+    private suspend inline fun execute(url: String, userAgent: String, configure: Request.Builder.() -> Unit) =
         Request.Builder()
             .url(url)
             .header("User-Agent", userAgent)
@@ -176,7 +176,7 @@ internal class ShareLinkResolver @Inject constructor(
             .apply(configure)
             .build()
             .let(client::newCall)
-            .execute()
+            .awaitResponse()
 
     private companion object {
         const val TAG = "ShareLinkResolver"

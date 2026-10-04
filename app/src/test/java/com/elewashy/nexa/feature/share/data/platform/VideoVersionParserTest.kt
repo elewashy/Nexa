@@ -1,14 +1,18 @@
 package com.elewashy.nexa.feature.share.data.platform
 
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * JVM tests for [parseVideoVersions]. Requires org.json on the test
+ * JVM tests for `parseVideoVersions`. Requires org.json on the test
  * classpath (provided via testImplementation, android.jar does not ship it).
  */
 class VideoVersionParserTest {
+
+    /** Payload entries as they appear in page data (JSON-escaped URLs included). */
+    private fun parseVideoVersions(body: String) = parseVideoVersions(JSONArray("[$body]"))
 
     @Test
     fun `valid array body with escaped url is parsed`() {
@@ -62,10 +66,10 @@ class VideoVersionParserTest {
     }
 
     @Test
-    fun `malformed body returns empty list instead of throwing`() {
-        assertTrue(parseVideoVersions("not json at all").isEmpty())
-        assertTrue(parseVideoVersions("{\"url\":\"https://cdn.example.com/v.mp4\"").isEmpty()) // truncated
-        assertTrue(parseVideoVersions("[{]}").isEmpty())
+    fun `non-object entries are skipped`() {
+        val versions = parseVideoVersions("null,42,\"text\",{\"url\":\"https://cdn.example.com/v.mp4\"}")
+
+        assertEquals(listOf("https://cdn.example.com/v.mp4"), versions.map { it.url })
         assertTrue(parseVideoVersions("").isEmpty())
     }
 }

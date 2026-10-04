@@ -287,6 +287,10 @@
     <string name="error_installing_apk">خطأ أثناء تثبيت APK: %s</string>
     <string name="audio">الصوت</string>
     <string name="video">الفيديو</string>
+    <string name="images">الصور</string>
+    <string name="select_images">اختر الصور</string>
+    <string name="deselect_all">إلغاء تحديد الكل</string>
+    <string name="share_image_description">الصورة %1$d من %2$d</string>
     <string name="watermark">علامة مائية</string>
     <string name="download_starting">بدء التنزيل…</string>
     <string name="browser_download_snackbar_title">جارٍ تنزيل الملف…</string>
@@ -341,8 +345,9 @@
     <string name="sharing_url">مشاركة الرابط</string>
     <string name="failed_to_save_image_for_sharing">فشل حفظ الصورة للمشاركة</string>
     <string name="no_url_found_in_shared_content">لم يتم العثور على رابط في المحتوى المشترك</string>
-    <string name="failed_to_extract_video">فشل استخراج الفيديو</string>
-    <string name="share_error">خطأ: %s</string>
+    <string name="share_error_network">تعذّر الوصول إلى الخدمة. تحقّق من اتصالك وحاول مرة أخرى.</string>
+    <string name="share_error_no_media">لم يتم العثور على وسائط قابلة للتنزيل في هذا المنشور</string>
+    <string name="share_error_unsupported">هذا الرابط غير مدعوم</string>
     <string name="page_load_error_title">تعذَّر تحميل الصفحة</string>
     <string name="page_load_error_message">تحقَّق من اتصالك بالإنترنت وحاول مرة أخرى.</string>
     <string name="page_load_error_home">العودة إلى الرئيسية</string>
@@ -370,6 +375,22 @@
         <item quantity="few">%d عناصر محددة</item>
         <item quantity="many">%d عنصرًا محددًا</item>
         <item quantity="other">%d عنصر محدد</item>
+    </plurals>
+    <plurals name="download_images">
+        <item quantity="zero">تنزيل %d صورة</item>
+        <item quantity="one">تنزيل صورة واحدة</item>
+        <item quantity="two">تنزيل صورتين</item>
+        <item quantity="few">تنزيل %d صور</item>
+        <item quantity="many">تنزيل %d صورة</item>
+        <item quantity="other">تنزيل %d صورة</item>
+    </plurals>
+    <plurals name="image_downloads_started">
+        <item quantity="zero">جارٍ تنزيل %d صورة</item>
+        <item quantity="one">جارٍ تنزيل صورة واحدة</item>
+        <item quantity="two">جارٍ تنزيل صورتين</item>
+        <item quantity="few">جارٍ تنزيل %d صور</item>
+        <item quantity="many">جارٍ تنزيل %d صورة</item>
+        <item quantity="other">جارٍ تنزيل %d صورة</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="zero">لم يتم تحديث أي قوائم</item>

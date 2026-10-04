@@ -3,8 +3,13 @@ package com.elewashy.nexa.feature.share.data.platform
 import android.util.Base64
 import android.util.Log
 import com.elewashy.nexa.core.network.HttpClientProvider
+import com.elewashy.nexa.core.network.awaitResponse
+import com.elewashy.nexa.feature.share.data.ExtractionException
+import com.elewashy.nexa.feature.share.domain.model.ExtractionError
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.net.URLDecoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -12,10 +17,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Shared HTTP clients and parsing helpers for the platform extractors.
+ * Shared HTTP plumbing and parsing helpers for the platform extractors.
  *
  * Both clients are derived from [HttpClientProvider] so share-feature traffic
- * reuses the app-wide connection pool and dispatcher.
+ * reuses the app-wide connection pool and dispatcher. Calls go through
+ * [execute], which is cancellable: when the share sheet closes, its
+ * in-flight requests are cancelled instead of running to their timeouts.
  */
 @Singleton
 internal class ShareExtractionSupport @Inject constructor(
@@ -23,11 +30,12 @@ internal class ShareExtractionSupport @Inject constructor(
 ) {
 
     /** Scraping client for post pages and extraction APIs. */
-    val client: OkHttpClient = httpClientProvider.newBuilder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        // Hard cap so slow-drip responses can't hang the quality sheet forever.
-        .callTimeout(SCRAPER_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    private val client: OkHttpClient = httpClientProvider.newBuilder()
+        // Fail fast on unreachable hosts so fallbacks get their turn.
+        .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        // Hard cap so slow-drip responses can't hang the quality sheet.
+        .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
@@ -38,8 +46,27 @@ internal class ShareExtractionSupport @Inject constructor(
         .followRedirects(true)
         .build()
 
+    /**
+     * Executes [request], suspending without blocking a thread. The caller
+     * owns the returned response and must close it (`use { }`); reading its
+     * body blocks, so callers run on an IO dispatcher.
+     */
+    suspend fun execute(request: Request): Response = client.newCall(request).awaitResponse()
+
+    /**
+     * Executes [request] and returns its successful response, mapping HTTP
+     * failures to [ExtractionException]s (404/410: the content is gone).
+     */
+    suspend fun executeOrThrow(request: Request): Response {
+        val response = execute(request)
+        if (response.isSuccessful) return response
+        response.close()
+        val reason = if (response.code == 404 || response.code == 410) ExtractionError.NO_MEDIA else ExtractionError.NETWORK
+        throw ExtractionException("HTTP ${response.code} from ${request.url.host}", reason)
+    }
+
     /** Fetches the content length of [url] via HEAD, or null on any failure. */
-    fun fetchFileSize(url: String, referer: String): Long? {
+    suspend fun fetchFileSize(url: String, referer: String): Long? {
         return try {
             val request = Request.Builder()
                 .url(url)
@@ -49,12 +76,15 @@ internal class ShareExtractionSupport @Inject constructor(
                 .header("Referer", referer)
                 .build()
 
-            metadataClient.newCall(request).execute().use { response ->
+            metadataClient.newCall(request).awaitResponse().use { response ->
                 if (!response.isSuccessful) return null
                 response.header("Content-Length")?.toLongOrNull()
             }
-        } catch (e: Exception) {
+        } catch (e: IOException) {
             Log.w(TAG, "Could not fetch file size: ${e.message}")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Invalid media URL: ${e.message}")
             null
         }
     }
@@ -66,7 +96,23 @@ internal class ShareExtractionSupport @Inject constructor(
         const val TIKWM_BASE_URL = "https://www.tikwm.com"
 
         private const val TAG = "ShareExtraction"
-        private const val SCRAPER_CALL_TIMEOUT_SECONDS = 60L
+        private const val CONNECT_TIMEOUT_SECONDS = 10L
+        private const val READ_TIMEOUT_SECONDS = 15L
+        private const val CALL_TIMEOUT_SECONDS = 30L
+
+        /**
+         * A top-level navigation as a desktop browser makes it. Meta serves
+         * logged-out post data only to requests that look like one, so all
+         * scrapers share this header set. [fetchDest] is `iframe` for embeds.
+         */
+        fun browserRequest(url: String, fetchDest: String = "document"): Request.Builder = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT_DESKTOP)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Sec-Fetch-Dest", fetchDest)
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", if (fetchDest == "document") "none" else "cross-site")
 
         private val qualityPatterns = listOf(
             Regex("""_(\d+)p\.mp4"""),
@@ -118,6 +164,40 @@ internal class ShareExtractionSupport @Inject constructor(
                 Log.w(tag, "Could not decode URL: ${e.message}")
             }
             return downloadUrl
+        }
+
+        /**
+         * Quality options for a post's videos: the first video's renditions
+         * keep their quality labels; later videos of a carousel are numbered
+         * (`Video 2 (720p)`) so their options stay distinguishable. Labels
+         * that would collide get a ` (n)` suffix rather than being dropped.
+         */
+        fun multiVideoOptions(videos: List<List<VideoVersion>>, qualityLabel: (VideoVersion) -> String): Map<String, String> {
+            val options = linkedMapOf<String, String>()
+            videos.forEachIndexed { index, versions ->
+                versions.forEach { version ->
+                    if (version.url in options.values) return@forEach
+                    val quality = qualityLabel(version)
+                    val label = if (index == 0) quality else "Video ${index + 1} (${heightLabel(quality)})"
+                    options[uniqueLabel(options, label)] = version.url
+                }
+            }
+            return options
+        }
+
+        /** `1080x1920` → `1080p`, so a numbered label is not re-parsed as a bare resolution. */
+        private fun heightLabel(quality: String): String {
+            val match = DIMENSIONS_RE.find(quality) ?: return quality
+            return "${minOf(match.groupValues[1].toInt(), match.groupValues[2].toInt())}p"
+        }
+
+        private val DIMENSIONS_RE = Regex("""(\d+)\s*[xX]\s*(\d+)""")
+
+        private fun uniqueLabel(options: Map<String, String>, label: String): String {
+            if (label !in options) return label
+            var n = 2
+            while ("$label ($n)" in options) n++
+            return "$label ($n)"
         }
 
         /** Appends a human-readable size to [label] when [sizeBytes] is known. */

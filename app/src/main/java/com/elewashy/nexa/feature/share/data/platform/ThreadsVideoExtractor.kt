@@ -1,62 +1,34 @@
 package com.elewashy.nexa.feature.share.data.platform
 
-import androidx.core.net.toUri
 import com.elewashy.nexa.feature.share.data.ExtractionException
-import com.elewashy.nexa.feature.share.data.SharePlatform
+import com.elewashy.nexa.feature.share.domain.MediaPageClassifier
+import com.elewashy.nexa.feature.share.domain.model.SharePlatform
+import com.elewashy.nexa.feature.share.domain.model.ExtractionError
 import com.elewashy.nexa.feature.share.domain.model.ExtractionResult
 import javax.inject.Inject
 
+/**
+ * Threads posts, read from the structured data in the post page. The post's
+ * data sits in the first ~200 KB of a ~1 MB page; the rest is never
+ * downloaded.
+ */
 internal class ThreadsVideoExtractor @Inject constructor(
     support: ShareExtractionSupport
 ) : PageScraper(platformName = "Threads", tag = "ThreadsVideoExtractor", support = support) {
 
     override val platform = SharePlatform.THREADS
 
-    override fun extractFromPage(url: String): ExtractionResult {
-        if (!POST_ID_RE.containsMatchIn(url)) {
-            throw ExtractionException("Invalid Threads URL")
-        }
+    override suspend fun extract(url: String): ExtractionResult {
+        val code = MediaPageClassifier.classify(url)?.takeIf { it.platform == SharePlatform.THREADS }?.contentId
+            ?: throw ExtractionException("Not a Threads post URL", ExtractionError.UNSUPPORTED)
 
-        val authority = url.toUri().host?.takeIf { it.isNotBlank() } ?: DEFAULT_AUTHORITY
-        val html = fetchPage(url, "authority" to authority)
+        val post = readPage(url) { MetaPostParser.scan(it, code) }
+            ?: throw ExtractionException("Threads returned no data for this post")
+        if (post.isEmpty) throw ExtractionException("The post has no media")
 
-        val videos = linkedMapOf<String, String>()
-        for (match in VIDEO_VERSIONS_RE.findAll(html)) {
-            parseVideoVersions(match.groupValues[1]).forEach { version ->
-                if (!videos.containsValue(version.url)) {
-                    videos.putUniqueLabel(
-                        ShareExtractionSupport.detectQuality(version.url, version.width, version.height),
-                        version.url
-                    )
-                }
-            }
-            if (videos.isNotEmpty()) break
+        val videos = ShareExtractionSupport.multiVideoOptions(post.videos) { version ->
+            ShareExtractionSupport.detectQuality(version.url, version.width, version.height)
         }
-
-        if (videos.isEmpty()) {
-            throw ExtractionException("No video found in the post")
-        }
-        return success(videos)
-    }
-
-    /** Avoids label collisions when several versions map to the same quality name. */
-    private fun MutableMap<String, String>.putUniqueLabel(label: String, url: String) {
-        if (!containsKey(label)) {
-            put(label, url)
-            return
-        }
-        var index = 2
-        var candidate = "$label ($index)"
-        while (containsKey(candidate)) {
-            index++
-            candidate = "$label ($index)"
-        }
-        put(candidate, url)
-    }
-
-    private companion object {
-        const val DEFAULT_AUTHORITY = "www.threads.com"
-        val POST_ID_RE = Regex("/post/([^/?]+)")
-        val VIDEO_VERSIONS_RE = Regex("\"video_versions\":\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL)
+        return success(videos, post.images)
     }
 }

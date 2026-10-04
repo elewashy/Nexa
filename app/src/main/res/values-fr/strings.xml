@@ -278,6 +278,10 @@
     <string name="error_installing_apk">Erreur lors de l’installation de l’APK : %s</string>
     <string name="audio">Audio</string>
     <string name="video">Vidéo</string>
+    <string name="images">Images</string>
+    <string name="select_images">Sélectionner les images</string>
+    <string name="deselect_all">Tout désélectionner</string>
+    <string name="share_image_description">Image %1$d sur %2$d</string>
     <string name="watermark">Filigrane</string>
     <string name="download_starting">Démarrage du téléchargement…</string>
     <string name="browser_download_snackbar_title">Téléchargement du fichier…</string>
@@ -332,8 +336,9 @@
     <string name="sharing_url">Partage de l’URL</string>
     <string name="failed_to_save_image_for_sharing">Échec de l’enregistrement de l’image pour le partage</string>
     <string name="no_url_found_in_shared_content">Aucune URL trouvée dans le contenu partagé</string>
-    <string name="failed_to_extract_video">Échec de l’extraction de la vidéo</string>
-    <string name="share_error">Erreur : %s</string>
+    <string name="share_error_network">Impossible de joindre le service. Vérifiez votre connexion et réessayez.</string>
+    <string name="share_error_no_media">Aucun média téléchargeable trouvé dans cette publication</string>
+    <string name="share_error_unsupported">Ce lien n’est pas pris en charge</string>
     <string name="page_load_error_title">Impossible de charger la page</string>
     <string name="page_load_error_message">Vérifiez votre connexion Internet et réessayez.</string>
     <string name="page_load_error_home">Retour à l\'accueil</string>
@@ -352,6 +357,16 @@
         <item quantity="one">%d sélectionné</item>
         <item quantity="many">%d sélectionnés</item>
         <item quantity="other">%d sélectionnés</item>
+    </plurals>
+    <plurals name="download_images">
+        <item quantity="one">Télécharger %d image</item>
+        <item quantity="many">Télécharger %d images</item>
+        <item quantity="other">Télécharger %d images</item>
+    </plurals>
+    <plurals name="image_downloads_started">
+        <item quantity="one">Téléchargement de %d image</item>
+        <item quantity="many">Téléchargement de %d images</item>
+        <item quantity="other">Téléchargement de %d images</item>
     </plurals>
     <plurals name="updated_lists_count">
         <item quantity="one">%d liste mise à jour</item>

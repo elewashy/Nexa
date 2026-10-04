@@ -1,7 +1,12 @@
 package com.elewashy.nexa.feature.share.data
 
+import com.elewashy.nexa.feature.share.domain.model.ExtractionError
+
 /**
- * Signals an expected extraction failure with a user-presentable message.
- * Caught at the extraction boundary and converted to a failed result.
+ * Signals an expected extraction failure. Caught at the extraction boundary
+ * ([VideoExtractor]) and converted to a failed result carrying [reason].
  */
-class ExtractionException(message: String) : Exception(message)
+class ExtractionException(
+    message: String,
+    val reason: ExtractionError = ExtractionError.NO_MEDIA,
+) : Exception(message)

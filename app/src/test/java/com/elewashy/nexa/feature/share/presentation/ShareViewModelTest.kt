@@ -3,8 +3,12 @@ package com.elewashy.nexa.feature.share.presentation
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.share.data.VideoExtractorRepository
+import com.elewashy.nexa.feature.share.domain.model.ExtractionError
 import com.elewashy.nexa.feature.share.domain.model.ExtractionResult
+import com.elewashy.nexa.feature.share.domain.model.MediaImage
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,10 +77,115 @@ class ShareViewModelTest {
         assertFalse(viewModel.uiState.value.showSheet)
     }
 
-    private fun createViewModel(): ShareViewModel = ShareViewModel(
+    @Test
+    fun `image-only posts open the sheet with every image selected`() = runTest {
+        val viewModel = createViewModel(ExtractionResult.success("Instagram", emptyMap(), IMAGES))
+
+        viewModel.handleSharedText("https://www.instagram.com/p/ABC/")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertTrue(state.showSheet)
+        assertFalse(state.isLoading)
+        assertEquals(IMAGES, state.images)
+        assertEquals(IMAGES.map { it.url }.toSet(), state.selectedImageUrls)
+    }
+
+    @Test
+    fun `images can be toggled individually and all at once`() = runTest {
+        val viewModel = loadedViewModel()
+
+        viewModel.onImageSelectionToggled(IMAGES[1])
+        assertEquals(setOf(IMAGES[0].url, IMAGES[2].url), viewModel.uiState.value.selectedImageUrls)
+
+        viewModel.onAllImagesSelectionToggled()
+        assertEquals(IMAGES.map { it.url }.toSet(), viewModel.uiState.value.selectedImageUrls)
+
+        viewModel.onAllImagesSelectionToggled()
+        assertTrue(viewModel.uiState.value.selectedImageUrls.isEmpty())
+
+        viewModel.onImageSelectionToggled(IMAGES[2])
+        assertEquals(setOf(IMAGES[2].url), viewModel.uiState.value.selectedImageUrls)
+    }
+
+    @Test
+    fun `downloading starts one download per selected image only once`() = runTest {
+        val viewModel = loadedViewModel()
+        viewModel.onImageSelectionToggled(IMAGES[0])
+
+        viewModel.events.test {
+            viewModel.onDownloadSelectedImages()
+            viewModel.onDownloadSelectedImages()
+            assertTrue(awaitItem() is ShareEvent.Close)
+            expectNoEvents()
+        }
+
+        val started = shadowOf(context).allStartedServices
+        assertEquals(listOf(IMAGES[1].url, IMAGES[2].url), started.map { it.getStringExtra(DownloadService.EXTRA_URL) })
+        assertEquals(listOf("image/png", "image/jpeg"), started.map { it.getStringExtra(DownloadService.EXTRA_MIME_TYPE) })
+        assertTrue(started.all { it.getStringExtra(DownloadService.EXTRA_FILE_NAME)!!.startsWith("Instagram_image_") })
+        assertFalse(viewModel.uiState.value.showSheet)
+    }
+
+    @Test
+    fun `nothing is downloaded when no image is selected`() = runTest {
+        val viewModel = loadedViewModel()
+        viewModel.onAllImagesSelectionToggled()
+
+        viewModel.onDownloadSelectedImages()
+
+        assertTrue(shadowOf(context).allStartedServices.isEmpty())
+        assertTrue(viewModel.uiState.value.showSheet)
+    }
+
+    @Test
+    fun `results without media close the sheet with the no-media message`() = runTest {
+        assertEquals(
+            context.getString(R.string.share_error_no_media),
+            closeMessageFor(ExtractionResult.success("X", emptyMap(), emptyList())),
+        )
+    }
+
+    @Test
+    fun `failures tell the user what went wrong`() = runTest {
+        assertEquals(
+            context.getString(R.string.share_error_network),
+            closeMessageFor(ExtractionResult.failure("timeout", ExtractionError.NETWORK)),
+        )
+        assertEquals(
+            context.getString(R.string.share_error_unsupported),
+            closeMessageFor(ExtractionResult.failure("bad link", ExtractionError.UNSUPPORTED)),
+        )
+        assertEquals(
+            context.getString(R.string.share_error_no_media),
+            closeMessageFor(ExtractionResult.failure("text post", ExtractionError.NO_MEDIA)),
+        )
+    }
+
+    private suspend fun closeMessageFor(result: ExtractionResult): String? {
+        val viewModel = createViewModel(result)
+        var message: String? = null
+        viewModel.events.test {
+            viewModel.handleSharedText("https://x.com/u/status/1")
+            testDispatcher.scheduler.advanceUntilIdle()
+            message = (awaitItem() as ShareEvent.Close).message
+        }
+        return message
+    }
+
+    private suspend fun loadedViewModel(): ShareViewModel {
+        val viewModel = createViewModel(ExtractionResult.success("Instagram", emptyMap(), IMAGES))
+        viewModel.handleSharedText("https://www.instagram.com/p/ABC/")
+        testDispatcher.scheduler.advanceUntilIdle()
+        return viewModel
+    }
+
+    private fun createViewModel(
+        result: ExtractionResult = ExtractionResult.failure("unused"),
+    ): ShareViewModel = ShareViewModel(
         appContext = context,
         videoExtractorRepository = object : VideoExtractorRepository {
-            override suspend fun extract(url: String) = ExtractionResult.failure("unused")
+            override suspend fun extract(url: String) = result
             override suspend fun fetchFileSize(url: String, referer: String): Long? = null
             override suspend fun convertYouTubeVideo(resourceContent: String) = "unused"
         },
@@ -85,5 +194,11 @@ class ShareViewModelTest {
 
     private companion object {
         const val VIDEO_URL = "https://cdn.example.com/video.mp4"
+
+        val IMAGES = listOf(
+            MediaImage("https://cdn.example.com/1.jpg", 1080, 1350),
+            MediaImage("https://cdn.example.com/2.png?x=1", 1080, 1080),
+            MediaImage("https://pbs.twimg.com/media/C?format=jpg&name=orig"),
+        )
     }
 }

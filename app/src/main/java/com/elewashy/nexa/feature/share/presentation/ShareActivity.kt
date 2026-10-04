@@ -147,10 +147,15 @@ private fun ShareOverlay(
                 audioQualities = audioQualities,
                 videoQualities = videoQualities,
                 isLoading = state.isLoading,
+                images = state.images,
+                selectedImageUrls = state.selectedImageUrls,
                 sizeLoading = state.sizeLoading,
                 onDownload = { quality ->
                     viewModel.onQualitySelected(quality)
                 },
+                onImageToggled = viewModel::onImageSelectionToggled,
+                onAllImagesToggled = viewModel::onAllImagesSelectionToggled,
+                onDownloadImages = viewModel::onDownloadSelectedImages,
                 onCancel = onClose,
             )
         }

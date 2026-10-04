@@ -13,32 +13,22 @@ internal data class VideoVersion(
 )
 
 /**
- * Parses the raw contents of a `video_versions` JSON array scraped from a
- * Threads or Instagram post page. The payload is JSON-escaped, so URLs are
- * unescaped before use.
- *
- * Returns an empty list when the payload is malformed instead of throwing:
- * callers typically have fallback strategies.
+ * Parses a Meta `video_versions` array (Threads/Instagram post data).
+ * Entries that are not objects or have no URL are skipped; missing
+ * dimensions are 0 (current payloads list renditions without them).
  */
-internal fun parseVideoVersions(arrayBody: String): List<VideoVersion> {
-    return try {
-        val jsonArray = JSONArray("[${ShareExtractionSupport.decodeUrl(arrayBody)}]")
-        buildList(jsonArray.length()) {
-            for (i in 0 until jsonArray.length()) {
-                val entry = jsonArray.getJSONObject(i)
-                val url = entry.optString("url")
-                if (url.isNotBlank()) {
-                    add(
-                        VideoVersion(
-                            url = url,
-                            width = entry.optInt("width"),
-                            height = entry.optInt("height")
-                        )
-                    )
-                }
-            }
+internal fun parseVideoVersions(jsonArray: JSONArray): List<VideoVersion> = buildList(jsonArray.length()) {
+    for (i in 0 until jsonArray.length()) {
+        val entry = jsonArray.optJSONObject(i) ?: continue
+        val url = entry.optString("url")
+        if (url.isNotBlank()) {
+            add(
+                VideoVersion(
+                    url = url,
+                    width = entry.optInt("width"),
+                    height = entry.optInt("height")
+                )
+            )
         }
-    } catch (_: Exception) {
-        emptyList()
     }
 }
