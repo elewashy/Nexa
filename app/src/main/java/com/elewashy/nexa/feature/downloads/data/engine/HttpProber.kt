@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
 import android.util.Log
+import com.elewashy.nexa.core.network.awaitResponse
 import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

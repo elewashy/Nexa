@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
 import android.util.Log
+import com.elewashy.nexa.core.network.awaitResponse
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
