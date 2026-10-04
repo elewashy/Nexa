@@ -7,6 +7,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.elewashy.nexa.feature.adblock.presentation.AdBlockNavigation
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.update.presentation.ChangelogsScreen
 import com.elewashy.nexa.feature.update.presentation.UpdatesSettingsScreen
@@ -82,6 +83,10 @@ fun SettingsNavigation(
                 onBackClick = navController::popBackStack,
                 viewModel = viewModel,
             )
+        }
+
+        composable(SettingsDestination.AdBlock.route) {
+            AdBlockNavigation(onRootBackClick = navController::popBackStack)
         }
 
         composable(SettingsDestination.Updates.route) {

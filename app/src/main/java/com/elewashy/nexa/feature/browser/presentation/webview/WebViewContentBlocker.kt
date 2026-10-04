@@ -10,16 +10,25 @@ import android.webkit.WebView
 import androidx.core.net.toUri
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.elewashy.nexa.feature.browser.data.adblock.AdBlockAssets
-import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
-import com.elewashy.nexa.feature.browser.data.adblock.PopupHint
-import com.elewashy.nexa.feature.browser.data.adblock.PopupHints
-import com.elewashy.nexa.feature.browser.data.adblock.PopupPolicy
-import com.elewashy.nexa.feature.browser.data.adblock.engine.FilterEngine
-import com.elewashy.nexa.feature.browser.data.adblock.engine.MatchResult
-import com.elewashy.nexa.feature.browser.data.adblock.engine.PageContext
-import com.elewashy.nexa.feature.browser.data.adblock.engine.RequestType
-import com.elewashy.nexa.feature.browser.data.adblock.engine.RequestTypeResolver
+import com.elewashy.nexa.feature.adblock.data.AdBlockAssets
+import com.elewashy.nexa.feature.adblock.data.AdBlockPolicy
+import com.elewashy.nexa.feature.adblock.data.AdBlockPolicyStore
+import com.elewashy.nexa.feature.adblock.data.AdBlockRepository
+import com.elewashy.nexa.feature.adblock.data.AdBlockStatsRecorder
+import com.elewashy.nexa.feature.adblock.data.SitePolicy
+import com.elewashy.nexa.feature.adblock.data.PopupHint
+import com.elewashy.nexa.feature.adblock.data.PopupHints
+import com.elewashy.nexa.feature.adblock.data.PopupPolicy
+import com.elewashy.nexa.feature.adblock.data.engine.FilterEngine
+import com.elewashy.nexa.feature.adblock.data.engine.Hostnames
+import com.elewashy.nexa.feature.adblock.data.engine.MatchResult
+import com.elewashy.nexa.feature.adblock.data.engine.PageContext
+import com.elewashy.nexa.feature.adblock.data.engine.RequestType
+import com.elewashy.nexa.feature.adblock.data.engine.RequestTypeResolver
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.Collections
@@ -53,23 +62,52 @@ import java.util.concurrent.ConcurrentHashMap
  *    frame's payload; the engine returns only what applies to that frame, so
  *    most frames receive a stylesheet and run no scriptlet at all.
  *
+ * Before the engine is consulted, the switches of the page's site apply
+ * ([AdBlockPolicyStore], uBO's trusted sites and per-site switches): with
+ * the blocker off globally or for the top document's site nothing is
+ * filtered — no network blocking, no block page, no `$removeparam`, no
+ * cosmetics or scriptlets, no popup blocking — for the page and all of its
+ * frames. Cosmetic filtering and popup blocking can also be turned off
+ * individually per site.
+ *
+ * Blocking statistics are recorded through [AdBlockStatsRecorder] (batched,
+ * in memory); [blockedOnPage] counts what was blocked on the current page.
+ * Blocked hosts from private tabs ([isPrivate]) are never recorded.
+ *
  * Thread-safety: page state is published through volatile fields; the
- * engine is immutable.
+ * engine and the policy snapshot are immutable.
  */
 class WebViewContentBlocker(
     private val repository: AdBlockRepository,
+    private val policyStore: AdBlockPolicyStore,
+    private val stats: AdBlockStatsRecorder,
     private val assets: AdBlockAssets,
     private val blockPage: BlockedPageRenderer,
+    private val isPrivate: Boolean,
 ) {
-    private class PageState(val url: String, val engine: FilterEngine, val context: PageContext)
+    private class PageState(
+        val url: String,
+        val engine: FilterEngine,
+        val context: PageContext,
+        val policies: AdBlockPolicy,
+        /** Switches of the top document's site; they cover every frame of the page. */
+        val policy: SitePolicy,
+    )
+
+    private class FrameState(val engine: FilterEngine, val context: PageContext)
 
     @Volatile
     private var page: PageState? = null
 
+    private val _blockedOnPage = MutableStateFlow(0)
+
+    /** Requests, pop-ups and documents blocked since the current page started loading. */
+    val blockedOnPage: StateFlow<Int> = _blockedOnPage.asStateFlow()
+
     /** Per-document contexts for frames, keyed by referrer URL (cleared on top-level navigation). */
-    private val frameContexts: MutableMap<String, PageState> =
-        Collections.synchronizedMap(object : LinkedHashMap<String, PageState>(16, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PageState>?) = size > FRAME_CACHE_SIZE
+    private val frameContexts: MutableMap<String, FrameState> =
+        Collections.synchronizedMap(object : LinkedHashMap<String, FrameState>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FrameState>?) = size > FRAME_CACHE_SIZE
         })
 
     /**
@@ -106,7 +144,10 @@ class WebViewContentBlocker(
 
     /** Fallback for WebView builds without document-start scripts: inject as early as the API allows. */
     fun onPageStarted(webView: WebView, url: String?) {
-        if (url != null) updatePage(url)
+        if (url != null) {
+            if (url != page?.url) _blockedOnPage.value = 0
+            updatePage(url)
+        }
         if (!usesDocumentStartScript && url != null && url.startsWith("http")) {
             webView.evaluateJavascript(assets.contentScript, null)
         }
@@ -125,16 +166,28 @@ class WebViewContentBlocker(
         val url = request.url.toString()
         if (!url.startsWith("http")) return null
         val engine = repository.awaitEngine()
+        val policies = policyStore.awaitCurrent()
 
         if (request.isForMainFrame) {
-            updatePage(url, engine)
+            _blockedOnPage.value = 0
+            val state = updatePage(url, engine, policies)
+            // Trusted site (or blocker off): the document and everything it loads pass untouched.
+            if (!state.policy.filtering) return null
+            if (!request.isRedirect) stats.recordPageFiltered()
             if (request.method != "GET") return null
             val host = request.url.host?.lowercase() ?: return null
             if (host !in proceedHosts) {
                 val result = engine.matchDocument(url, request.method)
-                if (result.shouldBlock) return blockPage.render(url, result.filterText, proceedUrl(url))
+                if (result.shouldBlock) {
+                    stats.recordBlockedPage()
+                    _blockedOnPage.update { it + 1 }
+                    return blockPage.render(url, result.filterText, proceedUrl(url))
+                }
             }
-            return engine.removeParams(url)?.let(::replaceWithResponse)
+            return engine.removeParams(url)?.let { cleanUrl ->
+                stats.recordRemovedParams()
+                replaceWithResponse(cleanUrl)
+            }
         }
 
         val headers = request.requestHeaders
@@ -149,15 +202,20 @@ class WebViewContentBlocker(
             contentType = headers.header("Content-Type"),
             sameOrigin = documentUrl?.let { hostOf(it) == request.url.host?.lowercase() },
         )
-        val pageContext = contextFor(referer, engine)
+        val top = currentPage(engine, policies)
+        val sitePolicy = top?.policy ?: policies.forUrl(documentUrl)
+        if (!sitePolicy.filtering) return null
+        val pageContext = contextFor(top, referer, engine)
         val result = engine.matchRequest(url, type.primary, pageContext, request.method, type.alternatives)
         if (type.primary == RequestType.SUBDOCUMENT && !result.shouldBlock && frameHosts.size < MAX_FRAME_HOSTS) {
             request.url.host?.lowercase()?.let(frameHosts::add)
         }
+        if (!result.shouldBlock) return null
+        stats.recordBlockedRequest(request.url.host, type.primary, attributeHost = !isPrivate)
+        _blockedOnPage.update { it + 1 }
         return when (result.decision) {
-            MatchResult.Decision.BLOCK -> blockedResponse()
             MatchResult.Decision.REDIRECT -> redirectResponse(result.redirect) ?: blockedResponse()
-            else -> null
+            else -> blockedResponse()
         }
     }
 
@@ -176,11 +234,22 @@ class WebViewContentBlocker(
         val url = request.url.toString()
         if (!url.startsWith("http")) return false
         val opener = page ?: return false
+        val policies = policyStore.current()
+        val openerPolicy = policies.forUrl(opener.url)
+        if (!openerPolicy.filtering) return false
         val engine = repository.currentEngine()
         val context = if (opener.engine === engine) opener.context else engine.pageContext(opener.url)
         val userLink = tappedLinkUrl == url
-        if (engine.matchPopup(url, context, userLink).shouldBlock) return true
-        return !userLink && url.toUri().host?.lowercase() !in proceedHosts && engine.matchDocument(url).shouldBlock
+        if (openerPolicy.popupBlocking && engine.matchPopup(url, context, userLink).shouldBlock) {
+            recordBlockedPopup()
+            return true
+        }
+        if (userLink) return false
+        val targetHost = url.toUri().host?.lowercase()
+        if (targetHost in proceedHosts || !policies.forHost(targetHost).filtering) return false
+        if (!engine.matchDocument(url).shouldBlock) return false
+        recordBlockedPopup()
+        return true
     }
 
     /**
@@ -189,15 +258,28 @@ class WebViewContentBlocker(
      * URL is known; [tappedLinkUrl] is the link under the user's last tap.
      */
     fun allowPopup(targetUrl: String, tappedLinkUrl: String?): Boolean {
+        val hint = popupHints.take(targetUrl)
+        val policies = policyStore.current()
+        val topUrl = page?.url
+        val openerPolicy = policies.forUrl(topUrl)
+        // Pop-ups allowed on this site (or blocker off): any web page may open as a new tab.
+        if (!openerPolicy.filtering || !openerPolicy.popupBlocking) return Hostnames.hostOf(targetUrl) != null
         val decision = PopupPolicy.decide(
             engine = repository.currentEngine(),
-            topUrl = page?.url,
+            topUrl = topUrl,
             target = targetUrl,
-            hint = popupHints.take(targetUrl),
+            hint = hint,
             tappedLinkUrl = tappedLinkUrl,
+            filterTargetDocument = policies.forUrl(targetUrl).filtering,
         )
         Log.d(TAG, "Popup $targetUrl: $decision")
+        if (!decision.allow && Hostnames.hostOf(targetUrl) != null) recordBlockedPopup()
         return decision.allow
+    }
+
+    private fun recordBlockedPopup() {
+        stats.recordBlockedPopup()
+        _blockedOnPage.update { it + 1 }
     }
 
     /**
@@ -217,27 +299,42 @@ class WebViewContentBlocker(
     private fun proceedUrl(url: String): String =
         "$PROCEED_SCHEME?token=$proceedToken&url=" + Uri.encode(url)
 
-    private fun updatePage(url: String, engine: FilterEngine = repository.currentEngine()) {
+    private fun updatePage(
+        url: String,
+        engine: FilterEngine = repository.currentEngine(),
+        policies: AdBlockPolicy = policyStore.current(),
+    ): PageState {
         val current = page
-        if (current != null && current.url == url && current.engine === engine) return
+        if (current != null && current.url == url && current.engine === engine && current.policies === policies) {
+            return current
+        }
         val sameDocumentHost = current != null && current.url.toUri().host == url.toUri().host
         if (!sameDocumentHost) {
             frameContexts.clear()
             frameHosts.clear()
         }
-        page = PageState(url, engine, engine.pageContext(url))
+        return pageState(url, engine, policies).also { page = it }
+    }
+
+    private fun pageState(url: String, engine: FilterEngine, policies: AdBlockPolicy): PageState =
+        PageState(url, engine, engine.pageContext(url), policies, policies.forUrl(url))
+
+    /** The top document's state, rebuilt when the engine or the switches changed since it loaded. */
+    private fun currentPage(engine: FilterEngine, policies: AdBlockPolicy): PageState? {
+        val current = page ?: return null
+        if (current.engine === engine && current.policies === policies) return current
+        return pageState(current.url, engine, policies).also { page = it }
     }
 
     /** Context of the document that issued a subresource request. */
-    private fun contextFor(referer: String?, engine: FilterEngine): PageContext? {
-        val top = page?.let { if (it.engine === engine) it else PageState(it.url, engine, engine.pageContext(it.url)).also { s -> page = s } }
+    private fun contextFor(top: PageState?, referer: String?, engine: FilterEngine): PageContext? {
         // Top-level `$document` allowlisting covers every frame of the page.
         if (top != null && top.context.isAllowlisted) return top.context
         if (referer.isNullOrEmpty() || !referer.startsWith("http")) return top?.context
         if (top != null && sameHost(referer, top.url)) return top.context
         if (top != null && hostOf(referer) !in frameHosts) return top.context
         frameContexts[referer]?.takeIf { it.engine === engine }?.let { return it.context }
-        val state = PageState(referer, engine, engine.pageContext(referer))
+        val state = FrameState(engine, engine.pageContext(referer))
         frameContexts[referer] = state
         return state.context
     }
@@ -290,8 +387,11 @@ class WebViewContentBlocker(
         @JavascriptInterface
         fun cosmetics(frameUrl: String?, topUrl: String?): String {
             if (frameUrl.isNullOrEmpty()) return EMPTY_PAYLOAD
+            val top = topUrl?.takeIf { it.isNotEmpty() }
+            val policy = policyStore.current().forUrl(top ?: frameUrl)
+            if (!policy.filtering) return EMPTY_PAYLOAD
             return try {
-                repository.currentEngine().cosmeticPayload(frameUrl, topUrl?.takeIf { it.isNotEmpty() })
+                repository.currentEngine().cosmeticPayload(frameUrl, top, policy.cosmeticFiltering)
             } catch (e: RuntimeException) {
                 Log.e(TAG, "Cosmetic payload failed", e)
                 EMPTY_PAYLOAD
@@ -308,9 +408,12 @@ class WebViewContentBlocker(
         @JavascriptInterface
         fun genericCss(frameUrl: String?, topUrl: String?, tokens: String?): String {
             if (frameUrl.isNullOrEmpty() || tokens.isNullOrEmpty()) return ""
+            val top = topUrl?.takeIf { it.isNotEmpty() }
+            val policy = policyStore.current().forUrl(top ?: frameUrl)
+            if (!policy.filtering || !policy.cosmeticFiltering) return ""
             return try {
                 val list = tokens.split(' ').filter { it.length > 1 }.take(MAX_TOKENS_PER_CALL)
-                repository.currentEngine().genericCss(frameUrl, topUrl?.takeIf { it.isNotEmpty() }, list)
+                repository.currentEngine().genericCss(frameUrl, top, list)
             } catch (e: RuntimeException) {
                 Log.e(TAG, "Generic CSS failed", e)
                 ""

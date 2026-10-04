@@ -38,6 +38,7 @@ import com.elewashy.nexa.ui.components.settings.ListSection
 import com.elewashy.nexa.ui.components.settings.SettingsListItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.Settings
+import com.elewashy.nexa.ui.icons.Shield
 import com.elewashy.nexa.ui.icons.Update
 
 private data class SettingsSection(
@@ -63,6 +64,7 @@ fun SettingsScreen(
     val sections = remember {
         listOf(
             SettingsSection(R.string.general, R.string.general_description, Settings, SettingsDestination.General),
+            SettingsSection(R.string.adblock_title, R.string.adblock_settings_description, Shield, SettingsDestination.AdBlock),
             SettingsSection(R.string.updates, R.string.updates_description, Update, SettingsDestination.Updates),
         )
     }

@@ -11,7 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
-import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
+import com.elewashy.nexa.feature.adblock.domain.model.FilterUpdateInterval
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
@@ -67,6 +67,8 @@ class DataStoreAppPreferences @Inject constructor(
     override val visualVideoPresentation: Flow<Boolean> = settings.map { it.visualVideoPresentation }.distinctUntilChanged()
     override val showDownloadFilterCounts: Flow<Boolean> = settings.map { it.showDownloadFilterCounts }.distinctUntilChanged()
     override val filterUpdateIntervalHours: Flow<Int> = settings.map { it.filterUpdateIntervalHours }.distinctUntilChanged()
+    override val adBlockEnabled: Flow<Boolean> = settings.map { it.adBlockEnabled }.distinctUntilChanged()
+    override val adBlockTrustCustomRules: Flow<Boolean> = settings.map { it.adBlockTrustCustomRules }.distinctUntilChanged()
 
     override suspend fun setThemeMode(mode: Int) {
         ThemeModeSeed.mirrorThemeMode(context, mode)
@@ -153,6 +155,14 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { it[KEY_FILTER_UPDATE_INTERVAL_HOURS] = FilterUpdateInterval.fromStoredValue(hours).hours }
     }
 
+    override suspend fun setAdBlockEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_ADBLOCK_ENABLED] = enabled }
+    }
+
+    override suspend fun setAdBlockTrustCustomRules(trusted: Boolean) {
+        dataStore.edit { it[KEY_ADBLOCK_TRUST_CUSTOM_RULES] = trusted }
+    }
+
     private data class ThemeSeedSnapshot(
         val themeMode: Int,
         val dynamicColor: Boolean,
@@ -202,6 +212,8 @@ class DataStoreAppPreferences @Inject constructor(
             filterUpdateIntervalHours = FilterUpdateInterval.fromStoredValue(
                 this[KEY_FILTER_UPDATE_INTERVAL_HOURS] ?: FilterUpdateInterval.DEFAULT.hours
             ).hours,
+            adBlockEnabled = this[KEY_ADBLOCK_ENABLED] ?: true,
+            adBlockTrustCustomRules = this[KEY_ADBLOCK_TRUST_CUSTOM_RULES] ?: false,
         )
     }
 
@@ -226,5 +238,7 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_VISUAL_VIDEO_PRESENTATION = booleanPreferencesKey("download_visual_video_presentation")
         val KEY_SHOW_DOWNLOAD_FILTER_COUNTS = booleanPreferencesKey("download_show_filter_counts")
         val KEY_FILTER_UPDATE_INTERVAL_HOURS = intPreferencesKey("filter_update_interval_hours")
+        val KEY_ADBLOCK_ENABLED = booleanPreferencesKey("adblock_enabled")
+        val KEY_ADBLOCK_TRUST_CUSTOM_RULES = booleanPreferencesKey("adblock_trust_custom_rules")
     }
 }

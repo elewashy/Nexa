@@ -20,8 +20,8 @@ import org.robolectric.RobolectricTestRunner
  * [NexaDatabase.MIGRATION_2_3], [NexaDatabase.MIGRATION_3_4], and
  * [NexaDatabase.MIGRATION_4_5], [NexaDatabase.MIGRATION_5_6],
  * [NexaDatabase.MIGRATION_6_7], [NexaDatabase.MIGRATION_7_8], and
- * [NexaDatabase.MIGRATION_8_9] with every row intact; a version 2 database
- * must upgrade to 9. Opening through Room also validates the migrated schema
+ * [NexaDatabase.MIGRATION_8_9] and [NexaDatabase.MIGRATION_9_10] with every row intact; a version 2 database
+ * must upgrade to 10. Opening through Room also validates the migrated schema
  * against the entities.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -30,7 +30,7 @@ class NexaDatabaseMigrationTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Test
-    fun `migration 1 to 9 preserves history and adds download tab and bookmark tables`() {
+    fun `migration 1 to 10 preserves history and adds download tab and bookmark tables`() {
         val dbName = "migration-1-5-test.db"
 
         // Build a genuine version-1 database (Phase 1 schema) outside Room.
@@ -79,12 +79,13 @@ class NexaDatabaseMigrationTest {
 
             assertDownloadTablesPresent(sqliteDb)
             assertPhase3TablesPresent(sqliteDb)
+            assertAdBlockTablesPresent(sqliteDb)
             assertMetaV4(sqliteDb, expectedLastId = 0L, expectedImported = 0)
 
             // Version advanced to the end of the chain.
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(9, cursor.getInt(0))
+                assertEquals(10, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -92,7 +93,7 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `migration 2 to 9 preserves history and all download data`() {
+    fun `migration 2 to 10 preserves history and all download data`() {
         val dbName = "migration-2-4-test.db"
 
         // Build a genuine version-2 database (Phase 2 schema) outside Room.
@@ -208,10 +209,11 @@ class NexaDatabaseMigrationTest {
             assertMetaV4(sqliteDb, expectedLastId = 7L, expectedImported = 0)
 
             assertPhase3TablesPresent(sqliteDb)
+            assertAdBlockTablesPresent(sqliteDb)
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(9, cursor.getInt(0))
+                assertEquals(10, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -219,7 +221,7 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `migration 3 to 9 normalizes tabs keeps ids and adds session restoration`() {
+    fun `migration 3 to 10 normalizes tabs keeps ids and adds session restoration`() {
         val dbName = "migration-3-4-test.db"
 
         context.deleteDatabase(dbName)
@@ -368,7 +370,7 @@ class NexaDatabaseMigrationTest {
             }
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(9, cursor.getInt(0))
+                assertEquals(10, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -376,7 +378,7 @@ class NexaDatabaseMigrationTest {
     }
 
     @Test
-    fun `fresh install creates version 9 directly`() {
+    fun `fresh install creates version 10 directly`() {
         val dbName = "fresh-test.db"
         context.deleteDatabase(dbName)
         val db = Room.databaseBuilder(context, NexaDatabase::class.java, dbName)
@@ -390,10 +392,11 @@ class NexaDatabaseMigrationTest {
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(9, cursor.getInt(0))
+                assertEquals(10, cursor.getInt(0))
             }
             assertDownloadTablesPresent(sqliteDb)
             assertPhase3TablesPresent(sqliteDb)
+            assertAdBlockTablesPresent(sqliteDb)
             assertMetaV4(sqliteDb, expectedLastId = 0L, expectedImported = 0)
         } finally {
             db.close()
@@ -504,5 +507,28 @@ class NexaDatabaseMigrationTest {
             cursor.moveToFirst()
             assertEquals("url", cursor.getString(2))
         }
+    }
+
+    /** v10 ad blocker tables and the indexes their queries rely on. */
+    private fun assertAdBlockTablesPresent(sqliteDb: androidx.sqlite.db.SupportSQLiteDatabase) {
+        val tables = mutableSetOf<String>()
+        sqliteDb.query("SELECT name FROM sqlite_master WHERE type = 'table'").use { cursor ->
+            while (cursor.moveToNext()) tables.add(cursor.getString(0))
+        }
+        assertTrue(
+            tables.containsAll(
+                setOf(
+                    "adblock_filter_lists", "adblock_custom_rules", "adblock_site_settings",
+                    "adblock_daily_stats", "adblock_blocked_domains",
+                )
+            )
+        )
+        val indexes = mutableSetOf<String>()
+        sqliteDb.query("SELECT name FROM sqlite_master WHERE type = 'index'").use { cursor ->
+            while (cursor.moveToNext()) indexes.add(cursor.getString(0))
+        }
+        // Duplicate-rule policy and the "most blocked domains" ordering.
+        assertTrue(indexes.contains("index_adblock_custom_rules_rule"))
+        assertTrue(indexes.contains("index_adblock_blocked_domains_blocked_count"))
     }
 }

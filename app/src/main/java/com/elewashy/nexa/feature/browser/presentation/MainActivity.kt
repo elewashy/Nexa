@@ -103,9 +103,14 @@ import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.presentation.screen.BookmarksRoute
-import com.elewashy.nexa.feature.browser.data.adblock.AdBlockAssets
-import com.elewashy.nexa.feature.browser.data.adblock.AdBlockRepository
-import com.elewashy.nexa.feature.browser.data.adblock.FilterUpdateScheduler
+import com.elewashy.nexa.feature.adblock.data.AdBlockAssets
+import com.elewashy.nexa.feature.adblock.data.AdBlockPolicyStore
+import com.elewashy.nexa.feature.adblock.data.AdBlockStatsRecorder
+import com.elewashy.nexa.feature.adblock.data.AdBlockRepository
+import com.elewashy.nexa.feature.adblock.data.FilterUpdateScheduler
+import com.elewashy.nexa.feature.adblock.presentation.AdBlockNavigation
+import com.elewashy.nexa.feature.adblock.presentation.SiteAdBlockMenuViewModel
+import com.elewashy.nexa.ui.components.navigation.BrowserSiteAdBlockState
 import com.elewashy.nexa.feature.browser.presentation.webview.BlockedPageRenderer
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.DownloadHandler
@@ -169,6 +174,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import javax.inject.Inject
@@ -210,6 +217,7 @@ class MainActivity : AppCompatActivity() {
     private val onboardingViewModel: OnboardingViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
     private val updateCheckViewModel: UpdateCheckViewModel by viewModels()
+    private val siteAdBlockMenuViewModel: SiteAdBlockMenuViewModel by viewModels()
 
     // ========== WebView state (managed outside Compose to survive recomposition) ==========
 
@@ -219,6 +227,13 @@ class MainActivity : AppCompatActivity() {
     /** Private favicons stay in process memory and never enter the shared favicon cache. */
     private val privateTabFavicons = mutableStateMapOf<Long, Bitmap>()
     private val privateWebViewProfile = PrivateWebViewProfile()
+
+    /**
+     * Content blocker of every materialized WebView, keyed like [webViews].
+     * Snapshot state so the browser menu can follow the active tab's
+     * blocked-on-page counter.
+     */
+    private val contentBlockers = mutableStateMapOf<Long, WebViewContentBlocker>()
 
     /** Tab id of the WebView currently attached to the Compose tree. */
     private var attachedTabId: Long? = null
@@ -251,6 +266,8 @@ class MainActivity : AppCompatActivity() {
 
     @Inject lateinit var adBlockRepository: AdBlockRepository
     @Inject lateinit var adBlockAssets: AdBlockAssets
+    @Inject lateinit var adBlockPolicyStore: AdBlockPolicyStore
+    @Inject lateinit var adBlockStatsRecorder: AdBlockStatsRecorder
     @Inject lateinit var pageMediaProbe: PageMediaProbe
     @Inject lateinit var filterUpdateScheduler: FilterUpdateScheduler
     @Inject lateinit var appPreferences: AppPreferences
@@ -270,6 +287,10 @@ class MainActivity : AppCompatActivity() {
         private const val ROUTE_BOOKMARKS = "bookmarks"
         private const val ROUTE_SETTINGS = "settings"
         private const val ROUTE_UPDATE = "update"
+        private const val ROUTE_ADBLOCK = "adblock"
+
+        /** Count shown for tabs whose WebView is not materialized yet. */
+        private val NO_BLOCKED_REQUESTS: StateFlow<Int> = MutableStateFlow(0)
 
         /** Coalesces redirect chains and History API bursts into one state capture. */
         private const val SESSION_CAPTURE_DEBOUNCE_MS = 1_500L
@@ -404,6 +425,12 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
 
+                        composable(ROUTE_ADBLOCK) {
+                            AdBlockNavigation(
+                                onRootBackClick = { navController.popBackStack() },
+                            )
+                        }
+
                         composable(ROUTE_SETTINGS) {
                             SettingsNavigation(
                                 onRootBackClick = { navController.popBackStack() },
@@ -499,10 +526,39 @@ class MainActivity : AppCompatActivity() {
         val navigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
             navigationBarPositionValue
         )
+        // Ad blocking for the active page (More options menu). The live counter is
+        // passed as State and only read by the open menu, so blocked requests never
+        // recompose the browser screen.
+        val activePageUrl = state.topSearchBarText.ifBlank { null }
+        LaunchedEffect(activePageUrl) { siteAdBlockMenuViewModel.onPageUrlChanged(activePageUrl) }
+        val siteAdBlock by siteAdBlockMenuViewModel.state.collectAsStateWithLifecycle()
+        val blockedOnPage = (activeTabId?.let { contentBlockers[it]?.blockedOnPage } ?: NO_BLOCKED_REQUESTS)
+            .collectAsStateWithLifecycle()
         val navigationState = state.toNavBarState(
             addressPreviewVisible = omniboxState.mode == BrowserOmniboxMode.Preview,
             workspace = workspace,
+        ).copy(
+            siteAdBlock = siteAdBlock?.let {
+                BrowserSiteAdBlockState(
+                    site = it.site,
+                    globalEnabled = it.globalEnabled,
+                    siteEnabled = it.siteEnabled,
+                    blockedOnPage = blockedOnPage,
+                )
+            },
         )
+        LaunchedEffect(Unit) {
+            // The change is already visible to the engine: reload so the page reflects it.
+            siteAdBlockMenuViewModel.changes.collect { change ->
+                refreshCurrentPage()
+                snackbarHostState.showSnackbar(
+                    getString(
+                        if (change.enabled) R.string.adblock_site_enabled_message else R.string.adblock_site_disabled_message,
+                        change.site,
+                    )
+                )
+            }
+        }
 
         // One-shot feedback from the ViewModel (bookmark toggle, tab cap).
         LaunchedEffect(Unit) {
@@ -634,6 +690,8 @@ class MainActivity : AppCompatActivity() {
             onDownloads = ::launchDownloadsPage,
             onHistory = ::launchHistoryPage,
             onSettings = ::launchSettingsPage,
+            onAdBlocker = ::launchAdBlockPage,
+            onSetSiteAdBlocking = siteAdBlockMenuViewModel::setSiteEnabled,
         )
 
         BackHandler(enabled = backEnabled) {
@@ -1056,6 +1114,7 @@ class MainActivity : AppCompatActivity() {
         // tab's navigation state and force all coalesced writes so a kill loses nothing.
         persistAllSessionStates()
         browserViewModel.flushTabs()
+        adBlockStatsRecorder.flushNow()
     }
 
     override fun onDestroy() {
@@ -1289,10 +1348,14 @@ class MainActivity : AppCompatActivity() {
             // ── Content blocking (before the first load) ──────
             val contentBlocker = WebViewContentBlocker(
                 repository = adBlockRepository,
+                policyStore = adBlockPolicyStore,
+                stats = adBlockStatsRecorder,
                 assets = adBlockAssets,
                 blockPage = BlockedPageRenderer(context),
+                isPrivate = tab?.isPrivate == true,
             )
             contentBlocker.install(this)
+            contentBlockers[tabId] = contentBlocker
 
             // ── Media probe (confirms media on tweets / posts) ─
             val mediaProbeInstalled = pageMediaProbe.install(this) { url, hasMedia ->
@@ -1597,6 +1660,7 @@ class MainActivity : AppCompatActivity() {
     private fun cleanUpAllWebViews() {
         webViews.keys.toList().forEach { destroyWebView(it) }
         webViews.clear()
+        contentBlockers.clear()
         attachedTabId = null
         customViewContainer.removeAllViews()
         clearPrivateTabFavicons()
@@ -1663,6 +1727,7 @@ class MainActivity : AppCompatActivity() {
             privateTabFavicons.remove(tabId)?.takeUnless { it.isRecycled }?.recycle()
         }
         sessionCaptureJobs.remove(tabId)?.cancel()
+        contentBlockers.remove(tabId)
         val webView = webViews.remove(tabId) ?: return
         try {
             if (pendingFileChooserClient === webView.webChromeClient) {
@@ -1899,5 +1964,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchSettingsPage() {
         requestedRoute = ROUTE_SETTINGS
+    }
+
+    private fun launchAdBlockPage() {
+        requestedRoute = ROUTE_ADBLOCK
     }
 }

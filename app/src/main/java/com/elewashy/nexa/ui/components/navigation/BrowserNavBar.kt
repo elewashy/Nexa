@@ -74,6 +74,7 @@ import com.elewashy.nexa.ui.icons.Refresh
 import com.elewashy.nexa.ui.icons.Search
 import com.elewashy.nexa.ui.icons.Settings
 import com.elewashy.nexa.ui.icons.Share
+import com.elewashy.nexa.ui.icons.Shield
 
 /**
  * Compact bottom action bar. The search action toggles an inline address
@@ -468,6 +469,8 @@ private fun MoreOptionsAction(
             onDownloadsClick = { menuExpanded = false; actions.onDownloads() },
             onHistoryClick = { menuExpanded = false; actions.onHistory() },
             onSettingsClick = { menuExpanded = false; actions.onSettings() },
+            onAdBlockerClick = { menuExpanded = false; actions.onAdBlocker() },
+            onSetSiteAdBlocking = { enabled -> menuExpanded = false; actions.onSetSiteAdBlocking(enabled) },
         )
     }
 }
@@ -489,6 +492,8 @@ private fun BrowserMoreOptionsMenu(
     onDownloadsClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onAdBlockerClick: () -> Unit,
+    onSetSiteAdBlocking: (Boolean) -> Unit,
 ) {
     AppOverflowMenu(
         expanded = expanded,
@@ -504,6 +509,10 @@ private fun BrowserMoreOptionsMenu(
                 onToggleBookmarkClick = onToggleBookmarkClick,
                 onShareClick = onShareClick,
             )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+        }
+        state.siteAdBlock?.let { siteAdBlock ->
+            SiteAdBlockMenuItem(state = siteAdBlock, onToggle = onSetSiteAdBlocking)
             HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
         }
         AppOverflowMenuItem(
@@ -525,6 +534,11 @@ private fun BrowserMoreOptionsMenu(
             text = stringResource(R.string.downloads),
             leadingIcon = { Icon(Download, contentDescription = null) },
             onClick = onDownloadsClick,
+        )
+        AppOverflowMenuItem(
+            text = stringResource(R.string.adblock_title),
+            leadingIcon = { Icon(Shield, contentDescription = null) },
+            onClick = onAdBlockerClick,
         )
         AppOverflowMenuItem(
             text = stringResource(R.string.settings),

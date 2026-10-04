@@ -17,4 +17,6 @@ data class BrowserNavBarState(
     val isPrivate: Boolean,
     val canBookmarkCurrentPage: Boolean,
     val isCurrentPageBookmarked: Boolean,
+    /** Ad blocking for the current page; null when the page is not a web site. */
+    val siteAdBlock: BrowserSiteAdBlockState? = null,
 )

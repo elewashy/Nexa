@@ -26,4 +26,8 @@ class BrowserNavBarActions(
     val onDownloads: () -> Unit,
     val onHistory: () -> Unit,
     val onSettings: () -> Unit,
+    /** Opens the Ad blocker page directly. */
+    val onAdBlocker: () -> Unit,
+    /** Turns ad blocking on or off for the current page's site. */
+    val onSetSiteAdBlocking: (Boolean) -> Unit,
 )

@@ -3,7 +3,7 @@ package com.elewashy.nexa.core.storage
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
-import com.elewashy.nexa.feature.browser.domain.model.FilterUpdateInterval
+import com.elewashy.nexa.feature.adblock.domain.model.FilterUpdateInterval
 import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope

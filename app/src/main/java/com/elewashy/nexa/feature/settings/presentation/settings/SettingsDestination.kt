@@ -27,6 +27,10 @@ sealed interface SettingsDestination {
         override val route = "settings/general/search-engine"
     }
 
+    data object AdBlock : SettingsDestination {
+        override val route = "settings/adblock"
+    }
+
     data object Updates : SettingsDestination {
         override val route = "settings/updates"
     }

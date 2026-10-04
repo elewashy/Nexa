@@ -145,4 +145,16 @@ interface AppPreferences {
     /** Updates [filterUpdateIntervalHours]. Unknown values are sanitized by readers. */
     suspend fun setFilterUpdateIntervalHours(hours: Int)
 
+    /** Global content-blocking switch. Defaults to true. */
+    val adBlockEnabled: Flow<Boolean>
+
+    /** Updates [adBlockEnabled]. */
+    suspend fun setAdBlockEnabled(enabled: Boolean)
+
+    /** Whether custom filter rules may use trusted-only scriptlets. Defaults to false, like uBO. */
+    val adBlockTrustCustomRules: Flow<Boolean>
+
+    /** Updates [adBlockTrustCustomRules]. */
+    suspend fun setAdBlockTrustCustomRules(trusted: Boolean)
+
 }

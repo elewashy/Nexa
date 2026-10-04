@@ -4,6 +4,15 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.elewashy.nexa.feature.adblock.data.persistence.AdBlockStatsDao
+import com.elewashy.nexa.feature.adblock.data.persistence.BlockedDomainEntity
+import com.elewashy.nexa.feature.adblock.data.persistence.CustomRuleEntity
+import com.elewashy.nexa.feature.adblock.data.persistence.CustomRulesDao
+import com.elewashy.nexa.feature.adblock.data.persistence.DailyStatsEntity
+import com.elewashy.nexa.feature.adblock.data.persistence.FilterListSettingEntity
+import com.elewashy.nexa.feature.adblock.data.persistence.FilterListSettingsDao
+import com.elewashy.nexa.feature.adblock.data.persistence.SiteSettingsDao
+import com.elewashy.nexa.feature.adblock.data.persistence.SiteSettingsEntity
 import com.elewashy.nexa.feature.bookmarks.data.persistence.BookmarkEntity
 import com.elewashy.nexa.feature.bookmarks.data.persistence.BookmarkFolderEntity
 import com.elewashy.nexa.feature.bookmarks.data.persistence.BookmarksDao
@@ -41,8 +50,13 @@ import com.elewashy.nexa.feature.tabs.data.persistence.TabsDao
         BookmarkFolderEntity::class,
         SearchHistoryEntity::class,
         TabSessionStateEntity::class,
+        FilterListSettingEntity::class,
+        CustomRuleEntity::class,
+        SiteSettingsEntity::class,
+        DailyStatsEntity::class,
+        BlockedDomainEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class NexaDatabase : RoomDatabase() {
@@ -51,6 +65,10 @@ abstract class NexaDatabase : RoomDatabase() {
     abstract fun tabsDao(): TabsDao
     abstract fun bookmarksDao(): BookmarksDao
     abstract fun searchHistoryDao(): SearchHistoryDao
+    abstract fun filterListSettingsDao(): FilterListSettingsDao
+    abstract fun customRulesDao(): CustomRulesDao
+    abstract fun siteSettingsDao(): SiteSettingsDao
+    abstract fun adBlockStatsDao(): AdBlockStatsDao
 
     companion object {
         /** v1 (history only, unreleased) → v2 (+ download tables). */
@@ -290,6 +308,53 @@ abstract class NexaDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 → v10: ad blocker state — filter-list selection, custom rules,
+         * per-site switches and batched blocking statistics. New tables only.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `adblock_filter_lists` (" +
+                        "`list_key` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `url` TEXT, " +
+                        "`title` TEXT, `added_at` INTEGER NOT NULL, PRIMARY KEY(`list_key`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `adblock_custom_rules` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `rule` TEXT NOT NULL, " +
+                        "`enabled` INTEGER NOT NULL, `created_at` INTEGER NOT NULL, " +
+                        "`updated_at` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_adblock_custom_rules_rule` " +
+                        "ON `adblock_custom_rules` (`rule`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `adblock_site_settings` (" +
+                        "`host` TEXT NOT NULL, `blocking_enabled` INTEGER NOT NULL, " +
+                        "`cosmetic_filtering_enabled` INTEGER NOT NULL, " +
+                        "`popup_blocking_enabled` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`host`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `adblock_daily_stats` (" +
+                        "`day` INTEGER NOT NULL, `blocked_requests` INTEGER NOT NULL, " +
+                        "`blocked_popups` INTEGER NOT NULL, `blocked_pages` INTEGER NOT NULL, " +
+                        "`removed_params` INTEGER NOT NULL, `bytes_saved` INTEGER NOT NULL, " +
+                        "`pages_filtered` INTEGER NOT NULL, PRIMARY KEY(`day`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `adblock_blocked_domains` (" +
+                        "`domain` TEXT NOT NULL, `blocked_count` INTEGER NOT NULL, " +
+                        "`last_blocked_at` INTEGER NOT NULL, PRIMARY KEY(`domain`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_adblock_blocked_domains_blocked_count` " +
+                        "ON `adblock_blocked_domains` (`blocked_count`)"
+                )
+            }
+        }
+
         /** Every migration in order; the single list used by production and tests. */
         val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2,
@@ -300,6 +365,7 @@ abstract class NexaDatabase : RoomDatabase() {
             MIGRATION_6_7,
             MIGRATION_7_8,
             MIGRATION_8_9,
+            MIGRATION_9_10,
         )
     }
 }

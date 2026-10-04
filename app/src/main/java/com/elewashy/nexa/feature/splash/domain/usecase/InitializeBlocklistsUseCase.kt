@@ -1,6 +1,6 @@
 package com.elewashy.nexa.feature.splash.domain.usecase
 
-import com.elewashy.nexa.feature.browser.data.adblock.FilterUpdateScheduler
+import com.elewashy.nexa.feature.adblock.data.FilterUpdateScheduler
 import javax.inject.Inject
 
 /**

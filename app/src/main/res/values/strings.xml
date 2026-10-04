@@ -100,8 +100,6 @@
     <string name="updates">Updates</string>
     <string name="retry">Retry</string>
     <string name="update_failed">Update Failed</string>
-    <string name="last_updated">Last Updated: %s</string>
-    <string name="never_updated">Never Updated</string>
 
     <!-- Settings Screen -->
 
@@ -150,7 +148,7 @@
 
     <!-- Settings hub — section descriptions -->
     <string name="general_description">Theme, language, and appearance</string>
-    <string name="updates_description">App and filter updates</string>
+    <string name="updates_description">App version and update checks</string>
 
     <!-- Settings — General section -->
     <string name="general">General</string>
@@ -225,10 +223,6 @@
     <string name="manual_update_check">Check for updates</string>
     <string name="view_update">View update</string>
     <string name="changelog">Changelog</string>
-    <string name="update_filters">Update Filters</string>
-    <string name="filters_updated_successfully">All filters updated successfully</string>
-    <string name="filters_update_failed">Failed to update filters</string>
-    <string name="filters">Filters</string>
 
     <!-- Update screen -->
     <string name="downloading_update">Downloading update…</string>
@@ -504,12 +498,176 @@
     <string name="filter_update_interval_daily">Daily</string>
     <string name="filter_update_interval_3d">Every 3 days</string>
     <string name="filter_update_interval_weekly">Weekly</string>
-    <string name="adblock_status_loading">Loading filters…</string>
-    <string name="adblock_status_updating">Updating filters…</string>
-    <string name="adblock_status_rules">%1$s network · %2$s cosmetic · %3$s scriptlet rules</string>
-    <string name="adblock_status_lists">Active filter lists: %1$d of %2$d</string>
-    <plurals name="adblock_status_failed_lists">
-        <item quantity="one">%d list couldn\'t be updated — its last downloaded version stays active</item>
-        <item quantity="other">%d lists couldn\'t be updated — their last downloaded versions stay active</item>
+
+    <!-- Ad blocker -->
+    <string name="adblock_title">Ad blocker</string>
+    <string name="adblock_settings_description">Filter lists, custom rules, sites and statistics</string>
+    <string name="adblock_main_switch">Use ad blocker</string>
+    <string name="adblock_state_active">Blocking ads, trackers and malicious sites</string>
+    <string name="adblock_state_off">Pages load without any filtering</string>
+    <string name="adblock_state_loading">Loading filters…</string>
+    <string name="adblock_state_updating">Updating filters…</string>
+    <string name="adblock_rules_summary">%1$s rules · %2$s</string>
+    <string name="adblock_section_statistics">Statistics</string>
+    <string name="adblock_stat_today">Today</string>
+    <string name="adblock_stat_total">Total blocked</string>
+    <string name="adblock_stat_data_saved">Data saved</string>
+    <string name="adblock_stats_since">Since %1$s</string>
+    <string name="adblock_stats_empty">Nothing blocked yet. Statistics appear here as you browse.</string>
+    <string name="adblock_chart_description">Blocked requests in the last 7 days: %1$s</string>
+    <string name="adblock_chart_day">%1$s, %2$s</string>
+    <string name="adblock_view_statistics">All statistics</string>
+    <string name="adblock_view_statistics_description">Breakdown and most blocked domains</string>
+    <string name="adblock_section_filters">Filters</string>
+    <string name="adblock_filter_lists">Filter lists</string>
+    <string name="adblock_filter_lists_summary">Enabled: %1$d of %2$d</string>
+    <string name="adblock_update_now">Update filters now</string>
+    <string name="adblock_last_updated">Last updated %1$s</string>
+    <string name="adblock_never_updated">Not updated yet</string>
+    <string name="adblock_next_update">Next check %1$s</string>
+    <string name="adblock_next_update_soon">Next check soon</string>
+    <string name="adblock_update_requires_enabled">Turn on the ad blocker to update filters</string>
+    <string name="adblock_failed_lists_description">Their last working versions stay active. Nexa retries automatically.</string>
+    <string name="adblock_section_rules">Your rules</string>
+    <string name="adblock_custom_rules">Custom rules</string>
+    <string name="adblock_custom_rules_empty_summary">Block or allow what the lists miss</string>
+    <string name="adblock_sites">Sites</string>
+    <string name="adblock_sites_empty_summary">Turn off ad blocking or allow pop-ups per site</string>
+    <string name="adblock_footer">Nexa uses filter lists written for uBlock Origin and Adblock Plus. All filtering happens on your device.</string>
+    <string name="adblock_filters_up_to_date">Filters are up to date</string>
+    <string name="adblock_filters_update_error">Couldn’t update filters. The current filters stay active.</string>
+    <string name="adblock_import_list">Import list</string>
+    <string name="adblock_import_list_title">Import a filter list</string>
+    <string name="adblock_import_list_hint">List address</string>
+    <string name="adblock_import_list_description">Any list in uBlock Origin or Adblock Plus format. Imported lists can’t run trusted scriptlets.</string>
+    <string name="adblock_import_invalid_url">Enter a web address starting with https://</string>
+    <string name="adblock_import_duplicate">This list is already in your filter lists</string>
+    <string name="adblock_import_added">List added and downloading</string>
+    <string name="adblock_remove_list">Remove list</string>
+    <string name="adblock_list_removed">List removed</string>
+    <string name="adblock_list_source">Source</string>
+    <string name="adblock_category_default">Built-in</string>
+    <string name="adblock_category_ads">Ads</string>
+    <string name="adblock_category_privacy">Privacy</string>
+    <string name="adblock_category_malware">Malware protection</string>
+    <string name="adblock_category_annoyances">Annoyances</string>
+    <string name="adblock_category_multipurpose">Multipurpose</string>
+    <string name="adblock_category_regional">Regions and languages</string>
+    <string name="adblock_category_imported">Imported</string>
+    <string name="adblock_list_rules">%1$s rules</string>
+    <string name="adblock_list_updated">updated %1$s</string>
+    <string name="adblock_list_downloading">Waiting to download</string>
+    <string name="adblock_list_update_failed">Update failed · last working version active</string>
+    <string name="adblock_list_unavailable">Couldn’t download · Nexa will retry</string>
+    <string name="adblock_list_disabled">Off</string>
+    <string name="adblock_list_enabled">On</string>
+    <string name="adblock_show_fewer_lists">Show fewer</string>
+    <string name="adblock_add_rule">Add rule</string>
+    <string name="adblock_edit_rule">Edit rule</string>
+    <string name="adblock_rule_block">Block</string>
+    <string name="adblock_rule_allow">Allow</string>
+    <string name="adblock_rule_field">Rule</string>
+    <string name="adblock_rule_field_supporting">One rule per line: a web address, a domain or filter syntax</string>
+    <string name="adblock_rule_examples_title">Examples</string>
+    <string name="adblock_rule_example_block">blocks a domain and its subdomains</string>
+    <string name="adblock_rule_example_allow">allows an address the lists block</string>
+    <string name="adblock_rule_example_hide">hides matching elements on a site</string>
+    <string name="adblock_rule_preview">Saved as</string>
+    <string name="adblock_rule_duplicate">This rule already exists</string>
+    <string name="adblock_rules_empty_title">No custom rules</string>
+    <string name="adblock_rules_empty_description">Block or allow anything the filter lists miss. Your rules work together with the lists.</string>
+    <string name="adblock_trust_custom_rules">Allow trusted rules</string>
+    <string name="adblock_trust_custom_rules_description">Lets your rules run scriptlets reserved for trusted lists. Only turn this on for rules you understand.</string>
+    <string name="adblock_section_advanced">Advanced</string>
+    <string name="adblock_rule_kind_block">Blocks requests</string>
+    <string name="adblock_rule_kind_important">Blocks requests, even when an exception exists</string>
+    <string name="adblock_rule_kind_allow">Allows requests (exception)</string>
+    <string name="adblock_rule_kind_hide">Hides page elements</string>
+    <string name="adblock_rule_kind_hide_exception">Stops hiding page elements</string>
+    <string name="adblock_rule_kind_scriptlet">Runs a page fix (scriptlet)</string>
+    <string name="adblock_rule_kind_modifier">Modifies requests</string>
+    <string name="adblock_rule_kind_badfilter">Turns off a list rule</string>
+    <string name="adblock_rule_kind_comment">Comment, ignored</string>
+    <string name="adblock_rule_kind_requires_trust">Needs “Allow trusted rules”</string>
+    <string name="adblock_rule_kind_unsupported">Not supported, ignored</string>
+    <string name="adblock_sites_intro">A setting for a site also applies to its subdomains.</string>
+    <string name="adblock_add_site">Add site</string>
+    <string name="adblock_add_site_hint">Website, such as example.com</string>
+    <string name="adblock_add_site_description">Ad blocking will be turned off for this site. You can change its settings afterwards.</string>
+    <string name="adblock_add_site_invalid">Enter a valid domain such as example.com</string>
+    <string name="adblock_sites_empty_title">No site settings</string>
+    <string name="adblock_sites_empty_description">Sites where you turn off ad blocking, here or from the browser menu, appear in this list.</string>
+    <string name="adblock_site_blocking">Ad blocking</string>
+    <string name="adblock_site_blocking_description">Block ads, trackers and malicious content</string>
+    <string name="adblock_site_cosmetic">Hide page elements</string>
+    <string name="adblock_site_cosmetic_description">Remove ad placeholders and apply page fixes</string>
+    <string name="adblock_site_popups">Block pop-ups</string>
+    <string name="adblock_site_popups_description">Stop the site from opening unwanted tabs</string>
+    <string name="adblock_site_reset">Reset to default</string>
+    <string name="adblock_site_summary_off">Ad blocking off</string>
+    <string name="adblock_site_summary_cosmetic_off">Element hiding off</string>
+    <string name="adblock_site_summary_popups_allowed">Pop-ups allowed</string>
+    <string name="adblock_site_reset_done">%1$s reset to default</string>
+    <string name="adblock_statistics">Statistics</string>
+    <string name="adblock_stat_requests">Requests blocked</string>
+    <string name="adblock_stat_popups">Pop-ups blocked</string>
+    <string name="adblock_stat_pages">Pages blocked</string>
+    <string name="adblock_stat_params">Tracking parameters removed</string>
+    <string name="adblock_stat_pages_filtered">Pages filtered</string>
+    <string name="adblock_stat_per_page">Blocked per page, on average</string>
+    <string name="adblock_stat_last_7_days">Last 7 days</string>
+    <string name="adblock_section_overview">Overview</string>
+    <string name="adblock_top_domains">Most blocked domains</string>
+    <string name="adblock_top_domains_empty">No blocked domains recorded yet</string>
+    <string name="adblock_stats_footer">Data saved is estimated from typical sizes of the blocked resources. Statistics stay on this device; private tabs only add to the totals.</string>
+    <string name="adblock_reset_statistics">Reset statistics</string>
+    <string name="adblock_reset_statistics_message">All blocking statistics will be deleted. Filters and settings are not affected.</string>
+    <string name="adblock_reset">Reset</string>
+    <string name="adblock_statistics_reset_done">Statistics reset</string>
+    <string name="adblock_menu_site">Block ads on this site</string>
+    <string name="adblock_menu_site_off">Off for %1$s</string>
+    <string name="adblock_menu_global_off">The ad blocker is turned off</string>
+    <string name="adblock_site_enabled_message">Ad blocking turned on for %1$s</string>
+    <string name="adblock_site_disabled_message">Ad blocking turned off for %1$s</string>
+    <string name="update_check_failed">Couldn’t check for updates. Try again later.</string>
+    <plurals name="adblock_failed_lists_title">
+        <item quantity="one">%d list couldn’t be updated</item>
+        <item quantity="other">%d lists couldn’t be updated</item>
+    </plurals>
+    <plurals name="adblock_lists_count">
+        <item quantity="one">%s list</item>
+        <item quantity="other">%s lists</item>
+    </plurals>
+    <plurals name="adblock_custom_rules_count">
+        <item quantity="one">%d rule</item>
+        <item quantity="other">%d rules</item>
+    </plurals>
+    <plurals name="adblock_sites_count">
+        <item quantity="one">%d site with custom settings</item>
+        <item quantity="other">%d sites with custom settings</item>
+    </plurals>
+    <plurals name="adblock_show_more_lists">
+        <item quantity="one">Show %d more list</item>
+        <item quantity="other">Show %d more lists</item>
+    </plurals>
+    <plurals name="adblock_rules_to_add">
+        <item quantity="one">%d rule will be added</item>
+        <item quantity="other">%d rules will be added</item>
+    </plurals>
+    <plurals name="adblock_rules_added">
+        <item quantity="one">%d rule added</item>
+        <item quantity="other">%d rules added</item>
+    </plurals>
+    <plurals name="adblock_rules_duplicates_skipped">
+        <item quantity="one">%d rule already existed</item>
+        <item quantity="other">%d rules already existed</item>
+    </plurals>
+    <plurals name="adblock_rules_deleted">
+        <item quantity="one">%d rule deleted</item>
+        <item quantity="other">%d rules deleted</item>
+    </plurals>
+    <plurals name="adblock_blocked_on_page">
+        <item quantity="one">%s blocked on this page</item>
+        <item quantity="other">%s blocked on this page</item>
     </plurals>
 </resources>
