@@ -51,8 +51,8 @@ android {
         applicationId = "com.elewashy.nexa"
         minSdk = 26
         targetSdk = 37
-        versionCode = 12
-        versionName = "1.4.0"
+        versionCode = 13
+        versionName = "1.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
