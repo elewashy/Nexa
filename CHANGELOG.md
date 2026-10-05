@@ -17,10 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** Added support for `$removeparam` on page loads and `$csp` policies, generic `#@#` exceptions, uBlock Origin's `site>>` and regex hostname syntax, and the `:others()`, `:shadow()`, `:matches-prop()`, and `:watch-attr()` operators.
 - **Ad blocking:** Added the remaining uBlock Origin replacement resources.
 - **Browser:** Pages opened in a new tab can now close themselves, as in Chrome.
+- **Navigation:** Back gestures now preview the previous page on Android 14 and later, and a quick swipe finishes immediately instead of replaying a long animation. Backing out of the browser now plays the system's back-to-home animation where Android supports it (Android 15 and later) and keeps your tabs ready for an instant return.
 - **Share:** Images can now be downloaded from shared posts — Instagram posts and carousels, TikTok photo posts, X/Twitter tweets, Threads posts, and Facebook photos. When a post has several images, choose which ones to download.
 
 ### Changed
 
+- **Startup:** The app now opens straight into the browser. The loading screen and the no-internet screen are gone; the system splash screen shows only while your tabs are restored, and the update check runs in the background after launch.
+- **Onboarding:** The first-launch onboarding is redesigned: grant storage, notification, and app-install access (or skip them for now), pick a search engine, and open the Theme and navigation bar pages to set them up, with Skip on every page. It appears only on the first launch; if you already completed it, you won't see it again.
+- **Permissions:** Storage access and notifications are now also requested the first time you download something, so skipping them during onboarding never blocks a download.
+- **Bookmarks:** The chosen order and layout are now remembered.
+- **Navigation:** The open pages, an address bar you were typing in, bookmark and history searches, the open bookmark folder, and selected tabs are now restored after Android closes the app in the background.
 - **Ad blocking:** Filters load several times faster at startup by restoring the last compiled filter engine instead of recompiling the lists.
 - **Ad blocking:** Changes made by the ad blocker to page functions are now hidden from page scripts, so sites can't detect them.
 - **Updates:** Settings → Updates now only checks for app updates; filter updates are managed from the Ad blocker page.
@@ -38,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ### Fixed
 
+- **Downloads:** Fixed downloads on Android 10, where storage access could never be granted.
+- **Browser:** Returning to the app on another page (Settings, Downloads, …) no longer resumes the hidden web page in the background.
 - **Browser:** The download button now appears only on pages with downloadable media — a specific video, reel, or post, and for tweets, Threads posts, and Facebook posts only when the post itself shows a video or image — instead of on every page of a supported site.
 - **Share:** Instagram and Threads posts now download the shared post's own media instead of a video from a related post on the same page.
 - **Browser:** The download button now appears on X/Twitter posts that have a video or photo; the post's media is checked with X directly, and the page check now also works when you're not signed in to X.
