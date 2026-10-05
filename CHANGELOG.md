@@ -4,7 +4,7 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - Unreleased
 
 ### Added
 
@@ -200,7 +200,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 - Initial release with browsing, ad blocking, safer link handling, large-file downloads, filter updates, and GitHub release updates.
 
-[Unreleased]: https://github.com/elewashy/Nexa/compare/v1.3.0...HEAD
+[1.4.0]: https://github.com/elewashy/Nexa/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/elewashy/Nexa/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/elewashy/Nexa/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/elewashy/Nexa/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/elewashy/Nexa/compare/v1.2.0...v1.2.1
