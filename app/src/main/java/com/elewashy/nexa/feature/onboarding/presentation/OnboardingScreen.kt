@@ -605,7 +605,6 @@ private fun PermissionRow(
     onGrant: () -> Unit,
 ) {
     ListItem(
-        headlineContent = { Text(title) },
         supportingContent = { Text(description) },
         leadingContent = {
             ExpressiveListIcon(
@@ -642,7 +641,9 @@ private fun PermissionRow(
             }
         },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    )
+    ) {
+        Text(title)
+    }
 }
 
 // ========== Rows ==========
@@ -664,11 +665,12 @@ private fun OptionGroup(
 @Composable
 private fun FeatureRow(icon: ImageVector, title: String, message: String) {
     ListItem(
-        headlineContent = { Text(title) },
         supportingContent = { Text(message) },
         leadingContent = { ExpressiveListIcon(icon = icon, size = 40.dp, iconSize = 22.dp) },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    )
+    ) {
+        Text(title)
+    }
 }
 
 /** One choice of a single-choice group: the whole row is the radio button for TalkBack. */
@@ -690,12 +692,13 @@ private fun OptionRow(
         label = "optionRowContainer",
     )
     ListItem(
-        headlineContent = { Text(title) },
+        modifier = Modifier.selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
         leadingContent = leadingContent,
         trailingContent = { RadioButton(selected = selected, onClick = null) },
         colors = ListItemDefaults.colors(containerColor = containerColor),
-        modifier = Modifier.selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
-    )
+    ) {
+        Text(title)
+    }
 }
 
 // ========== Motion ==========
