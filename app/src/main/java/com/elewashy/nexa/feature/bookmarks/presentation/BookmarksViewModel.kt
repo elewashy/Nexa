@@ -1,5 +1,7 @@
 package com.elewashy.nexa.feature.bookmarks.presentation
 
+import androidx.lifecycle.SavedStateHandle
+import com.elewashy.nexa.core.storage.AppPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.elewashy.nexa.feature.bookmarks.data.BookmarkRepository
@@ -32,10 +34,16 @@ import kotlinx.coroutines.sync.withLock
 @HiltViewModel
 class BookmarksViewModel @Inject constructor(
     private val repository: BookmarkRepository,
+    private val appPreferences: AppPreferences,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val mutationMutex = Mutex()
-    private val _searchQuery = MutableStateFlow("")
+
+    // Where the user is on this page (search, folder) is saved state: it survives configuration
+    // changes and process death while the page is on the back stack. The order and layout are
+    // the user's settings and are persisted.
+    private val _searchQuery = savedStateHandle.getMutableStateFlow(KEY_SEARCH_QUERY, "")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     private val _folderStack = MutableStateFlow<List<BookmarkFolder>>(emptyList())
@@ -55,11 +63,13 @@ class BookmarksViewModel @Inject constructor(
     val destinationFolders: StateFlow<List<BookmarkFolder>> = repository.observeAllFolders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val sort = MutableStateFlow(BookmarkSort.Manual)
-    val selectedSort: StateFlow<BookmarkSort> = sort.asStateFlow()
+    val selectedSort: StateFlow<BookmarkSort> = appPreferences.bookmarkSort
+        .map { name -> BookmarkSort.entries.firstOrNull { it.name == name } ?: BookmarkSort.Manual }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BookmarkSort.Manual)
 
-    private val viewMode = MutableStateFlow(BookmarkViewMode.Visual)
-    val selectedViewMode: StateFlow<BookmarkViewMode> = viewMode.asStateFlow()
+    val selectedViewMode: StateFlow<BookmarkViewMode> = appPreferences.bookmarkViewMode
+        .map { name -> BookmarkViewMode.entries.firstOrNull { it.name == name } ?: BookmarkViewMode.Visual }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BookmarkViewMode.Visual)
 
     private val rawBookmarks = currentFolderId
         .flatMapLatest(repository::observeBookmarksInFolder)
@@ -70,7 +80,7 @@ class BookmarksViewModel @Inject constructor(
             .map(String::trim)
             .distinctUntilChanged()
             .debounce { if (it.isEmpty()) 0L else SEARCH_DEBOUNCE_MS },
-        sort,
+        selectedSort,
     ) { items, query, order ->
         val filtered = if (query.isEmpty()) {
             items
@@ -123,21 +133,41 @@ class BookmarksViewModel @Inject constructor(
     private val _showMoveSelection = MutableStateFlow(false)
     val showMoveSelection: StateFlow<Boolean> = _showMoveSelection.asStateFlow()
 
+    init {
+        restoreFolderPath()
+    }
+
+    /** Re-opens the saved folder path; folders deleted meanwhile are skipped. */
+    private fun restoreFolderPath() {
+        val path = savedStateHandle.get<LongArray>(KEY_FOLDER_PATH) ?: return
+        if (path.isEmpty()) return
+        viewModelScope.launch {
+            val folders = path.toList().mapNotNull { repository.folderById(it) }
+            // Only when the user has not navigated in the meantime.
+            if (_folderStack.value.isEmpty()) setFolderStack(folders)
+        }
+    }
+
+    private fun setFolderStack(folders: List<BookmarkFolder>) {
+        _folderStack.value = folders
+        savedStateHandle[KEY_FOLDER_PATH] = folders.map(BookmarkFolder::id).toLongArray()
+    }
+
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query.take(MAX_SEARCH_LENGTH)
     }
 
     fun setSort(value: BookmarkSort) {
-        sort.value = value
+        viewModelScope.launch { appPreferences.setBookmarkSort(value.name) }
     }
 
     fun setViewMode(value: BookmarkViewMode) {
-        viewMode.value = value
+        viewModelScope.launch { appPreferences.setBookmarkViewMode(value.name) }
     }
 
     fun openFolder(folder: BookmarkFolder) {
         clearSelection()
-        _folderStack.value = _folderStack.value + folder
+        setFolderStack(_folderStack.value + folder)
         _searchQuery.value = ""
     }
 
@@ -148,7 +178,7 @@ class BookmarksViewModel @Inject constructor(
             return true
         }
         if (_folderStack.value.isEmpty()) return false
-        _folderStack.value = _folderStack.value.dropLast(1)
+        setFolderStack(_folderStack.value.dropLast(1))
         _searchQuery.value = ""
         return true
     }
@@ -377,7 +407,7 @@ class BookmarksViewModel @Inject constructor(
     }
 
     fun moveSiblingToIndex(id: Long, isFolder: Boolean, targetIndex: Int) {
-        if (sort.value != BookmarkSort.Manual || _searchQuery.value.isNotBlank()) return
+        if (selectedSort.value != BookmarkSort.Manual || _searchQuery.value.isNotBlank()) return
         val siblings = manualSiblings()
         val currentIndex = siblings.indexOfFirst { it.id == id && it.isFolder == isFolder }
         if (currentIndex < 0 || targetIndex !in siblings.indices || targetIndex == currentIndex) return
@@ -390,7 +420,7 @@ class BookmarksViewModel @Inject constructor(
     }
 
     private fun moveSiblingByOffset(id: Long, isFolder: Boolean, offset: Int) {
-        if (sort.value != BookmarkSort.Manual || offset == 0) return
+        if (selectedSort.value != BookmarkSort.Manual || offset == 0) return
         val siblings = manualSiblings()
         val currentIndex = siblings.indexOfFirst { it.id == id && it.isFolder == isFolder }
         if (currentIndex < 0) return
@@ -423,6 +453,8 @@ class BookmarksViewModel @Inject constructor(
     private companion object {
         const val SEARCH_DEBOUNCE_MS = 250L
         const val MAX_SEARCH_LENGTH = 256
+        const val KEY_SEARCH_QUERY = "search_query"
+        const val KEY_FOLDER_PATH = "folder_path"
     }
 }
 

@@ -46,7 +46,10 @@ interface AppPreferences {
     /** ARGB seed color used for generated Material color schemes. */
     val selectedThemeColor: Flow<Int>
 
-    /** Whether the user has completed the first-launch onboarding flow. Defaults to false. */
+    /**
+     * Whether the first-launch onboarding was finished or skipped. Defaults to false; only
+     * clearing the app's data resets it.
+     */
     val onboardingCompleted: Flow<Boolean>
 
     /** Persisted app language tag, or null for system default. */
@@ -69,6 +72,12 @@ interface AppPreferences {
 
     /** Download Manager layout. Defaults to Media gallery. */
     val downloadManagerLayout: Flow<Int>
+
+    /** Bookmarks order, stored by name; null until the user picks one. */
+    val bookmarkSort: Flow<String?>
+
+    /** Bookmarks layout, stored by name; null until the user picks one. */
+    val bookmarkViewMode: Flow<String?>
 
     /** Maximum files allowed to transfer concurrently. Defaults to 3. */
     val maxConcurrentDownloads: Flow<Int>
@@ -103,8 +112,8 @@ interface AppPreferences {
     /** Updates [selectedThemeColor]. */
     suspend fun setSelectedThemeColor(color: Int)
 
-    /** Updates [onboardingCompleted]. */
-    suspend fun setOnboardingCompleted(completed: Boolean)
+    /** Marks the first-launch onboarding as done. One-way: nothing in the app clears it. */
+    suspend fun setOnboardingCompleted()
 
     /** Updates [languageTag]. Pass null to follow the system language. */
     suspend fun setLanguageTag(tag: String?)
@@ -126,6 +135,12 @@ interface AppPreferences {
 
     /** Updates [downloadManagerLayout]. */
     suspend fun setDownloadManagerLayout(layout: Int)
+
+    /** Updates [bookmarkSort]. */
+    suspend fun setBookmarkSort(name: String)
+
+    /** Updates [bookmarkViewMode]. */
+    suspend fun setBookmarkViewMode(name: String)
 
     suspend fun setMaxConcurrentDownloads(value: Int)
 

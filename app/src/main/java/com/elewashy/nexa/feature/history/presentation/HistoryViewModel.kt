@@ -1,5 +1,6 @@
 package com.elewashy.nexa.feature.history.presentation
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
@@ -26,9 +27,11 @@ import kotlinx.coroutines.sync.withLock
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
     private val repository: HistoryRepository,
+    savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    private val _searchQuery = MutableStateFlow("")
+    /** Saved state: the search survives configuration changes and process death. */
+    private val _searchQuery = savedStateHandle.getMutableStateFlow(KEY_SEARCH_QUERY, "")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     val history: Flow<PagingData<HistoryItem>> = _searchQuery
@@ -146,5 +149,6 @@ class HistoryViewModel @Inject constructor(
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 300L
         private const val MAX_SEARCH_QUERY_LENGTH = 256
+        private const val KEY_SEARCH_QUERY = "search_query"
     }
 }

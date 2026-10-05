@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -156,7 +157,15 @@ fun TabSwitcherSheet(
     }
     var query by rememberSaveable { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
-    var selectedTabIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    // Saved state: a multi-selection survives recreation and process death (ids only).
+    var selectedTabIds by rememberSaveable(stateSaver = TabIdSetSaver) { mutableStateOf(emptySet<Long>()) }
+    // A restored or long-lived selection must not outlive its tabs (closed, or private tabs
+    // discarded with the process).
+    LaunchedEffect(tabs) {
+        if (tabs.isEmpty() || selectedTabIds.isEmpty()) return@LaunchedEffect
+        val liveIds = tabs.mapTo(HashSet()) { it.id }
+        if (!liveIds.containsAll(selectedTabIds)) selectedTabIds = selectedTabIds intersect liveIds
+    }
     val selectionMode = selectedTabIds.isNotEmpty()
     val selectedTabs = tabs.filter { it.id in selectedTabIds }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -982,3 +991,8 @@ private const val WORKSPACE_PAGE_COUNT = 2
 private const val TAB_CARD_ASPECT_RATIO = 0.74f
 private val HEADER_MAX_WIDTH: Dp = 920.dp
 private val SEARCH_MAX_WIDTH: Dp = 720.dp
+
+private val TabIdSetSaver = Saver<Set<Long>, LongArray>(
+    save = { it.toLongArray() },
+    restore = { it.toSet() },
+)

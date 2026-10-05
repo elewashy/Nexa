@@ -21,7 +21,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,33 +40,28 @@ import com.elewashy.nexa.ui.icons.Settings
 import com.elewashy.nexa.ui.icons.Shield
 import com.elewashy.nexa.ui.icons.Update
 
-private data class SettingsSection(
+private enum class SettingsSection(
     val titleRes: Int,
     val descriptionRes: Int,
     val icon: ImageVector,
-    val destination: SettingsDestination,
-)
+) {
+    General(R.string.general, R.string.general_description, Settings),
+    AdBlock(R.string.adblock_title, R.string.adblock_settings_description, Shield),
+    Updates(R.string.updates, R.string.updates_description, Update),
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(
     onBackClick: () -> Unit,
     onNavigate: (SettingsDestination) -> Unit,
-    viewModel: SettingsViewModel,
+    onAdBlockClick: () -> Unit,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val scrollState = rememberScrollState()
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(
         canScroll = { scrollState.canScrollBackward || scrollState.canScrollForward }
     )
-
-    val sections = remember {
-        listOf(
-            SettingsSection(R.string.general, R.string.general_description, Settings, SettingsDestination.General),
-            SettingsSection(R.string.adblock_title, R.string.adblock_settings_description, Shield, SettingsDestination.AdBlock),
-            SettingsSection(R.string.updates, R.string.updates_description, Update, SettingsDestination.Updates),
-        )
-    }
 
     Scaffold(
         topBar = {
@@ -118,12 +112,18 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             ListSection(modifier = Modifier.widthIn(max = adaptiveInfo.listMaxWidth)) {
-                sections.forEach { section ->
+                SettingsSection.entries.forEach { section ->
                     SettingsListItem(
                         headlineContent = stringResource(section.titleRes),
                         supportingContent = stringResource(section.descriptionRes),
                         leadingContent = { ExpressiveListIcon(icon = section.icon) },
-                        onClick = { onNavigate(section.destination) },
+                        onClick = {
+                            when (section) {
+                                SettingsSection.General -> onNavigate(SettingsDestination.General)
+                                SettingsSection.AdBlock -> onAdBlockClick()
+                                SettingsSection.Updates -> onNavigate(SettingsDestination.Updates)
+                            }
+                        },
                     )
                 }
             }

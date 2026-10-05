@@ -66,7 +66,6 @@ fun DownloadLayoutSettingsScreen(
     selectedLayout: DownloadManagerLayout,
     onLayoutSelected: (DownloadManagerLayout) -> Unit,
     onBackClick: () -> Unit,
-    bottomBar: @Composable (() -> Unit)? = null,
 ) {
     PhoneDesignSelectorScreen(
         title = stringResource(R.string.download_layout_title),
@@ -80,7 +79,6 @@ fun DownloadLayoutSettingsScreen(
         onOptionSelected = onLayoutSelected,
         onBackClick = onBackClick,
         preview = { layout, modifier -> PhoneLayoutPreview(layout, modifier) },
-        bottomBar = bottomBar,
     )
 }
 

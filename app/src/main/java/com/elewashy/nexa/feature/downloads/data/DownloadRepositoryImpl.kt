@@ -1,27 +1,20 @@
 package com.elewashy.nexa.feature.downloads.data
 
-import android.Manifest
-import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.os.Build
-import android.os.Environment
-import android.os.Process
 import android.util.Log
-import androidx.annotation.RequiresApi
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.elewashy.nexa.core.files.DownloadDirectory
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.common.ApplicationScope
+import com.elewashy.nexa.core.permissions.StorageAccess
 import com.elewashy.nexa.feature.downloads.data.engine.DownloadEngine
 import com.elewashy.nexa.feature.downloads.data.engine.DownloadTask
 import com.elewashy.nexa.feature.downloads.data.engine.HttpProber
@@ -1006,51 +999,8 @@ class DownloadRepositoryImpl @Inject constructor(
         }
     }
 
-    /**
-     * Storage write access for the public Downloads/Nexa directory:
-     *  - API 30+: MANAGE_EXTERNAL_STORAGE (Environment.isExternalStorageManager).
-     *  - API 29: WRITE_EXTERNAL_STORAGE runtime permission. Scoped storage is
-     *    enforced for apps targeting R+, and the manifest's WRITE_EXTERNAL_STORAGE
-     *    declaration is capped at maxSdkVersion=28 — returning true here used to
-     *    make writes fail opaquely mid-download. Gate on the actual grant instead
-     *    (an all-files-access grant also satisfies it), so the failure surfaces
-     *    as the actionable FAILED error.
-     *  - API 26–28: legacy WRITE_EXTERNAL_STORAGE runtime permission.
-     */
-    private fun hasStorageWritePermission(): Boolean = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-            Environment.isExternalStorageManager()
-        Build.VERSION.SDK_INT == Build.VERSION_CODES.Q ->
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED || hasAllFilesAccessOnQ()
-        else ->
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    /**
-     * All-files-access (MANAGE_EXTERNAL_STORAGE) grant check for API 29, where
-     * [Environment.isExternalStorageManager] does not exist yet — query the
-     * underlying app-op directly. Unknown/ungranted ops return false.
-     */
-    // unsafeCheckOpNoThrow is deprecated but is the only API that can query
-    // the all-files-access app-op on API 29 (isExternalStorageManager is 30+).
-    @Suppress("DEPRECATION")
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun hasAllFilesAccessOnQ(): Boolean {
-        return try {
-            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            val mode = appOps.unsafeCheckOpNoThrow(
-                "android:manage_external_storage", Process.myUid(), context.packageName
-            )
-            mode == AppOpsManager.MODE_ALLOWED
-        } catch (e: Exception) {
-            Log.w(TAG, "All-files-access app-op check failed: ${e.message}")
-            false
-        }
-    }
+    /** Storage write access for the public Downloads/Nexa directory. */
+    private fun hasStorageWritePermission(): Boolean = StorageAccess.isGranted(context)
 
     private fun maybeEmitNotificationsWarning() {
         if (notificationsWarningEmitted) return

@@ -39,6 +39,8 @@ import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.ui.components.dialogs.ConfirmationDialog
 import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.icons.Delete
+import com.elewashy.nexa.ui.permissions.DownloadPermissionRationale
+import com.elewashy.nexa.ui.permissions.rememberDownloadPermissionGate
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -59,9 +61,11 @@ fun DownloadsRoute(
             messageScope.launch { snackbarHostState.showSnackbar(message = message, duration = duration) }
         }
     }
+    // Resume/retry write to storage: ask for access first when it was revoked or never granted.
+    val downloadPermissionGate = rememberDownloadPermissionGate()
     // One stable bundle per (viewModel, context): cards and lists receive a
     // single reference instead of ten fresh lambdas every recomposition.
-    val itemActions = remember(viewModel, context, showMessage) {
+    val itemActions = remember(viewModel, context, showMessage, downloadPermissionGate) {
         DownloadItemActions(
             onClick = { item ->
                 when (val action = viewModel.onItemClick(item)) {
@@ -72,9 +76,17 @@ fun DownloadsRoute(
             },
             onLongClick = viewModel::onItemLongClick,
             onPause = { context.startDownloadControlService(DownloadService.ACTION_PAUSE_DOWNLOAD, it.id) },
-            onResume = { context.startDownloadControlService(DownloadService.ACTION_RESUME_DOWNLOAD, it.id) },
+            onResume = { item ->
+                downloadPermissionGate.launch {
+                    context.startDownloadControlService(DownloadService.ACTION_RESUME_DOWNLOAD, item.id)
+                }
+            },
             onCancel = viewModel::showCancelDialog,
-            onRetry = { context.startDownloadControlService(DownloadService.ACTION_RETRY_DOWNLOAD, it.id) },
+            onRetry = { item ->
+                downloadPermissionGate.launch {
+                    context.startDownloadControlService(DownloadService.ACTION_RETRY_DOWNLOAD, item.id)
+                }
+            },
             onOpenFile = { context.openDownloadedFile(it, showMessage) },
             onRename = viewModel::showRenameDialog,
             onShare = { context.shareDownloadedFile(it, showMessage) },
@@ -96,6 +108,8 @@ fun DownloadsRoute(
         snackbarHostState.showSnackbar(message = warning, duration = SnackbarDuration.Long)
         viewModel.dismissNotificationsWarning()
     }
+
+    DownloadPermissionRationale(downloadPermissionGate)
 
     val loadedPresentation = presentation
     if (loadedPresentation == null) {

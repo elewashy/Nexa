@@ -123,28 +123,38 @@
     <string name="delete_selected_items_message">Selected bookmarks will be deleted. Contents of selected folders will be moved to their parent folder.</string>
     <string name="delete_selected_history_message">Selected history entries will be deleted.</string>
 
-    <!-- No Internet -->
-    <string name="no_internet_connection">No Internet Connection</string>
-    <string name="continue_anyway">Continue anyway</string>
-
-    <!-- Loading / Startup -->
-    <string name="enable_internet">Please enable your internet connection to continue.</string>
-
-    <!-- Onboarding -->
-    <string name="onboarding_welcome_to">Welcome to</string>
-    <string name="onboarding_permissions_subtitle">Grant the required permissions to get started.</string>
-    <string name="onboarding_permissions_skip_description">Some features may not work correctly without these permissions. You can grant them later from Settings.</string>
-    <string name="onboarding_permissions_skip_title">Skip permissions?</string>
-    <string name="onboarding_permissions_skip_anyway">Skip anyway</string>
-    <string name="onboarding_skip">Skip</string>
-    <string name="next">Next</string>
+    <!-- Permissions -->
     <string name="permission_storage">Storage Access</string>
     <string name="permission_storage_description">Required to download and manage files</string>
+    <string name="permission_grant">Grant</string>
     <string name="permission_notifications">Notifications</string>
     <string name="permission_notifications_description">Get notified about download progress and updates</string>
     <string name="permission_install_apps">Install Apps</string>
     <string name="permission_install_apps_description">Required to install downloaded APK files</string>
-    <string name="permission_grant">Grant</string>
+    <string name="permission_granted">Granted</string>
+    <string name="permission_grant_named">Grant %1$s</string>
+    <string name="onboarding_permissions_title">Allow access</string>
+    <string name="onboarding_permissions_message">Grant these now, or skip and Nexa will ask when a feature needs them.</string>
+    <string name="onboarding_skip_for_now">Skip for now</string>
+    <string name="onboarding_appearance_theme_title">Theme</string>
+    <!-- Onboarding (first launch only) -->
+    <string name="onboarding_welcome_title">Welcome to %1$s</string>
+    <string name="onboarding_welcome_message">A fast, private browser with a built-in ad blocker and download manager.</string>
+    <string name="onboarding_feature_adblock_title">Fewer ads and trackers</string>
+    <string name="onboarding_feature_adblock_message">Pages load faster and stay clutter-free.</string>
+    <string name="onboarding_feature_downloads_title">Save videos and images</string>
+    <string name="onboarding_feature_downloads_message">Download media from the sites you visit.</string>
+    <string name="onboarding_feature_tabs_title">Pick up where you left off</string>
+    <string name="onboarding_feature_tabs_message">Your tabs and their history are restored when you come back.</string>
+    <string name="onboarding_search_title">Choose your search engine</string>
+    <string name="onboarding_search_message">Used for searches from the address bar.</string>
+    <string name="onboarding_appearance_title">Make it yours</string>
+    <string name="onboarding_appearance_message">Pick a theme and where the browser controls go.</string>
+    <string name="onboarding_change_later">You can change these at any time in Settings.</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_step_progress">Step %1$d of %2$d</string>
 
     <!-- Settings hub — section descriptions -->
     <string name="general_description">Theme, language, and appearance</string>
@@ -483,7 +493,6 @@
     <string name="downloads_visual_empty_desc">Save images and files to view offline or share in other apps.</string>
     <string name="downloads_no_matches">No matching downloads</string>
     <string name="downloads_no_matches_desc">Try another search or file filter.</string>
-    <string name="finish">Finish</string>
 
     <!-- Content blocking -->
     <string name="adblock_page_blocked_title">Page blocked</string>

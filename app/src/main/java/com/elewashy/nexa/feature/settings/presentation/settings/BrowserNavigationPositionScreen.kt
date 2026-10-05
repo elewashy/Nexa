@@ -17,6 +17,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,17 +30,39 @@ import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPositi
 import com.elewashy.nexa.ui.components.common.AppTabCountIcon
 import com.elewashy.nexa.ui.components.settings.PhoneDesignSelectorScreen
 import com.elewashy.nexa.ui.components.settings.PhonePreviewFrame
+import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.icons.Add
 import com.elewashy.nexa.ui.icons.Home
 import com.elewashy.nexa.ui.icons.MoreHoriz
 import com.elewashy.nexa.ui.icons.Search
+
+/**
+ * Stateful navigation-bar position page, shared by Settings and onboarding so both show exactly
+ * the same page. Its [SettingsViewModel] belongs to the hosting back-stack entry.
+ */
+@Composable
+fun BrowserNavigationPositionRoute(
+    onBackClick: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val loadedSettings = settings
+    if (loadedSettings == null) {
+        SettingsLoadingContent()
+        return
+    }
+    BrowserNavigationPositionScreen(
+        selectedPosition = BrowserNavigationBarPosition.fromStoredValue(loadedSettings.browserNavigationBarPosition),
+        onPositionSelected = viewModel::setBrowserNavigationBarPosition,
+        onBackClick = onBackClick,
+    )
+}
 
 @Composable
 fun BrowserNavigationPositionScreen(
     selectedPosition: BrowserNavigationBarPosition,
     onPositionSelected: (BrowserNavigationBarPosition) -> Unit,
     onBackClick: () -> Unit,
-    bottomBar: @Composable (() -> Unit)? = null,
 ) {
     PhoneDesignSelectorScreen(
         title = stringResource(R.string.navigation_bar_position),
@@ -61,7 +86,6 @@ fun BrowserNavigationPositionScreen(
         onOptionSelected = onPositionSelected,
         onBackClick = onBackClick,
         preview = { position, modifier -> BrowserPositionPhonePreview(position, modifier) },
-        bottomBar = bottomBar,
     )
 }
 

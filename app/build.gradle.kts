@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
     alias(libs.plugins.aboutlibraries) apply false
@@ -184,8 +185,13 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
-    implementation(libs.navigation.compose)
+    implementation(libs.navigation3.runtime)
+    implementation(libs.navigation3.ui)
+    implementation(libs.lifecycle.viewmodel.navigation3)
+    implementation(libs.kotlinx.serialization.core)
     debugImplementation(libs.compose.ui.tooling)
+    // Hosts Compose UI under Robolectric for navigation/back behaviour tests.
+    debugImplementation(libs.compose.ui.test.manifest)
     
     // Gson
     implementation(libs.gson)
@@ -199,7 +205,7 @@ dependencies {
     // Hilt - Dependency Injection
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
-    implementation(libs.hilt.navigation.compose)
+    implementation(libs.hilt.lifecycle.viewmodel.compose)
 
     // Structured persistence
     implementation(libs.datastore.preferences)
@@ -242,6 +248,8 @@ dependencies {
     testImplementation(libs.org.json)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.robolectric)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 }
 
 if (generateLicenseMetadata) {

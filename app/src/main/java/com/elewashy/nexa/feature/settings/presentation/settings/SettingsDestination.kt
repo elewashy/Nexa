@@ -1,53 +1,19 @@
 package com.elewashy.nexa.feature.settings.presentation.settings
 
-sealed interface SettingsDestination {
-    val route: String
-
-    data object Root : SettingsDestination {
-        override val route = "settings"
-    }
-
-    data object General : SettingsDestination {
-        override val route = "settings/general"
-    }
-
-    data object BrowserNavigationPosition : SettingsDestination {
-        override val route = "settings/general/browser-navigation-position"
-    }
-
-    data object CustomizeTheme : SettingsDestination {
-        override val route = "settings/general/customize-theme"
-    }
-
-    data object Language : SettingsDestination {
-        override val route = "settings/general/language"
-    }
-
-    data object SearchEngine : SettingsDestination {
-        override val route = "settings/general/search-engine"
-    }
-
-    data object AdBlock : SettingsDestination {
-        override val route = "settings/adblock"
-    }
-
-    data object Updates : SettingsDestination {
-        override val route = "settings/updates"
-    }
-
-    data object Changelog : SettingsDestination {
-        override val route = "settings/changelog"
-    }
-
-    data object About : SettingsDestination {
-        override val route = "settings/about"
-    }
-
-    data object Contributors : SettingsDestination {
-        override val route = "settings/about/contributors"
-    }
-
-    data object Licenses : SettingsDestination {
-        override val route = "settings/about/licenses"
-    }
+/**
+ * Pages of Settings. Carried by [com.elewashy.nexa.ui.navigation.AppRoute.Settings], so it is
+ * part of the saved back stack and must stay serializable (an enum is, by default).
+ */
+enum class SettingsDestination {
+    Root,
+    General,
+    BrowserNavigationPosition,
+    CustomizeTheme,
+    Language,
+    SearchEngine,
+    Updates,
+    Changelog,
+    About,
+    Contributors,
+    Licenses,
 }

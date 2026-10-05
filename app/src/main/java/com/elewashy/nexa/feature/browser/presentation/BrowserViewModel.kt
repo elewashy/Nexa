@@ -1,6 +1,7 @@
 package com.elewashy.nexa.feature.browser.presentation
 
 import androidx.core.net.toUri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.elewashy.nexa.core.storage.AppPreferences
@@ -77,6 +78,7 @@ class BrowserViewModel @Inject constructor(
     private val resolveBackNavigation: ResolveBackNavigationUseCase,
     private val resolveDownloadableMedia: ResolveDownloadableMediaUseCase,
     private val mediaAvailabilityRepository: MediaAvailabilityRepository,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -202,6 +204,13 @@ class BrowserViewModel @Inject constructor(
                 }
             }
         }
+        restoreOmnibox()
+        viewModelScope.launch {
+            _omniboxState
+                .map { state -> state.mode.takeIf { it.isOverlayVisible } to state.query }
+                .distinctUntilChanged()
+                .collect { (overlayMode, query) -> saveOmnibox(overlayMode, query) }
+        }
         viewModelScope.launch {
             omniboxQueries
                 .debounce(OMNIBOX_DEBOUNCE_MS)
@@ -310,6 +319,18 @@ class BrowserViewModel @Inject constructor(
                 backButtonEnabled = canGoBack,
                 forwardButtonEnabled = canGoForward
             )
+        }
+    }
+
+    /** The active page's back/forward list changed (commit, History API, back/forward step). */
+    fun onHistoryUpdated(tabId: Long, canGoBack: Boolean, canGoForward: Boolean) {
+        if (tabId != activeTabId) return
+        _uiState.update { state ->
+            if (state.backButtonEnabled == canGoBack && state.forwardButtonEnabled == canGoForward) {
+                state
+            } else {
+                state.copy(backButtonEnabled = canGoBack, forwardButtonEnabled = canGoForward)
+            }
         }
     }
 
@@ -660,6 +681,28 @@ class BrowserViewModel @Inject constructor(
         }
     }
 
+    /**
+     * An open address-bar editor (mode + typed text) is UI state the user expects back after the
+     * system kills the backgrounded process. Private-tab input is never written to saved state.
+     */
+    private fun saveOmnibox(overlayMode: BrowserOmniboxMode?, query: String) {
+        if (overlayMode == null || isPrivateBrowsing()) {
+            savedStateHandle.remove<String>(KEY_OMNIBOX_MODE)
+            savedStateHandle.remove<String>(KEY_OMNIBOX_QUERY)
+        } else {
+            savedStateHandle[KEY_OMNIBOX_MODE] = overlayMode.name
+            savedStateHandle[KEY_OMNIBOX_QUERY] = query
+        }
+    }
+
+    private fun restoreOmnibox() {
+        val mode = savedStateHandle.get<String>(KEY_OMNIBOX_MODE)
+            ?.let { name -> BrowserOmniboxMode.entries.firstOrNull { it.name == name } }
+            ?.takeIf { it.isOverlayVisible }
+            ?: return
+        openOmnibox(mode, savedStateHandle.get<String>(KEY_OMNIBOX_QUERY).orEmpty())
+    }
+
     private fun isPrivateBrowsing(): Boolean =
         tabRepository.workspace.value.activeTab?.isPrivate == true
 
@@ -683,6 +726,8 @@ class BrowserViewModel @Inject constructor(
         private const val OMNIBOX_SEARCH_HISTORY_LIMIT = 8
         private const val OMNIBOX_SEARCH_HISTORY_MATCH_LIMIT = 6
         private const val MAX_OMNIBOX_QUERY_LENGTH = 2048
+        private const val KEY_OMNIBOX_MODE = "omnibox_mode"
+        private const val KEY_OMNIBOX_QUERY = "omnibox_query"
 
         /**
          * host:port(/path) with a numeric port. Requires a dotted host so

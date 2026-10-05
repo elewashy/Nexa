@@ -79,6 +79,9 @@ class ShareViewModel @Inject constructor(
             return
         }
 
+        // A recreated Activity (locale change) re-delivers the same share to this retained
+        // ViewModel: keep the loaded sheet instead of extracting again.
+        if (_uiState.value.sharedUrl == url) return
         _uiState.value = ShareUiState(sharedUrl = url, isLoading = true, showSheet = true)
         viewModelScope.launch {
             // The repository is main-safe and reports failures as results.

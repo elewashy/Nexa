@@ -23,6 +23,8 @@ data class AppSettings(
     val browserNavigationBarPosition: Int = BrowserNavigationBarPosition.Bottom.storedValue,
     val selectedSearchEngine: Int = SearchEngine.DEFAULT.storedValue,
     val downloadManagerLayout: Int = 0,
+    val bookmarkSort: String? = null,
+    val bookmarkViewMode: String? = null,
     val maxConcurrentDownloads: Int = DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS,
     val downloadFilterIds: Set<String> = DownloadSettingsDefaults.DEFAULT_FILTER_IDS,
     val downloadSpeedLimitBytesPerSecond: Long = DownloadSettingsDefaults.UNLIMITED_SPEED_BYTES_PER_SECOND,

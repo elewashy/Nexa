@@ -60,6 +60,8 @@ class DataStoreAppPreferences @Inject constructor(
     override val browserNavigationBarPosition: Flow<Int> = settings.map { it.browserNavigationBarPosition }.distinctUntilChanged()
     override val selectedSearchEngine: Flow<Int> = settings.map { it.selectedSearchEngine }.distinctUntilChanged()
     override val downloadManagerLayout: Flow<Int> = settings.map { it.downloadManagerLayout }.distinctUntilChanged()
+    override val bookmarkSort: Flow<String?> = settings.map { it.bookmarkSort }.distinctUntilChanged()
+    override val bookmarkViewMode: Flow<String?> = settings.map { it.bookmarkViewMode }.distinctUntilChanged()
     override val maxConcurrentDownloads: Flow<Int> = settings.map { it.maxConcurrentDownloads }.distinctUntilChanged()
     override val downloadFilterIds: Flow<Set<String>> = settings.map { it.downloadFilterIds }.distinctUntilChanged()
     override val downloadSpeedLimitBytesPerSecond: Flow<Long> = settings.map { it.downloadSpeedLimitBytesPerSecond }.distinctUntilChanged()
@@ -94,8 +96,8 @@ class DataStoreAppPreferences @Inject constructor(
         dataStore.edit { prefs -> prefs[KEY_SELECTED_THEME_COLOR] = color }
     }
 
-    override suspend fun setOnboardingCompleted(completed: Boolean) {
-        dataStore.edit { it[KEY_ONBOARDING_COMPLETED] = completed }
+    override suspend fun setOnboardingCompleted() {
+        dataStore.edit { it[KEY_ONBOARDING_COMPLETED] = true }
     }
 
     override suspend fun setLanguageTag(tag: String?) {
@@ -124,6 +126,14 @@ class DataStoreAppPreferences @Inject constructor(
 
     override suspend fun setDownloadManagerLayout(layout: Int) {
         dataStore.edit { it[KEY_DOWNLOAD_MANAGER_LAYOUT] = layout }
+    }
+
+    override suspend fun setBookmarkSort(name: String) {
+        dataStore.edit { it[KEY_BOOKMARK_SORT] = name }
+    }
+
+    override suspend fun setBookmarkViewMode(name: String) {
+        dataStore.edit { it[KEY_BOOKMARK_VIEW_MODE] = name }
     }
 
     override suspend fun setMaxConcurrentDownloads(value: Int) {
@@ -198,6 +208,8 @@ class DataStoreAppPreferences @Inject constructor(
                 this[KEY_SELECTED_SEARCH_ENGINE] ?: SearchEngine.DEFAULT.storedValue
             ).storedValue,
             downloadManagerLayout = this[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0,
+            bookmarkSort = this[KEY_BOOKMARK_SORT],
+            bookmarkViewMode = this[KEY_BOOKMARK_VIEW_MODE],
             maxConcurrentDownloads = DownloadSettingsDefaults.clampConcurrentDownloads(
                 this[KEY_MAX_CONCURRENT_DOWNLOADS] ?: DownloadSettingsDefaults.DEFAULT_CONCURRENT_DOWNLOADS
             ),
@@ -223,6 +235,7 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_PURE_BLACK = booleanPreferencesKey("pure_black")
         val KEY_HIGH_REFRESH_RATE = booleanPreferencesKey("high_refresh_rate")
         val KEY_SELECTED_THEME_COLOR = intPreferencesKey("selected_theme_color")
+        /** Same key as releases up to 1.3.1, so users who already finished onboarding never see it again. */
         val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_LANGUAGE_TAG = stringPreferencesKey("language_tag")
         val KEY_AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
@@ -231,6 +244,8 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_BROWSER_NAVIGATION_BAR_POSITION = intPreferencesKey("browser_navigation_bar_position")
         val KEY_SELECTED_SEARCH_ENGINE = intPreferencesKey("selected_search_engine")
         val KEY_DOWNLOAD_MANAGER_LAYOUT = intPreferencesKey("download_manager_layout")
+        val KEY_BOOKMARK_SORT = stringPreferencesKey("bookmark_sort")
+        val KEY_BOOKMARK_VIEW_MODE = stringPreferencesKey("bookmark_view_mode")
         val KEY_MAX_CONCURRENT_DOWNLOADS = intPreferencesKey("download_max_concurrent")
         val KEY_DOWNLOAD_FILTER_IDS = stringSetPreferencesKey("download_filter_ids")
         val KEY_DOWNLOAD_SPEED_LIMIT = longPreferencesKey("download_speed_limit_bytes_per_second")

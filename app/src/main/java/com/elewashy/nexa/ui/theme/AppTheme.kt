@@ -1,5 +1,7 @@
 package com.elewashy.nexa.ui.theme
 
+import android.app.UiModeManager
+
 /** User-selectable theme mode for the app. */
 enum class AppTheme(val preferenceValue: Int) {
     SYSTEM(AppThemeMode.SYSTEM),
@@ -13,4 +15,11 @@ enum class AppTheme(val preferenceValue: Int) {
             else -> SYSTEM
         }
     }
+}
+
+/** The matching [UiModeManager] night mode; [AppTheme.SYSTEM] follows the device setting. */
+fun AppTheme.toUiModeNightMode(): Int = when (this) {
+    AppTheme.SYSTEM -> UiModeManager.MODE_NIGHT_AUTO
+    AppTheme.LIGHT -> UiModeManager.MODE_NIGHT_NO
+    AppTheme.DARK -> UiModeManager.MODE_NIGHT_YES
 }

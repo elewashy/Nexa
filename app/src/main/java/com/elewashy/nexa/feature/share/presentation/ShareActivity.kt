@@ -22,6 +22,8 @@ import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.feature.share.domain.model.VideoQuality
+import com.elewashy.nexa.ui.permissions.DownloadPermissionRationale
+import com.elewashy.nexa.ui.permissions.rememberDownloadPermissionGate
 import com.elewashy.nexa.ui.theme.NexaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -114,6 +116,10 @@ private fun ShareOverlay(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // Storage access is requested here, in context, the first time a download is chosen.
+    val downloadPermissionGate = rememberDownloadPermissionGate(
+        onStorageDenied = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() },
+    )
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -134,6 +140,7 @@ private fun ShareOverlay(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        DownloadPermissionRationale(downloadPermissionGate)
         if (state.showSheet) {
             val audioQualities = remember(state.qualities) {
                 state.qualities.filter { it.type == VideoQuality.MediaType.AUDIO }
@@ -151,11 +158,13 @@ private fun ShareOverlay(
                 selectedImageUrls = state.selectedImageUrls,
                 sizeLoading = state.sizeLoading,
                 onDownload = { quality ->
-                    viewModel.onQualitySelected(quality)
+                    downloadPermissionGate.launch { viewModel.onQualitySelected(quality) }
                 },
                 onImageToggled = viewModel::onImageSelectionToggled,
                 onAllImagesToggled = viewModel::onAllImagesSelectionToggled,
-                onDownloadImages = viewModel::onDownloadSelectedImages,
+                onDownloadImages = {
+                    downloadPermissionGate.launch(viewModel::onDownloadSelectedImages)
+                },
                 onCancel = onClose,
             )
         }

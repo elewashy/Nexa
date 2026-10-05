@@ -77,17 +77,15 @@ fun UpdateScreen(
     var backPressedOnce by remember { mutableStateOf(false) }
     val pressBackAgainMsg = stringResource(R.string.press_back_again_to_cancel_update)
 
-    BackHandler(enabled = true) {
-        if (viewModel.state == State.DOWNLOADING || viewModel.state == State.CAN_INSTALL) {
-            if (backPressedOnce) {
-                viewModel.cancelUpdate()
-                onBackClick()
-            } else {
-                backPressedOnce = true
-                showMessage(pressBackAgainMsg, SnackbarDuration.Short)
-            }
-        } else {
+    // Only an update in progress needs a confirming second Back; otherwise the navigation host
+    // owns Back, including its predictive back preview.
+    BackHandler(enabled = viewModel.state == State.DOWNLOADING || viewModel.state == State.CAN_INSTALL) {
+        if (backPressedOnce) {
+            viewModel.cancelUpdate()
             onBackClick()
+        } else {
+            backPressedOnce = true
+            showMessage(pressBackAgainMsg, SnackbarDuration.Short)
         }
     }
 

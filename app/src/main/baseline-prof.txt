@@ -1,0 +1,42 @@
+# Baseline Profile: code AOT-compiled at install time (Play, or ProfileInstaller for sideloaded
+# APKs) so cold start and the first page load do not run in the interpreter/JIT.
+# https://developer.android.com/topic/performance/baselineprofiles/overview
+#
+# Library profiles (Compose, Activity, Navigation 3, Room, DataStore, …) ship inside their AARs
+# and are merged automatically; these rules cover the app's own startup and browsing path:
+# Application + Hilt graph, the launcher Activity, startup gate, onboarding, theme, navigation,
+# tab restore, preferences, and the ad-block engine that filters every request of a page load.
+# Feature pages opened later (downloads, share, settings, …) are left to the JIT.
+#
+# Hand-written wildcard rules. For measured, per-method precision, generate this file with the
+# Baseline Profile Gradle plugin and a Macrobenchmark startup journey on a device.
+
+# Application, Hilt components and other top-level classes.
+HSPLcom/elewashy/nexa/*;->**(**)**
+Lcom/elewashy/nexa/*;
+
+# Launcher Activity, browser state and WebView clients.
+HSPLcom/elewashy/nexa/feature/browser/presentation/**;->**(**)**
+Lcom/elewashy/nexa/feature/browser/presentation/**;
+HSPLcom/elewashy/nexa/feature/browser/domain/**;->**(**)**
+Lcom/elewashy/nexa/feature/browser/domain/**;
+
+# Tab workspace restore (read while the splash screen is held).
+HSPLcom/elewashy/nexa/feature/tabs/**;->**(**)**
+Lcom/elewashy/nexa/feature/tabs/**;
+
+# First-launch onboarding.
+HSPLcom/elewashy/nexa/feature/onboarding/**;->**(**)**
+Lcom/elewashy/nexa/feature/onboarding/**;
+
+# Ad blocking: compiled engine snapshot restore and per-request matching.
+HSPLcom/elewashy/nexa/feature/adblock/data/**;->**(**)**
+Lcom/elewashy/nexa/feature/adblock/data/**;
+
+# Preferences, dispatchers, networking, and other shared infrastructure.
+HSPLcom/elewashy/nexa/core/**;->**(**)**
+Lcom/elewashy/nexa/core/**;
+
+# Theme, startup gate, navigation host, browser chrome and adaptive layout.
+HSPLcom/elewashy/nexa/ui/**;->**(**)**
+Lcom/elewashy/nexa/ui/**;

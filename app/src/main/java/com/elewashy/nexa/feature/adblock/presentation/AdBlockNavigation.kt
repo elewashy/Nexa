@@ -1,60 +1,33 @@
 package com.elewashy.nexa.feature.adblock.presentation
 
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import com.elewashy.nexa.ui.navigation.AppNavHost
-import com.elewashy.nexa.ui.navigation.AppNavigationMotion
+import androidx.navigation3.runtime.EntryProviderScope
+import com.elewashy.nexa.ui.navigation.AppNavigator
+import com.elewashy.nexa.ui.navigation.AppRoute
 
 /** Pages of the ad blocker; the dashboard is the entry point. */
-enum class AdBlockDestination(val route: String) {
-    Dashboard("adblock"),
-    FilterLists("adblock/filter-lists"),
-    CustomRules("adblock/custom-rules"),
-    Sites("adblock/sites"),
-    Statistics("adblock/statistics"),
+enum class AdBlockDestination {
+    Dashboard,
+    FilterLists,
+    CustomRules,
+    Sites,
+    Statistics,
 }
 
 /**
- * The ad blocker's own navigation graph. Hosted both by the browser menu
- * (direct access) and by Settings, so both entry points show the same
- * pages with the same back behaviour.
+ * The ad blocker's pages. Opened both from the browser menu and from Settings; both entry points
+ * share the same pages and back behaviour because they live in the app's single back stack.
  */
-@Composable
-fun AdBlockNavigation(
-    onRootBackClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val navController = rememberNavController()
-    AppNavHost(
-        navController = navController,
-        startDestination = AdBlockDestination.Dashboard.route,
-        motion = AppNavigationMotion.SharedAxisX,
-        modifier = modifier,
-    ) {
-        composable(AdBlockDestination.Dashboard.route) {
-            AdBlockDashboardScreen(
-                onBackClick = onRootBackClick,
-                onNavigate = navController::navigateTo,
+fun EntryProviderScope<AppRoute>.adBlockEntries(navigator: AppNavigator) {
+    entry<AppRoute.AdBlock> { route ->
+        when (route.page) {
+            AdBlockDestination.Dashboard -> AdBlockDashboardScreen(
+                onBackClick = navigator::back,
+                onNavigate = { page -> navigator.navigate(AppRoute.AdBlock(page)) },
             )
-        }
-        composable(AdBlockDestination.FilterLists.route) {
-            FilterListsScreen(onBackClick = navController::popBackStack)
-        }
-        composable(AdBlockDestination.CustomRules.route) {
-            CustomRulesScreen(onBackClick = navController::popBackStack)
-        }
-        composable(AdBlockDestination.Sites.route) {
-            SitesScreen(onBackClick = navController::popBackStack)
-        }
-        composable(AdBlockDestination.Statistics.route) {
-            AdBlockStatisticsScreen(onBackClick = navController::popBackStack)
+            AdBlockDestination.FilterLists -> FilterListsScreen(onBackClick = navigator::back)
+            AdBlockDestination.CustomRules -> CustomRulesScreen(onBackClick = navigator::back)
+            AdBlockDestination.Sites -> SitesScreen(onBackClick = navigator::back)
+            AdBlockDestination.Statistics -> AdBlockStatisticsScreen(onBackClick = navigator::back)
         }
     }
-}
-
-private fun NavHostController.navigateTo(destination: AdBlockDestination) {
-    navigate(destination.route) { launchSingleTop = true }
 }

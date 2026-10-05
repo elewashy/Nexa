@@ -113,7 +113,6 @@ private val PaletteColors = listOf(
 fun CustomizeThemeScreen(
     onBackClick: () -> Unit,
     viewModel: SettingsViewModel,
-    bottomBar: @Composable () -> Unit = {},
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val loadedSettings = settings
@@ -142,7 +141,6 @@ fun CustomizeThemeScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
-        bottomBar = bottomBar,
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
         if (loadedSettings == null) {

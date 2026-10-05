@@ -1,47 +1,32 @@
 package com.elewashy.nexa.feature.downloads.presentation
 
-import androidx.compose.runtime.Composable
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation3.runtime.EntryProviderScope
 import com.elewashy.nexa.feature.downloads.presentation.screen.DownloadsRoute
 import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadLayoutSettingsRoute
 import com.elewashy.nexa.feature.downloads.presentation.settings.DownloadSettingsRoute
-import com.elewashy.nexa.ui.navigation.AppNavHost
-import com.elewashy.nexa.ui.navigation.AppNavigationMotion
+import com.elewashy.nexa.ui.navigation.AppNavigator
+import com.elewashy.nexa.ui.navigation.AppRoute
 
-private const val DOWNLOADS_LIST_ROUTE = "list"
-private const val DOWNLOADS_SETTINGS_ROUTE = "settings"
-private const val DOWNLOADS_DESIGN_ROUTE = "settings/design"
+/** Pages of the Download Manager. */
+enum class DownloadsPage {
+    List,
+    Settings,
+    Layout,
+}
 
-/** Hierarchical Download Manager graph with one centralized, RTL-aware shared-axis transition. */
-@Composable
-fun DownloadsNavigation(onRootBackClick: () -> Unit) {
-    val navController = rememberNavController()
-    AppNavHost(
-        navController = navController,
-        startDestination = DOWNLOADS_LIST_ROUTE,
-        motion = AppNavigationMotion.SharedAxisX,
-    ) {
-        composable(DOWNLOADS_LIST_ROUTE) {
-            DownloadsRoute(
-                onBackClick = onRootBackClick,
-                onSettingsClick = {
-                    navController.navigate(DOWNLOADS_SETTINGS_ROUTE) { launchSingleTop = true }
-                },
+/** The Download Manager's pages: list → settings → layout. */
+fun EntryProviderScope<AppRoute>.downloadsEntries(navigator: AppNavigator) {
+    entry<AppRoute.Downloads> { route ->
+        when (route.page) {
+            DownloadsPage.List -> DownloadsRoute(
+                onBackClick = navigator::back,
+                onSettingsClick = { navigator.navigate(AppRoute.Downloads(DownloadsPage.Settings)) },
             )
-        }
-        composable(DOWNLOADS_SETTINGS_ROUTE) {
-            DownloadSettingsRoute(
-                onBackClick = { navController.popBackStack() },
-                onDesignClick = {
-                    navController.navigate(DOWNLOADS_DESIGN_ROUTE) { launchSingleTop = true }
-                },
+            DownloadsPage.Settings -> DownloadSettingsRoute(
+                onBackClick = navigator::back,
+                onDesignClick = { navigator.navigate(AppRoute.Downloads(DownloadsPage.Layout)) },
             )
-        }
-        composable(DOWNLOADS_DESIGN_ROUTE) {
-            DownloadLayoutSettingsRoute(
-                onBackClick = { navController.popBackStack() },
-            )
+            DownloadsPage.Layout -> DownloadLayoutSettingsRoute(onBackClick = navigator::back)
         }
     }
 }

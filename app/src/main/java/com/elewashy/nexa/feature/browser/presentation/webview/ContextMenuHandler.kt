@@ -117,12 +117,14 @@ object ContextMenuHandler {
      * @param webView  The WebView for hit-test data
      * @param context  Context for intents and dialogs
      * @param onDownloadStarted Optional UI callback for downloaded images.
+     * @param launchDownload Runs a download once its permissions are in place.
      */
     fun onActionSelected(
         action: ContextMenuAction,
         webView: WebView,
         context: Context,
         onDownloadStarted: ((StartedDownload) -> Unit)? = null,
+        launchDownload: (download: () -> Unit) -> Unit = { it() },
     ): ContextMenuResult {
         // Data captured at long-press time; still null if the WebView has
         // not delivered it yet — every action below degrades gracefully.
@@ -134,7 +136,8 @@ object ContextMenuHandler {
 
         return when (action) {
             ContextMenuAction.VIEW_IMAGE -> handleViewImage(imgUrl, webView)
-            ContextMenuAction.SAVE_IMAGE -> handleSaveImage(imgUrl, webView, context, onDownloadStarted)
+            ContextMenuAction.SAVE_IMAGE ->
+                handleSaveImage(imgUrl, webView, context, onDownloadStarted, launchDownload)
             ContextMenuAction.SHARE      -> handleShare(url ?: imgUrl, context)
             ContextMenuAction.CLOSE      -> ContextMenuResult.None
         }
@@ -159,6 +162,7 @@ object ContextMenuHandler {
         webView: WebView,
         context: Context,
         onDownloadStarted: ((StartedDownload) -> Unit)?,
+        launchDownload: (download: () -> Unit) -> Unit,
     ): ContextMenuResult {
         imgUrl ?: return ContextMenuResult.None
         return if (isBase64DataUrl(imgUrl)) {
@@ -174,14 +178,18 @@ object ContextMenuHandler {
             ContextMenuResult.Message(msg)
         } else {
             // Download via app's DownloadHandler instead of external view intent
-            DownloadHandler.startDownload(
-                context = context,
-                url = imgUrl,
-                mimeType = "image/*",
-                userAgent = webView.settings.userAgentString,
-                currentPageUrl = webView.url,
-                onDownloadStarted = onDownloadStarted,
-            )
+            val userAgent = webView.settings.userAgentString
+            val pageUrl = webView.url
+            launchDownload {
+                DownloadHandler.startDownload(
+                    context = context,
+                    url = imgUrl,
+                    mimeType = "image/*",
+                    userAgent = userAgent,
+                    currentPageUrl = pageUrl,
+                    onDownloadStarted = onDownloadStarted,
+                )
+            }
             ContextMenuResult.None
         }
     }

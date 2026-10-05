@@ -8,13 +8,17 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.app.UiModeManager
+import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.webkit.URLUtil
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -22,6 +26,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawn
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
@@ -88,14 +94,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
+import androidx.core.splashscreen.SplashScreen
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import com.elewashy.nexa.R
 import com.elewashy.nexa.core.common.BrowserUrls
 import com.elewashy.nexa.core.display.RefreshRateManager
@@ -108,8 +112,8 @@ import com.elewashy.nexa.feature.adblock.data.AdBlockPolicyStore
 import com.elewashy.nexa.feature.adblock.data.AdBlockStatsRecorder
 import com.elewashy.nexa.feature.adblock.data.AdBlockRepository
 import com.elewashy.nexa.feature.adblock.data.FilterUpdateScheduler
-import com.elewashy.nexa.feature.adblock.presentation.AdBlockNavigation
 import com.elewashy.nexa.feature.adblock.presentation.SiteAdBlockMenuViewModel
+import com.elewashy.nexa.feature.adblock.presentation.adBlockEntries
 import com.elewashy.nexa.ui.components.navigation.BrowserSiteAdBlockState
 import com.elewashy.nexa.feature.browser.presentation.webview.BlockedPageRenderer
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuHandler
@@ -135,24 +139,17 @@ import com.elewashy.nexa.feature.browser.presentation.screen.TabSwitcherSheet
 import com.elewashy.nexa.feature.downloads.data.DownloadRepository
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
-import com.elewashy.nexa.feature.downloads.presentation.DownloadsNavigation
+import com.elewashy.nexa.feature.downloads.presentation.downloadsEntries
 import com.elewashy.nexa.feature.downloads.presentation.screen.openDownloadedFile
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.history.presentation.screen.HistoryRoute
+import com.elewashy.nexa.feature.onboarding.presentation.OnboardingFlow
 import com.elewashy.nexa.feature.update.presentation.UpdateScreen
-import com.elewashy.nexa.ui.navigation.AppNavHost
 import com.elewashy.nexa.feature.update.presentation.UpdateViewModel
 import com.elewashy.nexa.feature.update.presentation.UpdateCheckViewModel
 import com.elewashy.nexa.feature.update.presentation.components.AvailableUpdateDialog
-import com.elewashy.nexa.feature.onboarding.OnboardingScreen
-import com.elewashy.nexa.feature.onboarding.OnboardingViewModel
-import com.elewashy.nexa.feature.settings.presentation.settings.SettingsNavigation
-import com.elewashy.nexa.feature.settings.presentation.settings.SettingsViewModel
+import com.elewashy.nexa.feature.settings.presentation.settings.settingsEntries
 import com.elewashy.nexa.feature.share.presentation.ShareActivity
-import com.elewashy.nexa.feature.splash.presentation.SplashUiState
-import com.elewashy.nexa.feature.splash.presentation.SplashViewModel
-import com.elewashy.nexa.feature.splash.presentation.screen.LoadingScreen
-import com.elewashy.nexa.feature.splash.presentation.screen.NoInternetScreen
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
 import com.elewashy.nexa.feature.tabs.domain.usecase.BackNavigation
@@ -163,7 +160,18 @@ import com.elewashy.nexa.ui.components.navigation.BrowserNavigationProgress
 import com.elewashy.nexa.ui.components.navigation.BrowserNavigationRail
 import com.elewashy.nexa.ui.components.navigation.BrowserOmniboxOverlay
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
+import com.elewashy.nexa.ui.navigation.AppNavDisplay
+import com.elewashy.nexa.ui.permissions.DownloadPermissionRationale
+import com.elewashy.nexa.ui.permissions.rememberDownloadPermissionGate
+import com.elewashy.nexa.ui.navigation.AppRoute
+import com.elewashy.nexa.ui.navigation.BrowserEntryMetadata
+import com.elewashy.nexa.ui.navigation.rememberAppNavigator
+import com.elewashy.nexa.ui.startup.StartupDestination
+import com.elewashy.nexa.ui.startup.StartupHost
+import com.elewashy.nexa.ui.startup.StartupViewModel
+import com.elewashy.nexa.ui.theme.AppTheme
 import com.elewashy.nexa.ui.theme.NexaTheme
+import com.elewashy.nexa.ui.theme.toUiModeNightMode
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -199,9 +207,18 @@ import javax.inject.Inject
  *    every committed navigation, and in onStop. A WebView created later (cold
  *    start, process death, eviction, recreation) restores that state, so
  *    Back/Forward work exactly as before the app was closed.
+ *  - Navigation: one Navigation 3 back stack ([AppNavigator]) rooted at the browser and saved
+ *    in the instance state; every other page is an entry with its own saved UI state and
+ *    ViewModels. Back is owned by the navigation host (predictive back) except while the
+ *    browser itself has history to go back through.
+ *  - Startup: the system splash screen is the only launch screen. It is held just until the
+ *    persisted onboarding state (and, for the browser, the tab workspace) is read. The first
+ *    launch shows onboarding ([StartupViewModel] decides from DataStore, never from saved
+ *    state); every later launch opens straight into the browser. Permissions are requested in
+ *    context when a download starts.
  *
  * Lifecycle:
- *  - onCreate: Initialize UI, permissions, and the VM observer.
+ *  - onCreate: Install the splash policy, window observers, and the Compose tree.
  *  - onNewIntent: Route new intents (deep-link, download page).
  *  - onStop: Capture every tab's navigation state and force all coalesced tab
  *    writes to disk, before the process becomes killable.
@@ -212,10 +229,8 @@ class MainActivity : AppCompatActivity() {
 
     // ========== Browser state ==========
 
+    private val startupViewModel: StartupViewModel by viewModels()
     private val browserViewModel: BrowserViewModel by viewModels()
-    private val splashViewModel: SplashViewModel by viewModels()
-    private val onboardingViewModel: OnboardingViewModel by viewModels()
-    private val settingsViewModel: SettingsViewModel by viewModels()
     private val updateCheckViewModel: UpdateCheckViewModel by viewModels()
     private val siteAdBlockMenuViewModel: SiteAdBlockMenuViewModel by viewModels()
 
@@ -240,6 +255,13 @@ class MainActivity : AppCompatActivity() {
     private var tabSwitcherVisible: Boolean = false
 
     /**
+     * Whether the browser page is composed. Another page on top removes it from composition
+     * while its WebView stays attached to the (detached) view tree; it must stay paused then,
+     * including when the app returns to the foreground on that other page.
+     */
+    private var browserRouteShown: Boolean = false
+
+    /**
      * Bumped to force the WebView `AndroidView` factory to run again for the
      * same active tab — used after a renderer-process death recreates the
      * tab's WebView.
@@ -255,7 +277,11 @@ class MainActivity : AppCompatActivity() {
     /** Debounced post-navigation state captures, keyed by tab id. Main thread only. */
     private val sessionCaptureJobs = HashMap<Long, Job>()
 
-    private var requestedRoute by mutableStateOf<String?>(null)
+    /**
+     * Destination requested from outside the composition (a notification intent). Consumed by
+     * the navigation host on its next frame; the back stack itself is saved state.
+     */
+    private var requestedRoute by mutableStateOf<AppRoute?>(null)
     private val updateViewModel: UpdateViewModel by viewModels()
 
     // ========== Context menu Compose state ==========
@@ -272,22 +298,23 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var filterUpdateScheduler: FilterUpdateScheduler
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var refreshRateManager: RefreshRateManager
-    @Inject lateinit var downloadRepository: DownloadRepository
-    @Inject lateinit var faviconRepository: FaviconRepository
+    // Lazy: neither is needed to draw the first frame. The download engine is built on the
+    // first download snackbar, the favicon cache on the first page icon.
+    @Inject lateinit var downloadRepository: dagger.Lazy<DownloadRepository>
+    @Inject lateinit var faviconRepository: dagger.Lazy<FaviconRepository>
 
     // ========== Constants ==========
 
     companion object {
         private const val TAG = "MainActivity"
 
-        private const val ROUTE_SPLASH = "splash"
-        private const val ROUTE_BROWSER = "browser"
-        private const val ROUTE_DOWNLOADS = "downloads"
-        private const val ROUTE_HISTORY = "history"
-        private const val ROUTE_BOOKMARKS = "bookmarks"
-        private const val ROUTE_SETTINGS = "settings"
-        private const val ROUTE_UPDATE = "update"
-        private const val ROUTE_ADBLOCK = "adblock"
+        /**
+         * Upper bound for holding the system splash while the onboarding state (DataStore) and
+         * the tab workspace (Room) are read — normally a few milliseconds each. Past it the app
+         * draws and the rest appears as soon as the reads complete.
+         */
+        private const val SPLASH_MAX_HOLD_MS = 500L
+        private const val SPLASH_EXIT_DURATION_MS = 180L
 
         /** Count shown for tabs whose WebView is not materialized yet. */
         private val NO_BLOCKED_REQUESTS: StateFlow<Int> = MutableStateFlow(0)
@@ -315,11 +342,11 @@ class MainActivity : AppCompatActivity() {
 
     // ========== Lifecycle ==========
 
-    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
-        // Idempotent: also started from the splash; covers launches that skip it.
+        installSplashPolicy(splashScreen)
+        // Once per process; filter lists refresh in the background on the application scope.
         filterUpdateScheduler.start()
 
         enableEdgeToEdge()
@@ -345,144 +372,165 @@ class MainActivity : AppCompatActivity() {
 
         observeHighRefreshRate()
         observeAppLanguage()
+        observeThemeModeForSystemWindows()
         observeKeepScreenOn()
         observeNavigationEvents()
         observeTabListForWebViewCleanup()
 
         setContent {
             NexaTheme {
-                val navController = rememberNavController()
-                val backStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = backStackEntry?.destination?.route
-
-                LaunchedEffect(requestedRoute, currentRoute) {
-                    val route = requestedRoute ?: return@LaunchedEffect
-                    // Deep links arriving while splash is on the stack must not
-                    // push here: the splash→browser transition pops everything
-                    // above splash. The effect restarts once the browser route is
-                    // active and delivers the pending route then.
-                    if (currentRoute == null || currentRoute == ROUTE_SPLASH) return@LaunchedEffect
-                    navController.navigate(route) { launchSingleTop = true }
-                    requestedRoute = null
-                }
-
-                Box(modifier = Modifier.fillMaxSize()) {
-                    AppNavHost(
-                        navController = navController,
-                        startDestination = ROUTE_SPLASH,
-                    ) {
-                        composable(ROUTE_SPLASH) {
-                            SplashRoute(
-                                onReady = {
-                                    navController.navigate(ROUTE_BROWSER) {
-                                        popUpTo(ROUTE_SPLASH) { inclusive = true }
-                                        launchSingleTop = true
-                                    }
-                                },
-                            )
-                        }
-
-                        composable(ROUTE_BROWSER) {
-                            BrowserRoute(
-                                backEnabled = currentRoute == ROUTE_BROWSER,
-                            )
-                        }
-
-                        composable(ROUTE_DOWNLOADS) {
-                            DownloadsNavigation(
-                                onRootBackClick = { navController.popBackStack() },
-                            )
-                        }
-
-                        composable(ROUTE_HISTORY) {
-                            HistoryRoute(
-                                onBackClick = {
-                                    if (!navController.popBackStack()) {
-                                        navController.navigate(ROUTE_BROWSER) { launchSingleTop = true }
-                                    }
-                                },
-                                onOpenUrl = { url ->
-                                    loadUrlInActiveTab(url)
-                                    navController.popBackStack()
-                                },
-                            )
-                        }
-
-                        composable(ROUTE_BOOKMARKS) {
-                            BookmarksRoute(
-                                onBackClick = { navController.popBackStack() },
-                                onOpenUrl = { url ->
-                                    loadUrlInActiveTab(url)
-                                    navController.popBackStack()
-                                },
-                            )
-                        }
-
-                        composable(ROUTE_UPDATE) {
-                            UpdateScreen(
-                                viewModel = updateViewModel,
-                                onBackClick = { navController.popBackStack() },
-                            )
-                        }
-
-                        composable(ROUTE_ADBLOCK) {
-                            AdBlockNavigation(
-                                onRootBackClick = { navController.popBackStack() },
-                            )
-                        }
-
-                        composable(ROUTE_SETTINGS) {
-                            SettingsNavigation(
-                                onRootBackClick = { navController.popBackStack() },
-                                onUpdateClick = {
-                                    navController.navigate(ROUTE_UPDATE) {
-                                        launchSingleTop = true
-                                    }
-                                },
-                            )
-                        }
-
-                    }
-
-
-                    // Available update dialog — shown on browser screen
-                    val showUpdateDialog by updateCheckViewModel.showUpdateDialog.collectAsStateWithLifecycle()
-                    val updateVersion by updateCheckViewModel.version.collectAsStateWithLifecycle()
-
-                    if (currentRoute == ROUTE_BROWSER && showUpdateDialog) {
-                        updateVersion?.let { availableVersion ->
-                            AvailableUpdateDialog(
-                                onDismiss = { updateCheckViewModel.dismissDialog() },
-                                onConfirm = {
-                                    updateCheckViewModel.dismissDialog()
-                                    requestedRoute = ROUTE_UPDATE
-                                },
-                                setShowUpdateDialogOnLaunch = {
-                                    updateCheckViewModel.setShowUpdateDialogOnLaunch(it)
-                                },
-                                newVersion = availableVersion,
-                            )
-                        }
-                    }
-                }
+                val destination by startupViewModel.destination.collectAsStateWithLifecycle()
+                StartupHost(
+                    destination = destination,
+                    modifier = Modifier.fillMaxSize(),
+                    onboarding = {
+                        // Its first frame is complete: nothing loads after it (TTFD).
+                        ReportDrawn()
+                        OnboardingFlow()
+                    },
+                    browser = { BrowserApp() },
+                )
             }
         }
 
-        // Run on every onCreate: intents must survive recreation after
-        // process death, not just the first launch.
-        handleIntent(intent)
+        // A recreated Activity (configuration change, process death) restores its back stack
+        // from saved state, which already reflects the launch intent; only a fresh launch
+        // routes it. Later intents arrive through onNewIntent.
+        if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    /** The browser and every page above it, in the app's single back stack. */
+    @Composable
+    private fun BrowserApp() {
+        // Fully drawn (TTFD) once the tab workspace is restored and the active tab can attach.
+        val workspaceRestored by remember {
+            browserViewModel.workspace.map { it.isRestored }.distinctUntilChanged()
+        }.collectAsStateWithLifecycle(initialValue = false)
+        ReportDrawnWhen { workspaceRestored }
+
+        val navigator = rememberAppNavigator()
+        val currentRoute = navigator.currentRoute
+
+        LaunchedEffect(requestedRoute) {
+            val route = requestedRoute ?: return@LaunchedEffect
+            navigator.navigate(route)
+            requestedRoute = null
+        }
+
+        AppNavDisplay(
+            navigator = navigator,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            entry<AppRoute.Browser>(metadata = BrowserEntryMetadata) {
+                BrowserRoute(
+                    isTopDestination = currentRoute == AppRoute.Browser,
+                    onNavigate = navigator::navigate,
+                )
+            }
+
+            entry<AppRoute.History> {
+                HistoryRoute(
+                    onBackClick = navigator::back,
+                    onOpenUrl = { url ->
+                        loadUrlInActiveTab(url)
+                        navigator.back()
+                    },
+                )
+            }
+
+            entry<AppRoute.Bookmarks> {
+                BookmarksRoute(
+                    onBackClick = navigator::back,
+                    onOpenUrl = { url ->
+                        loadUrlInActiveTab(url)
+                        navigator.back()
+                    },
+                )
+            }
+
+            entry<AppRoute.Update> {
+                UpdateScreen(
+                    viewModel = updateViewModel,
+                    onBackClick = navigator::back,
+                )
+            }
+
+            downloadsEntries(navigator)
+            adBlockEntries(navigator)
+            settingsEntries(
+                navigator = navigator,
+                onUpdateClick = { navigator.navigate(AppRoute.Update) },
+            )
+        }
+
+        // Available update dialog — shown over the browser only.
+        if (currentRoute == AppRoute.Browser) {
+            val showUpdateDialog by updateCheckViewModel.showUpdateDialog.collectAsStateWithLifecycle()
+            val updateVersion by updateCheckViewModel.version.collectAsStateWithLifecycle()
+            val availableVersion = updateVersion
+            if (showUpdateDialog && availableVersion != null) {
+                AvailableUpdateDialog(
+                    onDismiss = updateCheckViewModel::dismissDialog,
+                    onConfirm = {
+                        updateCheckViewModel.dismissDialog()
+                        navigator.navigate(AppRoute.Update)
+                    },
+                    setShowUpdateDialogOnLaunch = updateCheckViewModel::setShowUpdateDialogOnLaunch,
+                    newVersion = availableVersion,
+                )
+            }
+        }
+    }
+
+    /**
+     * System splash screen policy (androidx core-splashscreen; the platform API on Android 12+).
+     *
+     * The splash is held only for what the first meaningful frame needs, and never longer than
+     * [SPLASH_MAX_HOLD_MS]:
+     *  - the persisted onboarding state (one small DataStore read, started in parallel by
+     *    [StartupViewModel]);
+     *  - for the browser, the tab workspace (one Room read), so the first frame is the restored
+     *    browser rather than an empty shell. Onboarding needs nothing else and shows at once.
+     * Nothing else gates startup: no network check, no update check, no artificial delay. The
+     * exit is a short fade over the already drawn destination.
+     */
+    private fun installSplashPolicy(splashScreen: SplashScreen) {
+        val holdUntil = SystemClock.uptimeMillis() + SPLASH_MAX_HOLD_MS
+        // Resolved now, not at the first pre-draw check, so both reads start right away.
+        val destination = startupViewModel.destination
+        val workspace = browserViewModel.workspace
+        splashScreen.setKeepOnScreenCondition {
+            SystemClock.uptimeMillis() < holdUntil && when (destination.value) {
+                StartupDestination.Loading -> true
+                StartupDestination.Onboarding -> false
+                StartupDestination.Browser -> !workspace.value.isRestored
+            }
+        }
+        splashScreen.setOnExitAnimationListener { provider ->
+            // Only the container is animated: the icon view is absent for icon-less splash
+            // styles on some Android versions.
+            provider.view.animate()
+                .alpha(0f)
+                .setDuration(SPLASH_EXIT_DURATION_MS)
+                .setInterpolator(PathInterpolator(0.4f, 0f, 1f, 1f))
+                .withEndAction(provider::remove)
+                .start()
+        }
     }
 
     @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
     @Composable
     private fun BrowserRoute(
-        backEnabled: Boolean,
+        isTopDestination: Boolean,
+        onNavigate: (AppRoute) -> Unit,
         modifier: Modifier = Modifier,
     ) {
         DisposableEffect(Unit) {
+            browserRouteShown = true
             attachedWebView()?.onResume()
             onDispose {
-                // Navigation Compose keeps the Activity resumed while another destination is on
+                browserRouteShown = false
+                // The navigation host keeps the Activity resumed while another destination is on
                 // screen. Pause the attached renderer at the route boundary so hidden pages cannot
                 // continue media, JavaScript, rendering, or network-driven UI work.
                 attachedWebView()?.onPause()
@@ -508,6 +556,7 @@ class MainActivity : AppCompatActivity() {
         }
         val snackbarHostState = remember { SnackbarHostState() }
         val composableScope = rememberCoroutineScope()
+        val downloadPermissionGate = rememberDownloadPermissionGate()
         val downloadSnackbarTitle = stringResource(R.string.browser_download_snackbar_title)
         val downloadSnackbarAction = stringResource(R.string.details)
         val downloadCompleteSnackbarTitle =
@@ -603,7 +652,7 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
                     val terminalDownload = async {
-                        downloadRepository.downloads
+                        downloadRepository.get().downloads
                             .map { downloads ->
                                 downloads.firstOrNull { item ->
                                     item.url == started.url &&
@@ -619,7 +668,7 @@ class MainActivity : AppCompatActivity() {
 
                     val completedItem = select<DownloadItem?> {
                         initialSnackbar.onAwait { result ->
-                            if (result == SnackbarResult.ActionPerformed) launchDownloadsPage()
+                            if (result == SnackbarResult.ActionPerformed) onNavigate(AppRoute.Downloads())
                             // A timeout and a manual dismissal are both reported as Dismissed by
                             // Material. Neither should stop lifecycle observation for the download.
                             terminalDownload.await().takeIf { it.status == DownloadStatus.COMPLETED }
@@ -685,16 +734,25 @@ class MainActivity : AppCompatActivity() {
             onForward = ::goForward,
             onShare = ::shareCurrentPage,
             onNewTab = ::createTabInCurrentMode,
-            onBookmarks = ::launchBookmarksPage,
+            onBookmarks = { onNavigate(AppRoute.Bookmarks) },
             onToggleBookmark = { browserViewModel.toggleBookmark() },
-            onDownloads = ::launchDownloadsPage,
-            onHistory = ::launchHistoryPage,
-            onSettings = ::launchSettingsPage,
-            onAdBlocker = ::launchAdBlockPage,
+            onDownloads = { onNavigate(AppRoute.Downloads()) },
+            onHistory = { onNavigate(AppRoute.History) },
+            onSettings = { onNavigate(AppRoute.Settings()) },
+            onAdBlocker = { onNavigate(AppRoute.AdBlock()) },
             onSetSiteAdBlocking = siteAdBlockMenuViewModel::setSiteEnabled,
         )
 
-        BackHandler(enabled = backEnabled) {
+        // Back is consumed here only while the browser has somewhere to go back to: fullscreen
+        // video, the page's own history, or the opener of a popup tab. Otherwise the callback is
+        // disabled and the system handles Back, which plays the predictive back-to-home
+        // animation (Android 13+) and keeps this task and its state alive (Android 12+).
+        val browserConsumesBack = isTopDestination && (
+            !state.toolbarVisible ||
+                state.backButtonEnabled ||
+                workspace.activeTab?.let { workspace.openerOf(it.id) } != null
+            )
+        BackHandler(enabled = browserConsumesBack) {
             // Fullscreen video: back exits fullscreen first, never
             // navigates history or finishes the activity.
             val activeChromeClient =
@@ -716,7 +774,9 @@ class MainActivity : AppCompatActivity() {
                 // The popup tab is closing; its opener becomes active and is
                 // re-attached with its retained (or restored) exact state.
                 is BackNavigation.ReturnToOpener -> Unit
-                BackNavigation.Exit -> finish()
+                // The enabled state was a frame behind the WebView: leave like the system
+                // would, keeping the task (and every tab's live state) for an instant return.
+                BackNavigation.Exit -> moveTaskToBack(true)
             }
         }
 
@@ -817,6 +877,7 @@ class MainActivity : AppCompatActivity() {
                                                 composableScope.launch { snackbarHostState.showSnackbar(message) }
                                             },
                                             onDownloadStarted = ::showDownloadSnackbar,
+                                            launchDownload = downloadPermissionGate::launch,
                                             onShowBase64Image = { imageDialogDataUrl = it },
                                         )
                                     }
@@ -929,6 +990,8 @@ class MainActivity : AppCompatActivity() {
             if (state.toolbarVisible) {
                 BrowserStatusBarScrim()
             }
+
+            DownloadPermissionRationale(downloadPermissionGate)
 
             imageDialogDataUrl?.let { dataUrl ->
                 Base64ImageDialog(
@@ -1067,27 +1130,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    @Composable
-    private fun SplashRoute(
-        onReady: () -> Unit,
-    ) {
-        val state by splashViewModel.uiState.collectAsStateWithLifecycle()
-
-        when (val s = state) {
-            SplashUiState.Loading -> LoadingScreen()
-            SplashUiState.NoInternet -> NoInternetScreen(
-                onRetry = splashViewModel::onRetryClicked,
-                onProceedAnyway = splashViewModel::onProceedAnywayClicked,
-            )
-            SplashUiState.Onboarding -> OnboardingScreen(
-                onFinish = splashViewModel::onOnboardingFinished,
-                vm = onboardingViewModel,
-                settingsViewModel = settingsViewModel,
-            )
-            SplashUiState.Ready -> LaunchedEffect(s) { onReady() }
-        }
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
@@ -1096,9 +1138,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Only a visible attached tab is interactive. The tab overview deliberately keeps the
-        // covered renderer paused when returning from the background.
-        if (!tabSwitcherVisible) attachedWebView()?.onResume()
+        // Only a visible attached tab is interactive. Another page on top, or the tab overview,
+        // keeps the covered renderer paused when returning from the background.
+        if (browserRouteShown && !tabSwitcherVisible) attachedWebView()?.onResume()
     }
 
     override fun onPause() {
@@ -1163,6 +1205,7 @@ class MainActivity : AppCompatActivity() {
         onRefreshComplete: () -> Unit,
         onShowMessage: (String) -> Unit,
         onDownloadStarted: (StartedDownload) -> Unit,
+        launchDownload: (download: () -> Unit) -> Unit,
         onShowBase64Image: (String) -> Unit,
     ) {
         val currentIsRefreshing by rememberUpdatedState(isRefreshing)
@@ -1170,6 +1213,7 @@ class MainActivity : AppCompatActivity() {
         val currentOnPullRefresh by rememberUpdatedState(onPullRefresh)
         val currentOnRefreshComplete by rememberUpdatedState(onRefreshComplete)
         val currentOnDownloadStarted by rememberUpdatedState(onDownloadStarted)
+        val currentLaunchDownload by rememberUpdatedState(launchDownload)
 
         // Pull-to-refresh bridge: mutable gesture state + latest callbacks in
         // one remembered holder that survives recomposition. The touch
@@ -1194,6 +1238,7 @@ class MainActivity : AppCompatActivity() {
                 pullBridge.onPullRefresh = { currentOnPullRefresh() }
                 view.bindDownloadListener(
                     onDownloadStarted = { currentOnDownloadStarted(it) },
+                    launchDownload = { currentLaunchDownload(it) },
                 )
                 (view.webChromeClient as? NexaWebChromeClient)?.let { client ->
                     client.updateCallbacks(
@@ -1226,6 +1271,7 @@ class MainActivity : AppCompatActivity() {
                         webView = wv,
                         context = this@MainActivity,
                         onDownloadStarted = { currentOnDownloadStarted(it) },
+                        launchDownload = { currentLaunchDownload(it) },
                     ).let { result ->
                         when (result) {
                             ContextMenuResult.None -> Unit
@@ -1343,7 +1389,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            bindDownloadListener(onDownloadStarted = { _ -> })
+            // Rebound with the screen's snackbar and permission gate by the AndroidView update.
+            bindDownloadListener(onDownloadStarted = { _ -> }, launchDownload = { it() })
 
             // ── Content blocking (before the first load) ──────
             val contentBlocker = WebViewContentBlocker(
@@ -1381,6 +1428,11 @@ class MainActivity : AppCompatActivity() {
                     scheduleSessionCapture(tabId)
                 },
                 onRenderProcessGoneEvent = { handleRenderProcessGone(tabId) },
+                // Keeps Back ownership exact: the browser consumes Back only while the page can
+                // go back, so the system back-to-home preview runs as soon as it cannot.
+                onHistoryUpdatedEvent = {
+                    browserViewModel.onHistoryUpdated(tabId, canGoBack(), canGoForward())
+                },
             )
             webViewClient = historyClient
 
@@ -1406,7 +1458,7 @@ class MainActivity : AppCompatActivity() {
                     if (tabId < 0L) {
                         storePrivateTabFavicon(tabId, icon)
                     } else {
-                        faviconRepository.store(url, icon)
+                        faviconRepository.get().store(url, icon)
                     }
                 },
                 isAttachedToUi = { attachedTabId == tabId },
@@ -1447,22 +1499,31 @@ class MainActivity : AppCompatActivity() {
         return webView
     }
 
-    private fun WebView.bindDownloadListener(onDownloadStarted: (StartedDownload) -> Unit) {
+    private fun WebView.bindDownloadListener(
+        onDownloadStarted: (StartedDownload) -> Unit,
+        launchDownload: (download: () -> Unit) -> Unit,
+    ) {
         setDownloadListener { url, _, contentDisposition, mimeType, _ ->
-            DownloadHandler.startDownload(
-                context = context,
-                url = url,
-                mimeType = mimeType,
-                contentDisposition = contentDisposition,
-                userAgent = settings.userAgentString,
-                currentPageUrl = this.url,
-                cookieManager = if (tabItem(tabIdOf(this))?.isPrivate == true) {
-                    privateWebViewProfile.cookieManager(this)
-                } else {
-                    android.webkit.CookieManager.getInstance()
-                },
-                onDownloadStarted = onDownloadStarted,
-            )
+            // Captured now: the page may navigate while storage access is being granted.
+            val userAgent = settings.userAgentString
+            val pageUrl = this.url
+            val cookieManager = if (tabItem(tabIdOf(this))?.isPrivate == true) {
+                privateWebViewProfile.cookieManager(this)
+            } else {
+                android.webkit.CookieManager.getInstance()
+            }
+            launchDownload {
+                DownloadHandler.startDownload(
+                    context = context,
+                    url = url,
+                    mimeType = mimeType,
+                    contentDisposition = contentDisposition,
+                    userAgent = userAgent,
+                    currentPageUrl = pageUrl,
+                    cookieManager = cookieManager,
+                    onDownloadStarted = onDownloadStarted,
+                )
+            }
         }
     }
 
@@ -1923,6 +1984,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Android 12+ draws the splash screen (and the window background) before any app code
+     * runs, using the app's persisted night mode. Mirroring the in-app theme choice there makes
+     * a forced light/dark theme start without a flash of the other one. Older versions draw the
+     * splash with the system mode.
+     */
+    private var appliedNightMode: Int? = null
+
+    private fun observeThemeModeForSystemWindows() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val uiModeManager = getSystemService(UiModeManager::class.java) ?: return
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                appPreferences.themeMode
+                    .map { AppTheme.fromPreferenceValue(it).toUiModeNightMode() }
+                    .distinctUntilChanged()
+                    .collect { nightMode ->
+                        // Persisted by the system: one IPC per change, not per start.
+                        if (appliedNightMode != nightMode) {
+                            uiModeManager.setApplicationNightMode(nightMode)
+                            appliedNightMode = nightMode
+                        }
+                    }
+            }
+        }
+    }
+
     private fun observeKeepScreenOn() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -1943,30 +2031,8 @@ class MainActivity : AppCompatActivity() {
     // ========== Intent Handling ==========
 
     private fun handleIntent(intent: Intent?) {
-        intent ?: return
-        if (isDownloadIntent(intent)) launchDownloadsPage()
-    }
-
-    private fun isDownloadIntent(intent: Intent): Boolean =
-        intent.action == DownloadService.ACTION_OPEN_DOWNLOADS
-
-    private fun launchDownloadsPage() {
-        requestedRoute = ROUTE_DOWNLOADS
-    }
-
-    private fun launchHistoryPage() {
-        requestedRoute = ROUTE_HISTORY
-    }
-
-    private fun launchBookmarksPage() {
-        requestedRoute = ROUTE_BOOKMARKS
-    }
-
-    private fun launchSettingsPage() {
-        requestedRoute = ROUTE_SETTINGS
-    }
-
-    private fun launchAdBlockPage() {
-        requestedRoute = ROUTE_ADBLOCK
+        if (intent?.action == DownloadService.ACTION_OPEN_DOWNLOADS) {
+            requestedRoute = AppRoute.Downloads()
+        }
     }
 }

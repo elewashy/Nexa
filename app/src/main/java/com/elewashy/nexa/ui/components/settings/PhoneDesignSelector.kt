@@ -1,6 +1,5 @@
 package com.elewashy.nexa.ui.components.settings
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -64,10 +63,8 @@ fun <T> PhoneDesignSelectorScreen(
     onOptionSelected: (T) -> Unit,
     onBackClick: () -> Unit,
     preview: @Composable (option: T, modifier: Modifier) -> Unit,
-    bottomBar: @Composable (() -> Unit)? = null,
 ) {
     require(options.isNotEmpty())
-    BackHandler(onBack = onBackClick)
     val adaptive = rememberAdaptiveLayoutInfo()
     val pagerState = rememberPagerState(
         initialPage = options.indexOf(selectedOption).coerceAtLeast(0),
@@ -102,7 +99,6 @@ fun <T> PhoneDesignSelectorScreen(
                         label = "phoneDesignApplyState",
                     ) { applied -> Text(if (applied) appliedLabel else applyLabel) }
                 }
-                bottomBar?.invoke()
             }
         },
     ) { padding ->

@@ -1,11 +1,22 @@
 package com.elewashy.nexa.feature.bookmarks.presentation
 
 import android.content.Context
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.SavedStateHandle
+import com.elewashy.nexa.core.storage.DataStoreAppPreferences
+import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import com.elewashy.nexa.core.data.persistence.NexaDatabase
 import com.elewashy.nexa.feature.bookmarks.data.BookmarkRepositoryImpl
+import com.elewashy.nexa.feature.bookmarks.domain.model.BookmarkViewMode
+import com.elewashy.nexa.feature.bookmarks.domain.model.BookmarkSort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.filter
@@ -32,6 +43,11 @@ class BookmarksViewModelTest {
     private lateinit var db: NexaDatabase
     private lateinit var repository: BookmarkRepositoryImpl
     private lateinit var viewModel: BookmarksViewModel
+    private lateinit var preferences: DataStoreAppPreferences
+    private lateinit var preferencesScope: CoroutineScope
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
 
     @Before
     fun setUp() {
@@ -41,13 +57,57 @@ class BookmarksViewModelTest {
             .allowMainThreadQueries()
             .build()
         repository = BookmarkRepositoryImpl(db.bookmarksDao())
-        viewModel = BookmarksViewModel(repository)
+        preferencesScope = CoroutineScope(dispatcher + SupervisorJob())
+        val preferencesFile = File(temporaryFolder.root, "bookmarks.preferences_pb")
+        preferences = DataStoreAppPreferences(
+            dataStore = PreferenceDataStoreFactory.create(
+                scope = preferencesScope,
+                produceFile = { preferencesFile },
+            ),
+            context = context,
+            appScope = preferencesScope,
+        )
+        viewModel = BookmarksViewModel(repository, preferences, SavedStateHandle())
     }
 
     @After
     fun tearDown() {
+        preferencesScope.cancel()
         db.close()
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `saved state restores the search and the open folder path`() = runTest(dispatcher) {
+        val parent = repository.createFolder("Parent", null)
+        val child = repository.createFolder("Child", parent)
+        val saved = SavedStateHandle(
+            mapOf(
+                "search_query" to "news",
+                "folder_path" to longArrayOf(parent, child),
+            )
+        )
+
+        val restored = BookmarksViewModel(repository, preferences, saved)
+        val folder = restored.currentFolder.filterNotNull().first()
+
+        assertEquals(child, folder.id)
+        assertEquals("news", restored.searchQuery.value)
+        // Going up keeps the saved path in sync for the next process death.
+        restored.navigateUp()
+        assertEquals(listOf(parent), saved.get<LongArray>("folder_path")?.toList())
+    }
+
+    @Test
+    fun `order and layout are persisted settings shared by later screens`() = runTest(dispatcher) {
+        viewModel.setSort(BookmarkSort.TitleAscending)
+        viewModel.setViewMode(BookmarkViewMode.Compact)
+        viewModel.selectedViewMode.first { it == BookmarkViewMode.Compact }
+
+        val reopened = BookmarksViewModel(repository, preferences, SavedStateHandle())
+
+        assertEquals(BookmarkSort.TitleAscending, reopened.selectedSort.first { it != BookmarkSort.Manual })
+        assertEquals(BookmarkViewMode.Compact, reopened.selectedViewMode.first { it != BookmarkViewMode.Visual })
     }
 
     @Test

@@ -34,6 +34,8 @@ class NexaWebViewClient(
     private val onVisitCommittedEvent: (url: String?, isReload: Boolean) -> Unit = { _, _ -> },
     /** The WebView's renderer process died; the host must replace the view. */
     private val onRenderProcessGoneEvent: () -> Unit = {},
+    /** The back/forward list changed (every main-frame commit, including History API ones). */
+    private val onHistoryUpdatedEvent: () -> Unit = {},
 ) : WebViewClient() {
 
     /**
@@ -232,6 +234,7 @@ class NexaWebViewClient(
 
     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
+        onHistoryUpdatedEvent()
         currentPageHost = normalizeUrlHost(url)
         contentBlocker.onUrlCommitted(url)
         onUrlUpdatedEvent(url)

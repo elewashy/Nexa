@@ -204,7 +204,9 @@ fun BookmarksRoute(
     fun navigateBack() {
         if (!viewModel.navigateUp()) onBackClick()
     }
-    BackHandler(onBack = ::navigateBack)
+    // Back first leaves selection, then folder levels. At the root the page's own
+    // predictive back (owned by the navigation host) closes it.
+    BackHandler(enabled = selectionMode || currentFolder != null, onBack = ::navigateBack)
 
     LaunchedEffect(undoState, deletedMessage, undoLabel) {
         if (undoState.isEmpty) return@LaunchedEffect
