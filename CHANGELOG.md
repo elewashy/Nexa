@@ -30,7 +30,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 - **Ad blocking:** Filters load several times faster at startup by restoring the last compiled filter engine instead of recompiling the lists.
 - **Ad blocking:** Changes made by the ad blocker to page functions are now hidden from page scripts, so sites can't detect them.
 - **Updates:** Settings → Updates now only checks for app updates; filter updates are managed from the Ad blocker page.
-
 - **Ad blocking:** Replaced host-only blocking with a full filter engine that understands resource types, `domain=` and party options, exception rules, `$important`, and `$badfilter`, so filters block only the requests they target.
 - **Ad blocking:** The default filter lists now match uBlock Origin's (uBlock filters, badware, privacy, quick fixes, unbreak, EasyList, EasyPrivacy, Peter Lowe's list), plus Liste AR when the app language is Arabic.
 - **Ad blocking:** Filter updates use conditional requests, verify downloads before replacing them, and keep the last working filters when an update fails.
