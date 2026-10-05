@@ -4,12 +4,6 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.1] - 2026-10-05
-
-### Changed
-
-- **Releases:** Release builds are now published by GitHub Actions that run on Node.js 24, so release runs no longer show a Node.js 20 deprecation warning. The app itself is unchanged from 1.4.0.
-
 ## [1.4.0] - 2026-10-05
 
 ### Added
@@ -205,7 +199,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 - Initial release with browsing, ad blocking, safer link handling, large-file downloads, filter updates, and GitHub release updates.
 
-[1.4.1]: https://github.com/elewashy/Nexa/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/elewashy/Nexa/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/elewashy/Nexa/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/elewashy/Nexa/compare/v1.2.2...v1.3.0
