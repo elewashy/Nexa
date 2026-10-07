@@ -20,7 +20,12 @@ class BrowserNavBarActions(
     val onBack: () -> Unit,
     val onForward: () -> Unit,
     val onShare: (String) -> Unit,
+    /** Opens a new tab in the current browsing mode (regular or incognito). */
     val onNewTab: () -> Unit,
+    /** Opens a new regular tab, whatever the current mode (tabs button long-press menu). */
+    val onNewRegularTab: () -> Unit,
+    /** Opens a new incognito tab; null when this WebView cannot isolate incognito browsing. */
+    val onNewPrivateTab: (() -> Unit)?,
     val onBookmarks: () -> Unit,
     val onToggleBookmark: () -> Unit,
     val onDownloads: () -> Unit,

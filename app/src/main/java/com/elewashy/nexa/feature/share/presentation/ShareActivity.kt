@@ -9,19 +9,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
 import com.elewashy.nexa.core.storage.AppPreferences
-import com.elewashy.nexa.feature.share.domain.model.VideoQuality
 import com.elewashy.nexa.ui.permissions.DownloadPermissionRationale
 import com.elewashy.nexa.ui.permissions.rememberDownloadPermissionGate
 import com.elewashy.nexa.ui.theme.NexaTheme
@@ -114,59 +109,21 @@ private fun ShareOverlay(
     sharedText: String?,
     onClose: () -> Unit,
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     // Storage access is requested here, in context, the first time a download is chosen.
     val downloadPermissionGate = rememberDownloadPermissionGate(
         onStorageDenied = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() },
     )
 
-    LaunchedEffect(Unit) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is ShareEvent.Close -> {
-                    // Toast, not a Snackbar: a suspending Snackbar would delay closing.
-                    event.message?.let {
-                        Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-                    }
-                    onClose()
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(sharedText) {
-        viewModel.handleSharedText(sharedText)
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         DownloadPermissionRationale(downloadPermissionGate)
-        if (state.showSheet) {
-            val audioQualities = remember(state.qualities) {
-                state.qualities.filter { it.type == VideoQuality.MediaType.AUDIO }
-            }
-            val videoQualities = remember(state.qualities) {
-                state.qualities.filter { it.type == VideoQuality.MediaType.VIDEO }
-            }
-
-            QualitySelectionSheet(
-                platform = state.platform,
-                audioQualities = audioQualities,
-                videoQualities = videoQualities,
-                isLoading = state.isLoading,
-                images = state.images,
-                selectedImageUrls = state.selectedImageUrls,
-                sizeLoading = state.sizeLoading,
-                onDownload = { quality ->
-                    downloadPermissionGate.launch { viewModel.onQualitySelected(quality) }
-                },
-                onImageToggled = viewModel::onImageSelectionToggled,
-                onAllImagesToggled = viewModel::onAllImagesSelectionToggled,
-                onDownloadImages = {
-                    downloadPermissionGate.launch(viewModel::onDownloadSelectedImages)
-                },
-                onCancel = onClose,
-            )
-        }
+        MediaDownloadSheetHost(
+            url = sharedText,
+            viewModel = viewModel,
+            downloadPermissionGate = downloadPermissionGate,
+            // Toast, not a Snackbar: this window closes right away.
+            onMessage = { message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() },
+            onClose = onClose,
+        )
     }
 }

@@ -83,6 +83,8 @@ import com.elewashy.nexa.R
 import com.elewashy.nexa.core.text.limitCodePoints
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.core.util.UrlDisplay
+import com.elewashy.nexa.feature.browser.domain.model.PageLoadError
+import com.elewashy.nexa.feature.browser.presentation.error.BrowserErrorPagePreview
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
@@ -122,6 +124,8 @@ fun TabSwitcherSheet(
     bookmarkedUrls: Set<String>,
     privateBrowsingAvailable: Boolean,
     thumbnailFor: (Long) -> Bitmap?,
+    /** The error page a tab shows, if its last navigation failed; previewed instead of a thumbnail. */
+    pageLoadErrorFor: (Long) -> PageLoadError?,
     runtimeFaviconFor: (Long) -> Bitmap?,
     onTabClick: (Long) -> Unit,
     onCloseTab: (Long) -> Unit,
@@ -288,6 +292,7 @@ fun TabSwitcherSheet(
                             activeTabId = activeTabId,
                             bookmarkedUrls = bookmarkedUrls,
                             thumbnailFor = thumbnailFor,
+                            pageLoadErrorFor = pageLoadErrorFor,
                             runtimeFaviconFor = runtimeFaviconFor,
                             selectedTabIds = selectedTabIds,
                             selectionMode = selectionMode,
@@ -550,6 +555,7 @@ private fun TabGrid(
     selectionMode: Boolean,
     reorderEnabled: Boolean,
     thumbnailFor: (Long) -> Bitmap?,
+    pageLoadErrorFor: (Long) -> PageLoadError?,
     runtimeFaviconFor: (Long) -> Bitmap?,
     onTabClick: (Long) -> Unit,
     onSelect: (Long) -> Unit,
@@ -642,6 +648,7 @@ private fun TabGrid(
                 reorderEnabled = reorderEnabled,
                 dragging = dragging,
                 thumbnail = thumbnailFor(tab.id),
+                pageLoadError = pageLoadErrorFor(tab.id),
                 runtimeFavicon = runtimeFaviconFor(tab.id),
                 onClick = { onTabClick(tab.id) },
                 onSelect = { onSelect(tab.id) },
@@ -695,6 +702,7 @@ private fun TabCard(
     reorderEnabled: Boolean,
     dragging: Boolean,
     thumbnail: Bitmap?,
+    pageLoadError: PageLoadError?,
     runtimeFavicon: Bitmap?,
     onClick: () -> Unit,
     onSelect: () -> Unit,
@@ -925,7 +933,9 @@ private fun TabCard(
                         .background(MaterialTheme.colorScheme.surfaceContainerLowest),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (thumbnail != null && !thumbnail.isRecycled) {
+                    if (pageLoadError != null) {
+                        BrowserErrorPagePreview(pageLoadError)
+                    } else if (thumbnail != null && !thumbnail.isRecycled) {
                         Image(
                             bitmap = thumbnail.asImageBitmap(),
                             contentDescription = null,

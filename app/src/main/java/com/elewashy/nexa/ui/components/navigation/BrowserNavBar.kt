@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenuPopupPositionProvider
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
@@ -33,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +72,7 @@ import com.elewashy.nexa.ui.icons.Close
 import com.elewashy.nexa.ui.icons.Download
 import com.elewashy.nexa.ui.icons.History
 import com.elewashy.nexa.ui.icons.Home
+import com.elewashy.nexa.ui.icons.Incognito
 import com.elewashy.nexa.ui.icons.MoreHoriz
 import com.elewashy.nexa.ui.icons.MoreVert
 import com.elewashy.nexa.ui.icons.Refresh
@@ -201,7 +206,7 @@ fun BrowserTopNavBar(
                     tabCount = state.tabCount,
                     tint = palette.content,
                     dimensions = dimensions,
-                    onClick = actions.onTabs,
+                    actions = actions,
                 )
                 if (state.moreOptionsVisible) {
                     MoreOptionsAction(
@@ -390,12 +395,16 @@ private fun BrowserNavActions(
             visible = state.linkButtonVisible,
             dimensions = dimensions,
             onClick = onSearchActionClick,
+            // Long-press skips the address preview and opens the search bar directly.
+            onLongClick = actions.onOpenSearch,
+            onLongClickLabel = stringResource(R.string.search_or_enter_address),
         )
         TabCountAction(
             tabCount = state.tabCount,
             tint = primary,
             dimensions = dimensions,
-            onClick = actions.onTabs,
+            actions = actions,
+            menuPositionProvider = menuPositionProvider,
         )
         if (state.moreOptionsVisible) {
             MoreOptionsAction(
@@ -605,27 +614,57 @@ private fun BrowserPageActionsRow(
 
 /**
  * Tab switcher entry point: shows the workspace tab count inside a rounded
- * outline (the classic browser affordance).
+ * outline (the classic browser affordance). Long-press opens a menu to start a
+ * new regular or incognito tab, like Chrome's tab button.
  */
 @Composable
 private fun TabCountAction(
     tabCount: Int,
     tint: Color,
     dimensions: BrowserNavBarDimensions,
-    onClick: () -> Unit,
+    actions: BrowserNavBarActions,
+    menuPositionProvider: DropdownMenuPopupPositionProvider? = null,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     val accessibilityLabel = stringResource(R.string.tabs_count_accessibility, tabCount)
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(dimensions.actionSize)
-            .semantics { contentDescription = accessibilityLabel },
-    ) {
-        AppTabCountIcon(
-            count = tabCount,
-            color = tint,
-            size = dimensions.iconSize,
-        )
+    Box {
+        NavIconButton(
+            onClick = actions.onTabs,
+            onLongClick = { menuExpanded = true },
+            onLongClickLabel = stringResource(R.string.tab_actions),
+            dimensions = dimensions,
+            modifier = Modifier.semantics { contentDescription = accessibilityLabel },
+        ) {
+            AppTabCountIcon(
+                count = tabCount,
+                color = tint,
+                size = dimensions.iconSize,
+            )
+        }
+        AppOverflowMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            popupPositionProvider = menuPositionProvider,
+        ) {
+            AppOverflowMenuItem(
+                text = stringResource(R.string.new_tab),
+                leadingIcon = { Icon(Add, contentDescription = null) },
+                onClick = {
+                    menuExpanded = false
+                    actions.onNewRegularTab()
+                },
+            )
+            actions.onNewPrivateTab?.let { onNewPrivateTab ->
+                AppOverflowMenuItem(
+                    text = stringResource(R.string.new_private_tab),
+                    leadingIcon = { Icon(Incognito, contentDescription = null) },
+                    onClick = {
+                        menuExpanded = false
+                        onNewPrivateTab()
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -660,23 +699,74 @@ private fun NavAction(
     dimensions: BrowserNavBarDimensions,
     enabled: Boolean = true,
     visible: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
 ) {
     if (!visible) {
         return
     }
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .size(dimensions.actionSize)
-            .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA },
-    ) {
+    val content: @Composable () -> Unit = {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = tint,
             modifier = Modifier.size(dimensions.iconSize),
         )
+    }
+    if (onLongClick == null) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier
+                .size(dimensions.actionSize)
+                .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA },
+            content = content,
+        )
+    } else {
+        NavIconButton(
+            onClick = onClick,
+            onLongClick = onLongClick,
+            onLongClickLabel = onLongClickLabel,
+            dimensions = dimensions,
+            enabled = enabled,
+            modifier = Modifier.graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA },
+            content = content,
+        )
+    }
+}
+
+/**
+ * An icon button that also reacts to long-press. Material's [IconButton] has no long-click
+ * callback, so this matches its look (circular state layer, ripple, 48dp target) on top of
+ * `combinedClickable`, which also performs the long-press haptic and exposes [onLongClickLabel]
+ * to accessibility services.
+ */
+@Composable
+private fun NavIconButton(
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onLongClickLabel: String?,
+    dimensions: BrowserNavBarDimensions,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(dimensions.actionSize)
+            .clip(CircleShape)
+            .combinedClickable(
+                interactionSource = null,
+                indication = ripple(),
+                enabled = enabled,
+                role = Role.Button,
+                onLongClickLabel = onLongClickLabel,
+                onLongClick = onLongClick,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 

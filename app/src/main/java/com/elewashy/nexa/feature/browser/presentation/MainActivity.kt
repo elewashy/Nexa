@@ -12,6 +12,7 @@ import android.app.UiModeManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -34,13 +35,16 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -58,15 +62,12 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -89,14 +90,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import androidx.core.splashscreen.SplashScreen
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -104,6 +106,7 @@ import com.elewashy.nexa.R
 import com.elewashy.nexa.core.common.BrowserUrls
 import com.elewashy.nexa.core.display.RefreshRateManager
 import com.elewashy.nexa.core.localization.AppLanguageManager
+import com.elewashy.nexa.core.network.NetworkMonitor
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.presentation.screen.BookmarksRoute
@@ -115,6 +118,8 @@ import com.elewashy.nexa.feature.adblock.data.FilterUpdateScheduler
 import com.elewashy.nexa.feature.adblock.presentation.SiteAdBlockMenuViewModel
 import com.elewashy.nexa.feature.adblock.presentation.adBlockEntries
 import com.elewashy.nexa.ui.components.navigation.BrowserSiteAdBlockState
+import com.elewashy.nexa.feature.browser.presentation.error.BrowserErrorPage
+import com.elewashy.nexa.feature.browser.presentation.error.ErrorPageAction
 import com.elewashy.nexa.feature.browser.presentation.webview.BlockedPageRenderer
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.DownloadHandler
@@ -149,7 +154,8 @@ import com.elewashy.nexa.feature.update.presentation.UpdateViewModel
 import com.elewashy.nexa.feature.update.presentation.UpdateCheckViewModel
 import com.elewashy.nexa.feature.update.presentation.components.AvailableUpdateDialog
 import com.elewashy.nexa.feature.settings.presentation.settings.settingsEntries
-import com.elewashy.nexa.feature.share.presentation.ShareActivity
+import com.elewashy.nexa.feature.share.presentation.MediaDownloadSheetHost
+import com.elewashy.nexa.feature.share.presentation.ShareViewModel
 import com.elewashy.nexa.feature.tabs.domain.model.BrowsingMode
 import com.elewashy.nexa.feature.tabs.domain.model.TabItem
 import com.elewashy.nexa.feature.tabs.domain.usecase.BackNavigation
@@ -298,6 +304,7 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var filterUpdateScheduler: FilterUpdateScheduler
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var refreshRateManager: RefreshRateManager
+    @Inject lateinit var networkMonitor: NetworkMonitor
     // Lazy: neither is needed to draw the first frame. The download engine is built on the
     // first download snackbar, the favicon cache on the first page icon.
     @Inject lateinit var downloadRepository: dagger.Lazy<DownloadRepository>
@@ -623,24 +630,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Media download sniffer: appears only while the active page
-        // offers downloadable media (see ResolveDownloadableMediaUseCase),
-        // until dismissed for the current page load. A new page load
-        // (navigation or refresh) changes the key, so a dismissal never
-        // survives a refresh or navigation. downloadableMediaUrl is already
-        // null while the button is disabled in settings.
+        // The error page of the active tab, if its last navigation failed.
+        val pageLoadError by browserViewModel.activePageLoadError.collectAsStateWithLifecycle()
+        val canLeaveByBack = state.backButtonEnabled ||
+            workspace.activeTab?.let { workspace.openerOf(it.id) } != null
+
+        // Chrome-style auto reload: a tab showing "You're offline" reloads itself as soon as the
+        // device is back online — only while the app is visible.
+        val lifecycleOwner = LocalLifecycleOwner.current
+        LaunchedEffect(lifecycleOwner) {
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                browserViewModel.autoReloadEvents.collect { tabId ->
+                    if (tabId == attachedTabId) reloadErroredPage(allowFormResubmission = false)
+                }
+            }
+        }
+
+        // Media download button: appears only while the active page offers downloadable media
+        // (see ResolveDownloadableMediaUseCase), until hidden for the current page load. A new
+        // page load (navigation or refresh) changes the key, so hiding never survives a refresh
+        // or navigation. downloadableMediaUrl is already null while the button is disabled in
+        // settings.
         val downloadableMediaUrl by browserViewModel.downloadableMediaUrl.collectAsStateWithLifecycle()
-        var snifferDismissMode by rememberSaveable { mutableStateOf(false) }
         var dismissedSnifferKey by rememberSaveable { mutableStateOf<String?>(null) }
         val snifferKey = "${state.pageLoadId}:${state.topSearchBarText}"
+        // The download sheet is hosted here, in the browser's own window, rather than in a separate
+        // translucent activity: a modal sheet over the same window consumes the whole gesture that
+        // dismisses it, so tapping outside the sheet can never reach the page underneath.
+        var mediaDownloadUrl by rememberSaveable { mutableStateOf<String?>(null) }
         val snifferVisible = state.toolbarVisible &&
             !omniboxState.mode.isOverlayVisible &&
             downloadableMediaUrl != null &&
+            pageLoadError == null &&
+            mediaDownloadUrl == null &&
             dismissedSnifferKey != snifferKey
-
-        LaunchedEffect(state.pageLoadId, state.topSearchBarText) {
-            snifferDismissMode = false
-        }
+        val downloadButtonHiddenMessage = stringResource(R.string.download_button_hidden)
+        val undoLabel = stringResource(R.string.undo)
         fun showDownloadSnackbar(started: StartedDownload) {
             composableScope.launch {
                 coroutineScope {
@@ -725,6 +750,32 @@ class MainActivity : AppCompatActivity() {
             refreshCurrentPage()
         }
 
+        fun onErrorPageAction(action: ErrorPageAction) {
+            when (action) {
+                ErrorPageAction.Reload -> reloadErroredPage(allowFormResubmission = false)
+                ErrorPageAction.Resend -> reloadErroredPage(allowFormResubmission = true)
+                ErrorPageAction.GoBack -> goBack()
+                ErrorPageAction.GoHome -> navigateToHome()
+                ErrorPageAction.BackToSafety -> if (canLeaveByBack) goBack() else navigateToHome()
+                ErrorPageAction.NetworkSettings -> openInternetSettings()
+            }
+        }
+
+        fun hideDownloadButtonForPage() {
+            val hiddenKey = snifferKey
+            dismissedSnifferKey = hiddenKey
+            composableScope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = downloadButtonHiddenMessage,
+                    actionLabel = undoLabel,
+                    duration = SnackbarDuration.Short,
+                )
+                if (result == SnackbarResult.ActionPerformed && dismissedSnifferKey == hiddenKey) {
+                    dismissedSnifferKey = null
+                }
+            }
+        }
+
         val navBarActions = BrowserNavBarActions(
             onRefresh = ::startBrowserRefresh,
             onOpenSearch = browserViewModel::openOmniboxSearch,
@@ -734,6 +785,12 @@ class MainActivity : AppCompatActivity() {
             onForward = ::goForward,
             onShare = ::shareCurrentPage,
             onNewTab = ::createTabInCurrentMode,
+            onNewRegularTab = { browserViewModel.newTab() },
+            onNewPrivateTab = if (privateWebViewProfile.isSupported) {
+                { browserViewModel.newPrivateTab() }
+            } else {
+                null
+            },
             onBookmarks = { onNavigate(AppRoute.Bookmarks) },
             onToggleBookmark = { browserViewModel.toggleBookmark() },
             onDownloads = { onNavigate(AppRoute.Downloads()) },
@@ -767,8 +824,7 @@ class MainActivity : AppCompatActivity() {
                 BackNavigation.PageHistory -> safeWebViewOperation { wv ->
                     // Stepping through the history list revisits an
                     // already-recorded page — not a fresh visit.
-                    (wv.webViewClient as? NexaWebViewClient)
-                        ?.suppressNextVisitCommit = true
+                    wv.prepareProgrammaticNavigation(recordVisit = false)
                     wv.goBack()
                 }
                 // The popup tab is closing; its opener becomes active and is
@@ -879,6 +935,7 @@ class MainActivity : AppCompatActivity() {
                                             onDownloadStarted = ::showDownloadSnackbar,
                                             launchDownload = downloadPermissionGate::launch,
                                             onShowBase64Image = { imageDialogDataUrl = it },
+                                            inputBlocked = mediaDownloadUrl != null,
                                         )
                                     }
                                 }
@@ -898,12 +955,24 @@ class MainActivity : AppCompatActivity() {
                                 pullDistancePx = pullDistancePx,
                             )
 
-                            // Simple error state over the page area.
-                            if (state.pageLoadError) {
-                                BrowserLoadErrorOverlay(
-                                    onRetry = ::startBrowserRefresh,
-                                    onBackToHome = ::navigateToHome,
-                                )
+                            // Error page over the tab's failed navigation, replacing WebView's own.
+                            // It appears at once — fading in would show WebView's error document
+                            // through it — and fades out only after the next page has painted
+                            // underneath (see NexaWebViewClient.onPageCommitVisible).
+                            AnimatedContent(
+                                targetState = pageLoadError.takeUnless { showTabSwitcher },
+                                transitionSpec = { EnterTransition.None togetherWith fadeOut() },
+                                contentKey = { it != null },
+                                label = "browserErrorPage",
+                            ) { error ->
+                                if (error != null) {
+                                    BrowserErrorPage(
+                                        error = error,
+                                        canGoBack = canLeaveByBack,
+                                        isReloading = state.progress is ProgressState.Loading,
+                                        onAction = ::onErrorPageAction,
+                                    )
+                                }
                             }
                         }
                     }
@@ -968,17 +1037,10 @@ class MainActivity : AppCompatActivity() {
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomEnd),
             ) {
-                BrowserDownloadSnifferButton(
-                    dismissMode = snifferDismissMode,
-                    onClick = {
-                        if (snifferDismissMode) {
-                            dismissedSnifferKey = snifferKey
-                            snifferDismissMode = false
-                        } else {
-                            downloadableMediaUrl?.let(::launchVideoDownloadSheet)
-                        }
-                    },
-                    onLongClick = { snifferDismissMode = !snifferDismissMode },
+                BrowserDownloadButton(
+                    pageKey = snifferKey,
+                    onClick = { downloadableMediaUrl?.let { mediaDownloadUrl = it } },
+                    onHide = ::hideDownloadButtonForPage,
                     modifier = Modifier.padding(
                         end = 16.dp,
                         bottom = (if (!useSideNavigation && state.toolbarVisible) 76.dp else 16.dp) +
@@ -993,6 +1055,20 @@ class MainActivity : AppCompatActivity() {
 
             DownloadPermissionRationale(downloadPermissionGate)
 
+            mediaDownloadUrl?.let { url ->
+                MediaDownloadSheetHost(
+                    url = url,
+                    // Created on first use, not with the browser, so the extractors stay off the
+                    // startup path; retained by the browser entry for later pages.
+                    viewModel = hiltViewModel<ShareViewModel>(),
+                    downloadPermissionGate = downloadPermissionGate,
+                    onMessage = { message ->
+                        composableScope.launch { snackbarHostState.showSnackbar(message) }
+                    },
+                    onClose = { mediaDownloadUrl = null },
+                )
+            }
+
             imageDialogDataUrl?.let { dataUrl ->
                 Base64ImageDialog(
                     dataUrl = dataUrl,
@@ -1005,12 +1081,14 @@ class MainActivity : AppCompatActivity() {
                 enter = fadeIn() + scaleIn(initialScale = 0.98f),
                 exit = fadeOut() + scaleOut(targetScale = 0.98f),
             ) {
+                val tabPageLoadErrors by browserViewModel.tabPageLoadErrors.collectAsStateWithLifecycle()
                 TabSwitcherSheet(
                     tabs = tabs,
                     activeTabId = activeTabId,
                     bookmarkedUrls = bookmarkedUrls,
                     privateBrowsingAvailable = privateWebViewProfile.isSupported,
                     thumbnailFor = tabThumbnails::get,
+                    pageLoadErrorFor = tabPageLoadErrors::get,
                     runtimeFaviconFor = privateTabFavicons::get,
                     onTabClick = { tabId ->
                         composableScope.launch {
@@ -1078,45 +1156,6 @@ class MainActivity : AppCompatActivity() {
             modifier = Modifier
                 .align(Alignment.TopCenter),
         )
-    }
-
-    @Composable
-    private fun BoxScope.BrowserLoadErrorOverlay(
-        onRetry: () -> Unit,
-        onBackToHome: () -> Unit,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surface),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = stringResource(R.string.page_load_error_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.page_load_error_message),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-                Button(onClick = onRetry) {
-                    Text(text = stringResource(R.string.retry))
-                }
-                TextButton(onClick = onBackToHome) {
-                    Text(text = stringResource(R.string.page_load_error_home))
-                }
-            }
-        }
     }
 
     @Composable
@@ -1207,8 +1246,10 @@ class MainActivity : AppCompatActivity() {
         onDownloadStarted: (StartedDownload) -> Unit,
         launchDownload: (download: () -> Unit) -> Unit,
         onShowBase64Image: (String) -> Unit,
+        inputBlocked: Boolean,
     ) {
         val currentIsRefreshing by rememberUpdatedState(isRefreshing)
+        val currentInputBlocked by rememberUpdatedState(inputBlocked)
         val currentOnPullDistanceChange by rememberUpdatedState(onPullDistanceChange)
         val currentOnPullRefresh by rememberUpdatedState(onPullRefresh)
         val currentOnRefreshComplete by rememberUpdatedState(onRefreshComplete)
@@ -1234,6 +1275,7 @@ class MainActivity : AppCompatActivity() {
                 // installed once, so an in-progress pull gesture is never
                 // reset by recomposition.
                 pullBridge.isRefreshing = { currentIsRefreshing }
+                pullBridge.isInputBlocked = { currentInputBlocked }
                 pullBridge.onPullDistanceChange = { currentOnPullDistanceChange(it) }
                 pullBridge.onPullRefresh = { currentOnPullRefresh() }
                 view.bindDownloadListener(
@@ -1422,7 +1464,10 @@ class MainActivity : AppCompatActivity() {
                     browserViewModel.onNavigationConsumed(tabId, canGoBack(), canGoForward())
                 },
                 onUrlUpdatedEvent = { browserViewModel.onUrlUpdated(tabId, it) },
-                onPageLoadErrorEvent = { browserViewModel.onPageLoadError(tabId) },
+                onPageLoadErrorChanged = { error -> browserViewModel.onPageLoadErrorChanged(tabId, error) },
+                hasNetwork = networkMonitor::hasAnyNetwork,
+                // A blocked page opened in a new tab has nothing to go back to: go home instead.
+                onBlockPageBackUnavailable = { loadHomePage(this) },
                 onVisitCommittedEvent = { url, isReload ->
                     browserViewModel.onVisitCommitted(tabId, url, isReload)
                     scheduleSessionCapture(tabId)
@@ -1481,7 +1526,7 @@ class MainActivity : AppCompatActivity() {
             // ── Initial load / navigation-state restore ───────
             // Restoring reloads the current entry, and an initial load is
             // programmatic: neither is a fresh user visit.
-            historyClient.suppressNextVisitCommit = true
+            prepareProgrammaticNavigation(recordVisit = false)
             val restored = sessionState?.let { WebViewSessionState.restore(this, it) }
             when {
                 restored == null -> loadUrl(persistedUrl)
@@ -1544,6 +1589,12 @@ class MainActivity : AppCompatActivity() {
      */
     private class PullToRefreshTouchBridge {
         var isRefreshing: () -> Boolean = { false }
+
+        /** A modal surface (the download sheet) is open over the page. */
+        var isInputBlocked: () -> Boolean = { false }
+
+        /** The current gesture began while input was blocked; drop it until it ends. */
+        var swallowGesture = false
         var onPullDistanceChange: (Float) -> Unit = {}
         var onPullRefresh: () -> Unit = {}
 
@@ -1563,6 +1614,20 @@ class MainActivity : AppCompatActivity() {
         val triggerDistance = BROWSER_REFRESH_TRIGGER_DP * density
 
         setOnTouchListener { _, event ->
+            // A gesture that started while a modal sheet covered the page belongs to that sheet,
+            // never to the page: drop all of it, including the parts that arrive after the sheet
+            // has gone, so dismissing the sheet can never click whatever lies beneath.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                bridge.swallowGesture = bridge.isInputBlocked()
+            }
+            if (bridge.swallowGesture) {
+                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+                ) {
+                    bridge.swallowGesture = false
+                }
+                return@setOnTouchListener true
+            }
             if (bridge.isRefreshing()) return@setOnTouchListener false
 
             when (event.actionMasked) {
@@ -1659,19 +1724,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Opens the normal download sheet for [url] via the share flow. */
-    private fun launchVideoDownloadSheet(url: String) {
-        startActivity(
-            Intent(this, ShareActivity::class.java)
-                .setAction(Intent.ACTION_SEND)
-                .setTypeAndNormalize("text/plain")
-                .putExtra(Intent.EXTRA_TEXT, url)
-        )
-    }
-
     private fun captureAttachedTabThumbnail() {
         val tabId = attachedTabId ?: return
         val webView = webViews[tabId] ?: return
+        // The overview previews an error page itself; the WebView only holds its own error
+        // document under it, which must not be captured (nor kept from an earlier page).
+        if (tabId in browserViewModel.tabPageLoadErrors.value) {
+            tabThumbnails.remove(tabId)?.takeUnless { it.isRecycled }?.recycle()
+            return
+        }
         if (webView.width <= 0 || webView.height <= 0) return
         runCatching {
             val scale = minOf(
@@ -1849,7 +1910,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         safeWebViewOperation { wv ->
-            wv.post { wv.loadUrl(url) }
+            wv.post {
+                wv.prepareProgrammaticNavigation(recordVisit = true)
+                wv.loadUrl(url)
+            }
         }
     }
 
@@ -1882,14 +1946,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigateToHome() {
-        val homeUrl = browserViewModel.selectedSearchEngine.value.homeUrl
+        safeWebViewOperation { wv -> wv.post { loadHomePage(wv) } }
+    }
+
+    /** Loads the home page (custom, or the search engine's) in [webView]. */
+    private fun loadHomePage(webView: WebView) {
+        // Programmatic home load — not a user visit.
+        webView.prepareProgrammaticNavigation(recordVisit = false)
+        webView.loadUrl(browserViewModel.homePageUrl.value)
+    }
+
+    /**
+     * Retries the failed navigation shown by the active tab's error page. With
+     * [allowFormResubmission] the user confirmed resending the form data of a POST result.
+     */
+    private fun reloadErroredPage(allowFormResubmission: Boolean) {
+        val tabId = attachedTabId ?: return
+        browserViewModel.onReloadRequested(tabId)
         safeWebViewOperation { wv ->
-            wv.post {
-                // Programmatic home load — not a user visit.
-                (wv.webViewClient as? NexaWebViewClient)?.suppressNextVisitCommit = true
-                wv.loadUrl(homeUrl)
-            }
+            val client = wv.webViewClient as? NexaWebViewClient
+            client?.onProgrammaticNavigation()
+            if (allowFormResubmission) client?.allowNextFormResubmission()
+            wv.reload()
         }
+    }
+
+    /** The system's connectivity panel (Android 10+), or the wireless settings before it. */
+    private fun openInternetSettings() {
+        val panel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+        } else {
+            Intent(Settings.ACTION_WIRELESS_SETTINGS)
+        }
+        try {
+            startActivity(panel)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "No connectivity settings screen", e)
+            runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        }
+    }
+
+    /**
+     * Marks the next load of this WebView as app-initiated (typed URL, Home, reload, history
+     * step): errors reported for earlier requests are discarded, and with [recordVisit] false the
+     * commit is not recorded as a fresh history visit.
+     */
+    private fun WebView.prepareProgrammaticNavigation(recordVisit: Boolean) {
+        val client = webViewClient as? NexaWebViewClient ?: return
+        client.onProgrammaticNavigation()
+        if (!recordVisit) client.suppressNextVisitCommit = true
     }
 
     private fun refreshCurrentPage() {
@@ -1900,6 +2005,7 @@ class MainActivity : AppCompatActivity() {
             if (hasLoadedPage) {
                 // A page is already loaded: reload() preserves proper reload
                 // semantics (cache validation, POST handling).
+                (wv.webViewClient as? NexaWebViewClient)?.onProgrammaticNavigation()
                 wv.reload()
             } else {
                 // Initial/about:blank state: fall back to the persisted URL.
@@ -1907,8 +2013,7 @@ class MainActivity : AppCompatActivity() {
                 if (URLUtil.isValidUrl(targetUrl)) {
                     wv.post {
                         // Reload semantics, not a fresh visit.
-                        (wv.webViewClient as? NexaWebViewClient)
-                            ?.suppressNextVisitCommit = true
+                        wv.prepareProgrammaticNavigation(recordVisit = false)
                         wv.loadUrl(targetUrl)
                     }
                 }
@@ -1931,7 +2036,7 @@ class MainActivity : AppCompatActivity() {
     fun goForward() {
         safeWebViewOperation { wv ->
             if (wv.canGoForward()) {
-                (wv.webViewClient as? NexaWebViewClient)?.suppressNextVisitCommit = true
+                wv.prepareProgrammaticNavigation(recordVisit = false)
                 wv.goForward()
             }
         }

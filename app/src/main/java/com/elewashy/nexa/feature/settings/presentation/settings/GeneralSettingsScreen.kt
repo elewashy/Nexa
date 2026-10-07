@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.elewashy.nexa.R
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.HomePage
 import com.elewashy.nexa.feature.browser.presentation.iconRes
 import com.elewashy.nexa.feature.browser.presentation.labelRes
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
@@ -39,6 +40,8 @@ import com.elewashy.nexa.ui.components.settings.SettingsLoadingContent
 import com.elewashy.nexa.ui.components.settings.SwitchSettingsItem
 import com.elewashy.nexa.ui.icons.ArrowBackFilled
 import com.elewashy.nexa.ui.icons.Download
+import com.elewashy.nexa.ui.icons.Globe
+import com.elewashy.nexa.ui.icons.Home
 import com.elewashy.nexa.ui.icons.Language
 import com.elewashy.nexa.ui.icons.Palette
 import com.elewashy.nexa.ui.icons.Search
@@ -53,12 +56,14 @@ fun GeneralSettingsScreen(
     onCustomizeThemeClick: () -> Unit,
     onLanguageClick: () -> Unit,
     onSearchEngineClick: () -> Unit,
+    onHomePageClick: () -> Unit,
     viewModel: SettingsViewModel,
 ) {
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
     val selectedSearchEngine by viewModel.selectedSearchEngine.collectAsStateWithLifecycle()
+    val homePage by viewModel.homePage.collectAsStateWithLifecycle()
     val loadedSettings = settings
     val navigationBarPosition = BrowserNavigationBarPosition.fromStoredValue(
         loadedSettings?.browserNavigationBarPosition ?: BrowserNavigationBarPosition.Bottom.storedValue
@@ -164,6 +169,28 @@ fun GeneralSettingsScreen(
                     supportingContent = stringResource(selectedSearchEngine.labelRes),
                     leadingContent = { ExpressiveListIcon(painter = painterResource(selectedSearchEngine.iconRes)) },
                     onClick = onSearchEngineClick,
+                )
+            }
+
+            ListSection(
+                modifier = Modifier.widthIn(max = adaptiveInfo.listMaxWidth),
+                title = stringResource(R.string.browsing),
+                leadingContent = {
+                    Icon(
+                        Globe,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            ) {
+                SettingsListItem(
+                    headlineContent = stringResource(R.string.home_page),
+                    supportingContent = when (val page = homePage) {
+                        is HomePage.Custom -> page.url
+                        HomePage.SearchEngineHome, null -> stringResource(R.string.home_page_search_engine)
+                    },
+                    leadingContent = { ExpressiveListIcon(icon = Home) },
+                    onClick = onHomePageClick,
                 )
             }
 

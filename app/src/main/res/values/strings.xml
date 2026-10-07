@@ -37,6 +37,7 @@
     <string name="tabs_count_accessibility">Tabs: %1$d</string>
     <string name="private_tabs">Incognito tabs</string>
     <string name="new_private_tab">New incognito tab</string>
+    <string name="tab_actions">Tab options</string>
     <string name="search_tabs">Search your tabs</string>
     <string name="tab_switcher_more">Tab options</string>
     <string name="close_all_tabs">Close all tabs</string>
@@ -391,9 +392,61 @@
     <string name="share_error_unsupported">This link isn’t supported</string>
 
     <!-- Browser load error -->
-    <string name="page_load_error_title">Can\'t load page</string>
-    <string name="page_load_error_message">Check your internet connection and try again.</string>
-    <string name="page_load_error_home">Back to home</string>
+    <string name="error_page_title_offline">You\'re offline</string>
+    <string name="error_page_title_unreachable">This site can\'t be reached</string>
+    <string name="error_page_title_not_working">This page isn\'t working</string>
+    <string name="error_page_title_not_private">Your connection is not private</string>
+    <string name="error_page_title_insecure">This site can\'t provide a secure connection</string>
+    <string name="error_page_title_proxy">Can\'t connect to the proxy server</string>
+    <string name="error_page_title_invalid_address">This address can\'t be opened</string>
+    <string name="error_page_title_file_not_found">Your file couldn\'t be accessed</string>
+    <string name="error_page_title_resubmission">Confirm form resubmission</string>
+    <string name="error_page_title_blocked">This page has been blocked</string>
+    <string name="error_page_title_dangerous">Dangerous site ahead</string>
+    <string name="error_page_message_offline">Check your internet connection. This page reloads automatically when you\'re back online.</string>
+    <string name="error_page_message_host_not_found">%1$s\'s server address could not be found.</string>
+    <string name="error_page_message_refused">%1$s refused to connect.</string>
+    <string name="error_page_message_interrupted">The connection to %1$s was interrupted.</string>
+    <string name="error_page_message_timed_out">%1$s took too long to respond.</string>
+    <string name="error_page_message_invalid_response">%1$s didn\'t send any data or sent an invalid response.</string>
+    <string name="error_page_message_redirects">%1$s redirected you too many times.</string>
+    <string name="error_page_message_not_private">Attackers might be trying to steal your information from %1$s (for example, passwords, messages or credit cards).</string>
+    <string name="error_page_message_insecure">%1$s sent an invalid response or uses an unsupported security protocol.</string>
+    <string name="error_page_message_proxy">Something is wrong with the proxy server, or its address is incorrect.</string>
+    <string name="error_page_message_invalid_address">The web address isn\'t valid or uses a format that can\'t be opened here.</string>
+    <string name="error_page_message_file_not_found">It may have been moved, edited or deleted.</string>
+    <string name="error_page_message_resubmission">This page needs information you entered earlier. Resending it repeats any action the page took, like a purchase.</string>
+    <string name="error_page_message_blocked">Access to %1$s was blocked.</string>
+    <string name="error_page_message_dangerous">Google Safe Browsing recently detected harmful content on %1$s. Visiting it could harm your device or expose your information.</string>
+    <string name="error_page_message_generic">%1$s can\'t be loaded right now.</string>
+    <string name="error_page_certificate_date">Its security certificate has expired or isn\'t valid yet.</string>
+    <string name="error_page_certificate_name">Its security certificate was issued for a different site.</string>
+    <string name="error_page_certificate_untrusted">Its security certificate isn\'t trusted by your device.</string>
+    <string name="error_page_certificate_invalid">Its security certificate isn\'t valid.</string>
+    <string name="error_page_try">Try:</string>
+    <string name="error_page_suggestion_connection">Checking your Wi‑Fi or mobile data connection</string>
+    <string name="error_page_suggestion_airplane_mode">Turning off airplane mode</string>
+    <string name="error_page_suggestion_address">Checking the address for typos</string>
+    <string name="error_page_suggestion_dns">Checking your Private DNS, VPN or proxy settings</string>
+    <string name="error_page_suggestion_later">Reloading the page in a few minutes</string>
+    <string name="error_page_suggestion_cookies">Clearing this site\'s cookies</string>
+    <string name="error_page_suggestion_clock">Making sure your device\'s date and time are correct</string>
+    <string name="error_page_suggestion_site_owner">Contacting the site owner</string>
+    <string name="error_page_reload">Reload</string>
+    <string name="error_page_resend">Resend</string>
+    <string name="error_page_go_back">Go back</string>
+    <string name="error_page_go_home">Go to home page</string>
+    <string name="error_page_back_to_safety">Back to safety</string>
+    <string name="error_page_network_settings">Internet settings</string>
+    <string name="error_page_show_details">Details</string>
+    <string name="error_page_hide_details">Hide details</string>
+    <string name="error_page_detail_error_code">Error code</string>
+    <string name="error_page_detail_address">Address</string>
+    <string name="error_page_detail_issued_to">Issued to</string>
+    <string name="error_page_detail_issued_by">Issued by</string>
+    <string name="error_page_detail_valid_from">Valid from</string>
+    <string name="error_page_detail_valid_until">Valid until</string>
+    <string name="error_page_reloading">Reloading</string>
 
     <plurals name="history_entries_deleted">
         <item quantity="one">%d history entry deleted</item>
@@ -496,8 +549,12 @@
 
     <!-- Content blocking -->
     <string name="adblock_page_blocked_title">Page blocked</string>
-    <string name="adblock_page_blocked_message">Nexa blocked this page because a filter in your content-blocking lists marks it as an ad, tracker or malicious site.</string>
-    <string name="adblock_page_blocked_filter">Matching filter:</string>
+    <string name="adblock_page_blocked_heading">This page was blocked</string>
+    <string name="adblock_page_blocked_message">Nexa\'s ad blocker stopped this page from opening because one of your filter lists marks it as an ad, tracker or malicious site.</string>
+    <string name="adblock_page_blocked_details">Details</string>
+    <string name="adblock_page_blocked_address">Address</string>
+    <string name="adblock_page_blocked_filter">Matching filter</string>
+    <string name="adblock_page_blocked_proceed_warning">Only continue if you trust this site. It may show ads, track your activity or harm your device.</string>
     <string name="adblock_page_blocked_back">Go back</string>
     <string name="adblock_page_blocked_proceed">Proceed anyway</string>
     <string name="filter_update_interval">Automatic filter updates</string>
@@ -679,4 +736,15 @@
         <item quantity="one">%s blocked on this page</item>
         <item quantity="other">%s blocked on this page</item>
     </plurals>
+    <string name="browsing">Browsing</string>
+    <string name="home_page">Home page</string>
+    <string name="home_page_description">Opens when you tap Home and when you open a new tab</string>
+    <string name="home_page_search_engine">Search engine home page</string>
+    <string name="home_page_custom">Custom page</string>
+    <string name="home_page_custom_label">Web address</string>
+    <string name="home_page_custom_placeholder" translatable="false">example.com</string>
+    <string name="home_page_invalid_url">Enter a valid web address, like example.com</string>
+    <string name="download_button_content_description">Download media from this page</string>
+    <string name="download_button_hide">Hide for this page</string>
+    <string name="download_button_hidden">Download button hidden for this page</string>
 </resources>

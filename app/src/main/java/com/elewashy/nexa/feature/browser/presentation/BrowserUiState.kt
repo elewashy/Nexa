@@ -14,8 +14,6 @@ data class BrowserUiState(
     val progress: ProgressState = ProgressState.Hidden,
     val keepScreenOn: Boolean = false,
     val pageLoadId: Int = 0,
-    /** Main-frame load failed; lets the UI layer render an error page. */
-    val pageLoadError: Boolean = false,
 )
 
 sealed class ProgressState {

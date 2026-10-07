@@ -8,7 +8,10 @@ import com.elewashy.nexa.feature.adblock.domain.model.FilterListCategory
  *
  * The default selection mirrors uBO's: uBO filters (ads, badware, privacy,
  * quick fixes, unbreak), EasyList, EasyPrivacy, Peter Lowe's list and the
- * Online Malicious URL Blocklist, plus Nexa's own list. Regional lists are
+ * Online Malicious URL Blocklist, plus Nexa's own list. It also enables both
+ * AdGuard ad lists, which uBO leaves off: "AdGuard – Ads" is the build without
+ * EasyList rules, so it complements EasyList rather than duplicating it, and
+ * "AdGuard – Mobile Ads" targets the mobile ad networks a phone browser meets. Regional lists are
  * selected by default when their language matches the UI language, as uBO
  * does on first install.
  *
@@ -139,12 +142,14 @@ enum class BuiltInFilterList(
         remoteUrl = "https://filters.adtidy.org/extension/ublock/filters/2_without_easylist.txt",
         title = "AdGuard – Ads",
         category = FilterListCategory.Ads,
+        defaultEnabled = true,
     ),
     AdGuardMobileAds(
         cacheFileName = "filters/adguard_mobile.txt",
         remoteUrl = "https://filters.adtidy.org/extension/ublock/filters/11.txt",
         title = "AdGuard – Mobile Ads",
         category = FilterListCategory.Ads,
+        defaultEnabled = true,
     ),
     UrlTrackingProtection(
         cacheFileName = "filters/adguard_spyware_url.txt",

@@ -27,7 +27,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -72,6 +74,13 @@ class ShareViewModel @Inject constructor(
 
     private val downloadStarted = AtomicBoolean(false)
 
+    /** Extraction and size lookups of the current sheet session. */
+    private var sessionJob: Job? = null
+
+    /**
+     * Opens the sheet for the first URL in [text]. Each call starts a new session, so one
+     * ViewModel can serve the browser's download button for page after page.
+     */
     fun handleSharedText(text: String?) {
         val url = text?.let(SharePlatformDetector::extractFirstUrl)
         if (url == null) {
@@ -79,11 +88,14 @@ class ShareViewModel @Inject constructor(
             return
         }
 
-        // A recreated Activity (locale change) re-delivers the same share to this retained
-        // ViewModel: keep the loaded sheet instead of extracting again.
-        if (_uiState.value.sharedUrl == url) return
+        // A recreated host (locale change) re-delivers the same URL to this retained ViewModel:
+        // keep the open sheet instead of extracting again.
+        val current = _uiState.value
+        if (current.sharedUrl == url && current.showSheet) return
+        sessionJob?.cancel()
+        downloadStarted.set(false)
         _uiState.value = ShareUiState(sharedUrl = url, isLoading = true, showSheet = true)
-        viewModelScope.launch {
+        sessionJob = viewModelScope.launch {
             // The repository is main-safe and reports failures as results.
             val result = videoExtractorRepository.extract(url)
             if (!result.success || !result.hasMedia) {
@@ -107,8 +119,18 @@ class ShareViewModel @Inject constructor(
                 )
             }
 
-            fetchFileSizesAsync(qualities, referer = url)
+            fetchFileSizes(qualities, referer = url)
         }
+    }
+
+    /**
+     * The user dismissed the sheet without downloading: stop the session's work and forget it,
+     * so the next open starts fresh. A download already started is not affected.
+     */
+    fun onSheetDismissed() {
+        sessionJob?.cancel()
+        sessionJob = null
+        _uiState.value = ShareUiState()
     }
 
     /** Tells the user what went wrong in terms they can act on. */
@@ -120,7 +142,7 @@ class ShareViewModel @Inject constructor(
         }
     )
 
-    private fun fetchFileSizesAsync(qualities: List<VideoQuality>, referer: String) {
+    private suspend fun fetchFileSizes(qualities: List<VideoQuality>, referer: String) {
         val urlsToFetch = qualities
             .filter {
                 it.size == null
@@ -134,7 +156,7 @@ class ShareViewModel @Inject constructor(
 
         _uiState.update { it.copy(sizeLoading = true) }
 
-        viewModelScope.launch {
+        coroutineScope {
             urlsToFetch.map { url ->
                 async(Dispatchers.IO) {
                     url to videoExtractorRepository.fetchFileSize(url, referer)
@@ -152,8 +174,8 @@ class ShareViewModel @Inject constructor(
                     }
                 }
             }
-            _uiState.update { it.copy(sizeLoading = false) }
         }
+        _uiState.update { it.copy(sizeLoading = false) }
     }
 
     fun onQualitySelected(quality: VideoQuality) {

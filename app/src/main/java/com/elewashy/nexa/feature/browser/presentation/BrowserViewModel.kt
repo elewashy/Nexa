@@ -4,14 +4,18 @@ import androidx.core.net.toUri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.elewashy.nexa.core.network.NetworkMonitor
 import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.util.SafeUrls.isSafeLoadableUrl
 import com.elewashy.nexa.feature.bookmarks.data.BookmarkRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchHistoryRepository
 import com.elewashy.nexa.feature.browser.data.search.SearchSuggestionRepository
+import com.elewashy.nexa.feature.browser.domain.model.PageLoadError
+import com.elewashy.nexa.feature.browser.domain.model.PageLoadErrorType
 import com.elewashy.nexa.feature.browser.domain.model.PageMediaProbeResult
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.browser.domain.usecase.ResolveDownloadableMediaUseCase
+import com.elewashy.nexa.feature.browser.domain.usecase.ResolveHomePageUseCase
 import com.elewashy.nexa.feature.history.data.HistoryRepository
 import com.elewashy.nexa.feature.history.domain.model.HistorySuggestion
 import com.elewashy.nexa.feature.share.data.MediaAvailabilityRepository
@@ -40,7 +44,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -48,6 +54,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -77,7 +84,9 @@ class BrowserViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val resolveBackNavigation: ResolveBackNavigationUseCase,
     private val resolveDownloadableMedia: ResolveDownloadableMediaUseCase,
+    private val resolveHomePage: ResolveHomePageUseCase,
     private val mediaAvailabilityRepository: MediaAvailabilityRepository,
+    private val networkMonitor: NetworkMonitor,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -92,6 +101,51 @@ class BrowserViewModel @Inject constructor(
 
     /** Atomic immutable workspace snapshot consumed by the browser UI. */
     val workspace: StateFlow<TabWorkspaceState> = tabRepository.workspace
+
+    /**
+     * The error page each tab currently shows, if any; pruned when tabs close. Kept per tab, not
+     * only for the active one, so a background tab that failed still explains why when the user
+     * switches to it.
+     */
+    private val pageLoadErrors = MutableStateFlow<Map<Long, PageLoadError>>(emptyMap())
+
+    /**
+     * The error page shown by each tab, by tab id. The tab overview previews these tabs with
+     * their error instead of a screenshot of the WebView, which would show WebView's own page.
+     */
+    val tabPageLoadErrors: StateFlow<Map<Long, PageLoadError>> = pageLoadErrors.asStateFlow()
+
+    /** The failure shown by the active tab, or null while it displays a real page. */
+    val activePageLoadError: StateFlow<PageLoadError?> = combine(
+        pageLoadErrors,
+        tabRepository.workspace.map { it.activeTabId }.distinctUntilChanged(),
+    ) { errors, activeTabId -> activeTabId?.let(errors::get) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Tab ids to reload because connectivity came back while they showed "No internet" — the
+     * auto-reload Chrome performs. Requires an offline → online transition, so a stale "online"
+     * reading can never cause a reload loop.
+     */
+    val autoReloadEvents: Flow<Long> = combine(
+        pageLoadErrors,
+        tabRepository.workspace.map { it.activeTabId }.distinctUntilChanged(),
+    ) { errors, activeTabId ->
+        activeTabId?.takeIf { errors[it]?.type == PageLoadErrorType.NoInternet }
+    }
+        .distinctUntilChanged()
+        .flatMapLatest { tabId ->
+            if (tabId == null) {
+                emptyFlow()
+            } else {
+                networkMonitor.online
+                    .dropWhile { it }
+                    .filter { it }
+                    .take(1)
+                    .map { tabId }
+            }
+        }
 
     /** Latest in-page media probe result per tab; pruned when tabs close. */
     private val pageMediaProbes = MutableStateFlow<Map<Long, PageMediaProbeResult>>(emptyMap())
@@ -150,6 +204,14 @@ class BrowserViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, SearchEngine.DEFAULT)
 
     /**
+     * Address opened by the Home action: the custom home page, or the selected engine's.
+     * Shared eagerly for the same reason as [selectedSearchEngine]: the Activity's Home action
+     * reads `.value` synchronously.
+     */
+    val homePageUrl: StateFlow<String> = resolveHomePage.homePageUrl
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SearchEngine.DEFAULT.homeUrl)
+
+    /**
      * One-shot navigation events emitted by [onUrlCommitted]. The Activity
      * loads each URL into the ACTIVE tab's WebView. CONFLATED on purpose:
      * a rapid double-tap collapses into a single navigation.
@@ -183,6 +245,7 @@ class BrowserViewModel @Inject constructor(
         viewModelScope.launch {
             tabRepository.workspace.collect { workspace ->
                 prunePageMediaProbes(workspace)
+                prunePageLoadErrors(workspace)
                 val activeId = workspace.activeTabId
                 val activeTab = workspace.activeTab
                 _uiState.update { current ->
@@ -195,7 +258,6 @@ class BrowserViewModel @Inject constructor(
                         backButtonEnabled = if (activeChanged) false else current.backButtonEnabled,
                         forwardButtonEnabled = if (activeChanged) false else current.forwardButtonEnabled,
                         progress = if (activeChanged) ProgressState.Hidden else current.progress,
-                        pageLoadError = if (activeChanged) false else current.pageLoadError,
                         toolbarVisible = if (activeChanged) true else current.toolbarVisible,
                         keepScreenOn = if (activeChanged) false else current.keepScreenOn,
                         isCurrentPageBookmarked = if (activeChanged) false
@@ -286,7 +348,6 @@ class BrowserViewModel @Inject constructor(
                 // History affordances intentionally NOT reset here — they
                 // keep their previous values until onPageFinished refreshes
                 // them, so the buttons don't flicker on every load.
-                pageLoadError = false,
                 pageLoadId = it.pageLoadId + 1
             )
         }
@@ -339,9 +400,28 @@ class BrowserViewModel @Inject constructor(
         _uiState.update { it.copy(topSearchBarText = url ?: "") }
     }
 
-    fun onPageLoadError(tabId: Long) {
+    /**
+     * The error page shown by [tabId] changed (null once a real page replaced it). Recorded for
+     * every tab; the active tab's error is exposed through [activePageLoadError].
+     */
+    fun onPageLoadErrorChanged(tabId: Long, error: PageLoadError?) {
+        pageLoadErrors.update { errors ->
+            when {
+                error == null && tabId !in errors -> errors
+                error == null -> errors - tabId
+                errors[tabId] == error -> errors
+                else -> errors + (tabId to error)
+            }
+        }
+        if (error != null && tabId == activeTabId) {
+            _uiState.update { it.copy(progress = ProgressState.Hidden) }
+        }
+    }
+
+    /** The user asked to retry the active page; shows progress until the new attempt settles. */
+    fun onReloadRequested(tabId: Long) {
         if (tabId != activeTabId) return
-        _uiState.update { it.copy(pageLoadError = true, progress = ProgressState.Hidden) }
+        _uiState.update { it.copy(progress = ProgressState.Loading(0)) }
     }
 
     /**
@@ -392,7 +472,6 @@ class BrowserViewModel @Inject constructor(
                 backButtonEnabled = canGoBack,
                 forwardButtonEnabled = canGoForward,
                 progress = ProgressState.Hidden,
-                pageLoadError = false,
                 toolbarVisible = true,
                 pageLoadId = it.pageLoadId + 1,
             )
@@ -410,6 +489,14 @@ class BrowserViewModel @Inject constructor(
     /** [tabId]'s WebView cannot run the probe; fall back to URL-only detection. */
     fun onPageMediaProbeUnavailable(tabId: Long) {
         pageMediaProbes.update { it + (tabId to PageMediaProbeResult.Unavailable) }
+    }
+
+    private fun prunePageLoadErrors(workspace: TabWorkspaceState) {
+        if (!workspace.isRestored) return
+        val liveIds = workspace.tabs.mapTo(HashSet()) { it.id }
+        pageLoadErrors.update { errors ->
+            if (errors.keys.all(liveIds::contains)) errors else errors.filterKeys(liveIds::contains)
+        }
     }
 
     private fun prunePageMediaProbes(workspace: TabWorkspaceState) {
@@ -452,8 +539,7 @@ class BrowserViewModel @Inject constructor(
     private fun createTab(mode: BrowsingMode) = viewModelScope.launch {
         // Read the persisted choice directly so a tab opened right after a cold
         // start never falls back to the default before the StateFlow loads.
-        val engine = SearchEngine.fromStoredValue(appPreferences.selectedSearchEngine.first())
-        val id = tabRepository.newTab(engine.homeUrl, mode)
+        val id = tabRepository.newTab(resolveHomePage(), mode)
         if (id == null) _tabLimitEvent.trySend(Unit)
     }
 

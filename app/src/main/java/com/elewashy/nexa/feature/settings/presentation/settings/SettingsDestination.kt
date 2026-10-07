@@ -11,6 +11,7 @@ enum class SettingsDestination {
     CustomizeTheme,
     Language,
     SearchEngine,
+    HomePage,
     Updates,
     Changelog,
     About,

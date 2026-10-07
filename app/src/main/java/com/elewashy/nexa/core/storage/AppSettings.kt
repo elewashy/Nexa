@@ -22,6 +22,8 @@ data class AppSettings(
     val videoDownloadButton: Boolean = true,
     val browserNavigationBarPosition: Int = BrowserNavigationBarPosition.Bottom.storedValue,
     val selectedSearchEngine: Int = SearchEngine.DEFAULT.storedValue,
+    /** Custom home page address; null follows the selected search engine's home page. */
+    val homePageUrl: String? = null,
     val downloadManagerLayout: Int = 0,
     val bookmarkSort: String? = null,
     val bookmarkViewMode: String? = null,

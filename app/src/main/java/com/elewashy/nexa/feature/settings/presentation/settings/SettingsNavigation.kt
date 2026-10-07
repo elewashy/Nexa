@@ -51,6 +51,7 @@ private fun SettingsPage(
             onCustomizeThemeClick = { open(SettingsDestination.CustomizeTheme) },
             onLanguageClick = { open(SettingsDestination.Language) },
             onSearchEngineClick = { open(SettingsDestination.SearchEngine) },
+            onHomePageClick = { open(SettingsDestination.HomePage) },
             viewModel = hiltViewModel(),
         )
 
@@ -67,6 +68,11 @@ private fun SettingsPage(
         )
 
         SettingsDestination.SearchEngine -> SearchEngineSettingsScreen(
+            onBackClick = back,
+            viewModel = hiltViewModel(),
+        )
+
+        SettingsDestination.HomePage -> HomePageSettingsScreen(
             onBackClick = back,
             viewModel = hiltViewModel(),
         )

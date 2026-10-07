@@ -139,6 +139,43 @@ class ShareViewModelTest {
     }
 
     @Test
+    fun `dismissing the sheet forgets the session so the same page can be opened again`() = runTest {
+        val viewModel = loadedViewModel()
+
+        viewModel.onSheetDismissed()
+        assertFalse(viewModel.uiState.value.showSheet)
+
+        viewModel.handleSharedText("https://www.instagram.com/p/ABC/")
+        assertTrue(viewModel.uiState.value.isLoading)
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(IMAGES, viewModel.uiState.value.images)
+    }
+
+    @Test
+    fun `a new session can download again after a previous download`() = runTest {
+        val viewModel = loadedViewModel()
+        viewModel.onQualitySelected(VideoQuality(quality = "720p", url = VIDEO_URL))
+
+        viewModel.handleSharedText("https://www.instagram.com/p/ABC/")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.showSheet)
+        viewModel.onQualitySelected(VideoQuality(quality = "720p", url = VIDEO_URL))
+
+        assertEquals(2, shadowOf(context).allStartedServices.size)
+    }
+
+    @Test
+    fun `re-delivering the open page keeps the loaded sheet`() = runTest {
+        val viewModel = loadedViewModel()
+        viewModel.onImageSelectionToggled(IMAGES[0])
+
+        viewModel.handleSharedText("https://www.instagram.com/p/ABC/")
+
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertFalse(IMAGES[0].url in viewModel.uiState.value.selectedImageUrls)
+    }
+
+    @Test
     fun `results without media close the sheet with the no-media message`() = runTest {
         assertEquals(
             context.getString(R.string.share_error_no_media),

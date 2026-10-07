@@ -5,7 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.http.SslCertificate
 import android.net.http.SslError
+import android.os.Message
 import android.util.Log
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
@@ -15,6 +17,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.net.toUri
+import com.elewashy.nexa.feature.browser.domain.model.CertificateDetails
+import com.elewashy.nexa.feature.browser.domain.model.PageLoadError
 import java.net.URISyntaxException
 
 /**
@@ -29,7 +33,16 @@ class NexaWebViewClient(
     private val onPageFinishedEvent: () -> Unit = {},
     private val onNavigationConsumedEvent: () -> Unit = {},
     private val onUrlUpdatedEvent: (String?) -> Unit = {},
-    private val onPageLoadErrorEvent: () -> Unit = {},
+    /**
+     * The error page shown in the main frame changed: the failure now on screen, or null once a
+     * real page replaces it. Only errors WebView actually displayed are reported
+     * (see [MainFrameErrorTracker]).
+     */
+    private val onPageLoadErrorChanged: (PageLoadError?) -> Unit = {},
+    /** Whether the device has any network; distinguishes "offline" from server failures. */
+    private val hasNetwork: () -> Boolean = { true },
+    /** The block page's "Go back" was used on a tab with no history to go back to. */
+    private val onBlockPageBackUnavailable: () -> Unit = {},
     /** Committed main-frame navigation, for history recording. */
     private val onVisitCommittedEvent: (url: String?, isReload: Boolean) -> Unit = { _, _ -> },
     /** The WebView's renderer process died; the host must replace the view. */
@@ -47,8 +60,11 @@ class NexaWebViewClient(
      */
     var suppressNextVisitCommit = false
 
-    /** A main-frame load error precedes this commit — skip recording it. */
-    private var pendingErrorVisit = false
+    /** Correlates main-frame error callbacks with the error page that actually shows. */
+    private val errorTracker = MainFrameErrorTracker()
+
+    /** When the error page reported through [onPageLoadErrorChanged] appears and goes away. */
+    private val errorPage = ErrorPageVisibility(onPageLoadErrorChanged)
 
     /** Whether the next history commit belongs to a real document load. */
     private var documentLoadPending = false
@@ -62,15 +78,44 @@ class NexaWebViewClient(
 
         private const val KEY_BROWSER_FALLBACK_URL = "browser_fallback_url"
 
-        private fun normalizeUrlHost(url: String?): String? = try {
-            if (url.isNullOrBlank()) null else url.toUri().host?.trim('.')?.lowercase()?.takeIf { it.isNotBlank() }
-        } catch (_: Exception) {
-            null
-        }
+        private fun SslCertificate.toDetails() = CertificateDetails(
+            issuedTo = issuedTo?.cName?.takeIf { it.isNotBlank() },
+            issuedBy = issuedBy?.let { it.oName?.takeIf(String::isNotBlank) ?: it.cName }
+                ?.takeIf { it.isNotBlank() },
+            validFromMillis = validNotBeforeDate?.time,
+            validUntilMillis = validNotAfterDate?.time,
+        )
     }
 
-    @Volatile
-    private var currentPageHost: String? = null
+    /** Set by [allowNextFormResubmission]; consumed by the next [onFormResubmission]. */
+    private var resendFormDataOnce = false
+
+    /**
+     * Call before every programmatic main-frame load (typed URL, reload, Home, back/forward):
+     * those never pass through [shouldOverrideUrlLoading], and errors reported for earlier
+     * requests must not be attributed to them.
+     */
+    fun onProgrammaticNavigation() {
+        errorTracker.onNavigationRequested()
+    }
+
+    /**
+     * The user confirmed resending form data (Chrome's "Confirm form resubmission"): the next
+     * reload of a POST result resends it instead of failing with ERR_CACHE_MISS.
+     */
+    fun allowNextFormResubmission() {
+        resendFormDataOnce = true
+    }
+
+    override fun onFormResubmission(view: WebView?, dontResend: Message, resend: Message) {
+        // Never resend silently (the platform default): only after an explicit confirmation.
+        if (resendFormDataOnce) {
+            resendFormDataOnce = false
+            resend.sendToTarget()
+        } else {
+            dontResend.sendToTarget()
+        }
+    }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         return handleUrlLoading(view, request)
@@ -111,13 +156,17 @@ class NexaWebViewClient(
             return true
         }
 
+        // The navigation proceeds: earlier failures can no longer be what it ends up showing.
+        if (request.isForMainFrame) errorTracker.onNavigationRequested()
         return false
     }
 
     /** "Go back" / "Proceed" links of the content blocker's block page. */
     private fun handleBlockPageAction(view: WebView, url: String) {
         if (url == WebViewContentBlocker.BACK_URL) {
-            if (view.canGoBack()) view.goBack()
+            // A blocked page opened in a new tab has nothing to go back to: leave to Home
+            // instead of ignoring the tap.
+            if (view.canGoBack()) view.goBack() else onBlockPageBackUnavailable()
             return
         }
         contentBlocker.consumeProceedRequest(url)?.let(view::loadUrl)
@@ -218,16 +267,27 @@ class NexaWebViewClient(
         // onPageStarted is delivered for real document loads (including
         // redirects/reloads), but not History API or fragment-only changes.
         documentLoadPending = true
-        pendingErrorVisit = false
         view?.let { contentBlocker.onPageStarted(it, url) }
-        currentPageHost = normalizeUrlHost(url)
         onPageStartedEvent(url)
         onUrlUpdatedEvent(url)
+        // A new document replaces the error page, unless this document *is* the error page of a
+        // failure already reported for this URL (keeps a retry that fails again from flickering).
+        if (!errorTracker.onDocumentStarted(url)) errorPage.onDocumentStarted()
+    }
+
+    override fun onPageCommitVisible(view: WebView?, url: String?) {
+        super.onPageCommitVisible(view, url)
+        // The new document is on screen: nothing of WebView's error page can show any more.
+        // (Never delivered for error pages themselves.)
+        errorPage.onDocumentDisplayed()
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         view?.requestLayout()
+        val shownError = errorTracker.onPageFinished(url)
+        // Otherwise a fallback for a document that finished without reporting a visible commit.
+        if (shownError != null) errorPage.show(shownError) else errorPage.onDocumentDisplayed()
         onPageFinishedEvent()
         onUrlUpdatedEvent(url)
     }
@@ -235,8 +295,14 @@ class NexaWebViewClient(
     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
         onHistoryUpdatedEvent()
-        currentPageHost = normalizeUrlHost(url)
         contentBlocker.onUrlCommitted(url)
+        // The commit of a failed navigation is its error page.
+        val shownError = errorTracker.onCommitted(url)
+        if (shownError != null) {
+            errorPage.show(shownError)
+        } else {
+            errorPage.onCommitted(url, documentStarted = documentLoadPending)
+        }
         onUrlUpdatedEvent(url)
 
         // URL comparison cannot identify same-document navigation: pushState
@@ -248,8 +314,7 @@ class NexaWebViewClient(
 
         val programmatic = suppressNextVisitCommit
         suppressNextVisitCommit = false
-        val errorVisit = pendingErrorVisit
-        pendingErrorVisit = false
+        val errorVisit = shownError != null
         when {
             // A failed load never became a page the user reached.
             errorVisit -> Unit
@@ -279,20 +344,22 @@ class NexaWebViewClient(
         return true
     }
 
-    // Error-overlay policy: the overlay only covers failures that leave the
-    // user without the requested PAGE — real main-frame network errors and
-    // main-frame SSL failures. Subresource errors, benign aborts, and HTTP
-    // 4xx/5xx (the server renders its own error page) never trigger it.
+    // Error policy: only failures that leave the user without the requested PAGE are reported —
+    // main-frame network errors and main-frame certificate errors, and only once WebView shows
+    // their error page (MainFrameErrorTracker). Subresource errors, cancelled navigations, and
+    // HTTP 4xx/5xx (the server renders its own error page) never are.
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
         super.onReceivedError(view, request, error)
         if (!request.isForMainFrame) return
-        // ERR_ABORTED fires for benign cancellations (download handoffs,
-        // quick redirects) — not a real load failure. WebViewClient has no
-        // constant for it; the chromium description is the stable signal.
-        if (error.description?.toString()?.contains("ERR_ABORTED") == true) return
-        pendingErrorVisit = true
-        onPageLoadErrorEvent()
+        val pageError = WebViewErrorMapper.fromNetworkError(
+            url = request.url.toString(),
+            webViewErrorCode = error.errorCode,
+            description = error.description,
+            hasNetwork = hasNetwork(),
+        ) ?: return
+        Log.d(TAG, "Main-frame load failed: ${pageError.errorCode}")
+        errorTracker.onError(pageError)
     }
 
     override fun onReceivedHttpError(
@@ -301,21 +368,18 @@ class NexaWebViewClient(
         errorResponse: WebResourceResponse,
     ) {
         super.onReceivedHttpError(view, request, errorResponse)
-        // Intentionally no error overlay for HTTP 4xx/5xx.
+        // Intentionally not reported: the server renders its own page for HTTP 4xx/5xx.
     }
 
     override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
         Log.w(TAG, "Cancelling navigation due to SSL error: ${error.url}")
-        // Never proceed past a certificate failure.
+        // Never proceed past a certificate failure (WebView security guidance).
         handler.cancel()
-        // Only a main-frame failure strands the user on a dead page; a
-        // subresource SSL error keeps the page itself, so skip the overlay.
-        val errorHost = normalizeUrlHost(error.url)?.let(::normalizeHost)
-        val pageHost = currentPageHost?.let(::normalizeHost)
-        if (errorHost != null && errorHost == pageHost) {
-            onPageLoadErrorEvent()
-        }
+        // Subresource and main-frame certificate errors share this callback; the tracker only
+        // surfaces the one whose URL the main frame then shows as an error page.
+        val url = error.url ?: return
+        errorTracker.onError(
+            WebViewErrorMapper.fromSslError(url, error.primaryError, error.certificate?.toDetails())
+        )
     }
-
-    private fun normalizeHost(host: String): String = host.trim('.').lowercase().removePrefix("www.")
 }

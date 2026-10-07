@@ -4,6 +4,31 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Browser:** Choose your home page in Settings → General → Home page: the search engine's home page, or any web address. It opens when you tap Home and when you open a new tab.
+- **Browser:** Pages that can't be loaded now explain why, as in Chrome: whether you're offline, the site's address can't be found, the connection was refused, interrupted, or timed out, the site sent an invalid response or redirects endlessly, or its security certificate isn't valid. Each page names the site, suggests what to try, shows the error code, and offers the right next step — reload, go back or home, open the internet settings, resend a form after confirming, or leave a dangerous site. Details show the address and, for certificate errors, the certificate.
+- **Browser:** A page that failed because you were offline reloads by itself when the connection returns.
+- **Browser:** Long-press the tabs button to open a new tab or a new incognito tab without opening the tab overview.
+- **Browser:** Long-press the search button to open the search bar directly.
+
+### Changed
+
+- **Ad blocking:** The page shown when the ad blocker blocks a site is redesigned: it names the site, explains why it was blocked, and makes Go back the clear way out, with the address, the matching filter, and Proceed anyway under Details. It follows the app's theme and language, including right-to-left languages.
+- **Browser:** The download button is redesigned: it shows its Download label when it appears, then shrinks to an icon. To hide it for the current page, long-press it and choose Hide for this page; the snackbar offers Undo.
+- **Browser:** The download sheet now opens inside the browser instead of a separate window, so it appears faster.
+- **Ad blocking:** AdGuard – Ads and AdGuard – Mobile Ads are now enabled by default, alongside the existing default lists. Lists you turned on or off yourself keep your choice.
+
+### Fixed
+
+- **Browser:** The "can't load page" screen no longer appears over pages that opened successfully. It was triggered by failures that never replaced the page, such as background prefetches of links and errors from the page's own images and scripts.
+- **Browser:** Dismissing the download sheet by tapping above it no longer also taps the page underneath.
+- **Browser:** Taps on an error page no longer reach the page hidden behind it.
+- **Browser:** The WebView's built-in "This site can't be reached" page no longer appears in tabs: the app's error page now shows at once instead of fading in over it, stays until the next page has actually drawn, and the tab overview shows the error page instead of a screenshot of the built-in one.
+- **Ad blocking:** Go back on a blocked page opened in a new tab now opens the home page instead of doing nothing.
+
 ## [1.4.0] - 2026-10-05
 
 ### Added

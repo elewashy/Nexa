@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
 import com.elewashy.nexa.feature.adblock.domain.model.FilterUpdateInterval
+import com.elewashy.nexa.feature.browser.domain.model.HomePageUrls
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadFilterCategory
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadSettingsDefaults
@@ -59,6 +60,7 @@ class DataStoreAppPreferences @Inject constructor(
     override val videoDownloadButton: Flow<Boolean> = settings.map { it.videoDownloadButton }.distinctUntilChanged()
     override val browserNavigationBarPosition: Flow<Int> = settings.map { it.browserNavigationBarPosition }.distinctUntilChanged()
     override val selectedSearchEngine: Flow<Int> = settings.map { it.selectedSearchEngine }.distinctUntilChanged()
+    override val homePageUrl: Flow<String?> = settings.map { it.homePageUrl }.distinctUntilChanged()
     override val downloadManagerLayout: Flow<Int> = settings.map { it.downloadManagerLayout }.distinctUntilChanged()
     override val bookmarkSort: Flow<String?> = settings.map { it.bookmarkSort }.distinctUntilChanged()
     override val bookmarkViewMode: Flow<String?> = settings.map { it.bookmarkViewMode }.distinctUntilChanged()
@@ -122,6 +124,14 @@ class DataStoreAppPreferences @Inject constructor(
 
     override suspend fun setSelectedSearchEngine(engine: Int) {
         dataStore.edit { it[KEY_SELECTED_SEARCH_ENGINE] = SearchEngine.fromStoredValue(engine).storedValue }
+    }
+
+    override suspend fun setHomePageUrl(url: String?) {
+        // Stored normalized; anything that is not a web address resets to the engine's home page.
+        val normalized = url?.let(HomePageUrls::normalize)
+        dataStore.edit { prefs ->
+            if (normalized == null) prefs.remove(KEY_HOME_PAGE_URL) else prefs[KEY_HOME_PAGE_URL] = normalized
+        }
     }
 
     override suspend fun setDownloadManagerLayout(layout: Int) {
@@ -207,6 +217,7 @@ class DataStoreAppPreferences @Inject constructor(
             selectedSearchEngine = SearchEngine.fromStoredValue(
                 this[KEY_SELECTED_SEARCH_ENGINE] ?: SearchEngine.DEFAULT.storedValue
             ).storedValue,
+            homePageUrl = this[KEY_HOME_PAGE_URL]?.let(HomePageUrls::normalize),
             downloadManagerLayout = this[KEY_DOWNLOAD_MANAGER_LAYOUT] ?: 0,
             bookmarkSort = this[KEY_BOOKMARK_SORT],
             bookmarkViewMode = this[KEY_BOOKMARK_VIEW_MODE],
@@ -243,6 +254,7 @@ class DataStoreAppPreferences @Inject constructor(
         val KEY_VIDEO_DOWNLOAD_BUTTON = booleanPreferencesKey("video_download_button")
         val KEY_BROWSER_NAVIGATION_BAR_POSITION = intPreferencesKey("browser_navigation_bar_position")
         val KEY_SELECTED_SEARCH_ENGINE = intPreferencesKey("selected_search_engine")
+        val KEY_HOME_PAGE_URL = stringPreferencesKey("home_page_url")
         val KEY_DOWNLOAD_MANAGER_LAYOUT = intPreferencesKey("download_manager_layout")
         val KEY_BOOKMARK_SORT = stringPreferencesKey("bookmark_sort")
         val KEY_BOOKMARK_VIEW_MODE = stringPreferencesKey("bookmark_view_mode")

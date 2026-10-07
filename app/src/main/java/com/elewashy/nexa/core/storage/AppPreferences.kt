@@ -70,6 +70,12 @@ interface AppPreferences {
     /** User-selected search engine for address-bar queries. Defaults to Google. */
     val selectedSearchEngine: Flow<Int>
 
+    /**
+     * Custom home page address (normalized http(s) URL), or null to follow the selected search
+     * engine's home page. Defaults to null.
+     */
+    val homePageUrl: Flow<String?>
+
     /** Download Manager layout. Defaults to Media gallery. */
     val downloadManagerLayout: Flow<Int>
 
@@ -132,6 +138,9 @@ interface AppPreferences {
 
     /** Updates [selectedSearchEngine]. Unknown values are sanitized by readers. */
     suspend fun setSelectedSearchEngine(engine: Int)
+
+    /** Updates [homePageUrl]. Pass null to follow the search engine's home page again. */
+    suspend fun setHomePageUrl(url: String?)
 
     /** Updates [downloadManagerLayout]. */
     suspend fun setDownloadManagerLayout(layout: Int)

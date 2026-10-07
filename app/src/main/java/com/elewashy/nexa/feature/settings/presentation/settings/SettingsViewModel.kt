@@ -9,7 +9,9 @@ import com.elewashy.nexa.core.storage.AppPreferences
 import com.elewashy.nexa.core.storage.AppSettings
 import com.elewashy.nexa.core.theme.DEFAULT_THEME_COLOR_ARGB
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.model.HomePage
 import com.elewashy.nexa.feature.browser.domain.model.SearchEngine
+import com.elewashy.nexa.feature.browser.domain.usecase.ResolveHomePageUseCase
 import com.elewashy.nexa.feature.settings.data.ThemeRepository
 import com.elewashy.nexa.ui.theme.AppTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +29,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val themeRepository: ThemeRepository,
+    resolveHomePage: ResolveHomePageUseCase,
     refreshRateManager: RefreshRateManager,
 ) : ViewModel() {
 
@@ -73,6 +76,10 @@ class SettingsViewModel @Inject constructor(
                 SharingStarted.WhileSubscribed(5_000),
                 SearchEngine.DEFAULT,
             )
+
+    /** The home page choice; null until it is read from storage. */
+    val homePage: StateFlow<HomePage?> = resolveHomePage.homePage
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val selectedThemeColor: StateFlow<Int> = appPreferences.selectedThemeColor
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_THEME_COLOR_ARGB)
@@ -127,6 +134,12 @@ class SettingsViewModel @Inject constructor(
 
     fun setSelectedSearchEngine(engine: SearchEngine) {
         viewModelScope.launch { appPreferences.setSelectedSearchEngine(engine.storedValue) }
+    }
+
+    fun setHomePage(homePage: HomePage) {
+        viewModelScope.launch {
+            appPreferences.setHomePageUrl((homePage as? HomePage.Custom)?.url)
+        }
     }
 
     fun setSelectedThemeColor(color: Int) {

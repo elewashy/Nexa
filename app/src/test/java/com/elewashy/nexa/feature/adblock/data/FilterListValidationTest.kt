@@ -1,7 +1,9 @@
 package com.elewashy.nexa.feature.adblock.data
 
 import com.elewashy.nexa.feature.adblock.data.lists.BuiltInFilterList
+import com.elewashy.nexa.feature.adblock.domain.model.FilterListCategory
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -37,5 +39,32 @@ class FilterListValidationTest {
         assertFalse(BuiltInFilterList.ListeAr in BuiltInFilterList.defaultsFor("en"))
         assertTrue(BuiltInFilterList.ListeAr in BuiltInFilterList.defaultsFor("ar"))
         assertTrue(BuiltInFilterList.EasyList in BuiltInFilterList.defaultsFor("fr"))
+    }
+
+    @Test
+    fun `default selection keeps the existing lists and adds both AdGuard ad lists`() {
+        val expectedDefaults = setOf(
+            BuiltInFilterList.NexaFilters,
+            BuiltInFilterList.UBlockFilters,
+            BuiltInFilterList.UBlockBadware,
+            BuiltInFilterList.UBlockPrivacy,
+            BuiltInFilterList.UBlockQuickFixes,
+            BuiltInFilterList.UBlockUnbreak,
+            BuiltInFilterList.EasyList,
+            BuiltInFilterList.EasyPrivacy,
+            BuiltInFilterList.PeterLoweList,
+            BuiltInFilterList.MaliciousUrlBlocklist,
+            BuiltInFilterList.AdGuardAds,
+            BuiltInFilterList.AdGuardMobileAds,
+        )
+        // No regional list matches "en", so this is the whole language-independent selection.
+        assertEquals(expectedDefaults, BuiltInFilterList.defaultsFor("en").toSet())
+        assertTrue(BuiltInFilterList.defaultsFor("ar").containsAll(expectedDefaults))
+
+        val adsDefaults = BuiltInFilterList.defaultsFor("en").filter { it.category == FilterListCategory.Ads }
+        assertEquals(
+            setOf(BuiltInFilterList.EasyList, BuiltInFilterList.AdGuardAds, BuiltInFilterList.AdGuardMobileAds),
+            adsDefaults.toSet(),
+        )
     }
 }
