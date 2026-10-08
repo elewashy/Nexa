@@ -56,6 +56,7 @@ import compose.icons.FontAwesomeIcons
 import compose.icons.fontawesomeicons.Brands
 import compose.icons.fontawesomeicons.Solid
 import compose.icons.fontawesomeicons.brands.Github
+import compose.icons.fontawesomeicons.brands.LinkedinIn
 import compose.icons.fontawesomeicons.brands.Telegram
 import compose.icons.fontawesomeicons.solid.Bug
 import compose.icons.fontawesomeicons.solid.ScaleBalanced
@@ -65,7 +66,8 @@ import compose.icons.fontawesomeicons.solid.Users
 private const val DEVELOPER_NAME = "Mohamed Al-Aweshi"
 private const val DEVELOPER_AVATAR_URL = "https://github.com/elewashy.png"
 private const val DEVELOPER_GITHUB_URL = "https://github.com/elewashy"
-private const val TELEGRAM_CHANNEL_URL = "https://t.me/Elewashy"
+private const val DEVELOPER_LINKEDIN_URL = "https://www.linkedin.com/in/elewashy/"
+private const val TELEGRAM_CHANNEL_URL = "https://t.me/NexaaApp"
 private const val REPO_URL = "https://github.com/elewashy/Nexa"
 private const val ISSUES_URL = "$REPO_URL/issues/new/choose"
 private const val LICENSE_URL = "$REPO_URL/blob/main/LICENSE"
@@ -121,7 +123,7 @@ fun AboutScreen(
                 developerName = DEVELOPER_NAME,
                 developerAvatarUrl = DEVELOPER_AVATAR_URL,
                 developerGithubUrl = DEVELOPER_GITHUB_URL,
-                telegramChannelUrl = TELEGRAM_CHANNEL_URL,
+                developerLinkedInUrl = DEVELOPER_LINKEDIN_URL,
                 modifier = Modifier
                     .widthIn(max = adaptiveInfo.contentMaxWidth)
                     .fillMaxWidth(),
@@ -244,7 +246,7 @@ private fun DeveloperHeroCard(
     developerName: String,
     developerAvatarUrl: String,
     developerGithubUrl: String,
-    telegramChannelUrl: String,
+    developerLinkedInUrl: String,
     modifier: Modifier = Modifier,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -302,14 +304,14 @@ private fun DeveloperHeroCard(
                     )
                 }
                 FilledTonalButton(
-                    onClick = { uriHandler.openUri(telegramChannelUrl) },
+                    onClick = { uriHandler.openUri(developerLinkedInUrl) },
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp),
                 ) {
                     Icon(
-                        imageVector = FontAwesomeIcons.Brands.Telegram,
-                        contentDescription = stringResource(R.string.telegram),
+                        imageVector = FontAwesomeIcons.Brands.LinkedinIn,
+                        contentDescription = stringResource(R.string.linkedin),
                     )
                 }
             }

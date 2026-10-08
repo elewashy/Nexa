@@ -270,7 +270,7 @@
     <string name="about_app_name">About %s</string>
     <string name="about">About</string>
     <string name="nexa_description">Nexa is a fast, privacy-focused browser with a built-in ad blocker, smart download manager, and a clean browsing experience.</string>
-    <string name="telegram" translatable="false">Telegram</string>
+    <string name="linkedin" translatable="false">LinkedIn</string>
     <string name="github" translatable="false">GitHub</string>
     <string name="project">Project</string>
     <string name="report_issue">Issues &amp; Feedback</string>
