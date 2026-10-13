@@ -4,6 +4,7 @@ import android.os.Looper
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
+import com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult
 import kotlinx.coroutines.*
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -17,6 +18,7 @@ class DownloadEngine(
     private val onProgress: (DownloadItem) -> Unit = {},
     private val onStatusChange: (DownloadItem, DownloadStatus) -> Unit = { _, _ -> },
     private val onMetadata: suspend (DownloadItem, String?) -> Unit = { _, _ -> },
+    private val refreshLink: suspend (DownloadItem) -> LinkRefreshResult = { LinkRefreshResult.Unsupported },
 ) {
     private val clientDelegate = lazy {
         OkHttpClient.Builder()
@@ -124,5 +126,5 @@ class DownloadEngine(
         DownloadTask(item, client,
             onProgress = { onProgress(it.item) },
             onStatusChange = { task, status -> onStatusChange(task.item, status) },
-            restoredSegments = restoredSegments, bandwidthLimiter = bandwidth, onMetadata = onMetadata)
+            restoredSegments = restoredSegments, bandwidthLimiter = bandwidth, onMetadata = onMetadata, refreshLink = refreshLink)
 }

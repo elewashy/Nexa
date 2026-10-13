@@ -15,6 +15,7 @@ import com.elewashy.nexa.core.format.LocalizedFormatters
 import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.core.notifications.NotificationChannels
 import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
+import com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata
 import com.elewashy.nexa.feature.share.data.SharePlatformDetector
 import com.elewashy.nexa.feature.share.data.VideoExtractorRepository
 import com.elewashy.nexa.feature.share.domain.model.ExtractionError
@@ -105,7 +106,7 @@ class ShareViewModel @Inject constructor(
             }
 
             val qualities = result.videos
-                .map { (quality, videoUrl) -> parseVideoQuality(quality, videoUrl) }
+                .map { (quality, videoUrl) -> parseVideoQuality(quality, videoUrl).copy(sourceKey = quality) }
                 .sortedByDescending { it.getSortPriority() }
 
             _uiState.update {
@@ -242,6 +243,11 @@ class ShareViewModel @Inject constructor(
             mimeType = format.mimeType,
             forceExtension = null,
             referer = uiState.value.sharedUrl,
+            metadata = DownloadMetadata(
+                sourcePageUrl = uiState.value.sharedUrl,
+                imageIndex = position - 1,
+                imageCount = uiState.value.images.size,
+            ),
         )
     }
 
@@ -307,7 +313,11 @@ class ShareViewModel @Inject constructor(
      */
     private fun startDownload(quality: VideoQuality, referer: String? = uiState.value.sharedUrl): Boolean {
         val (mimeType, forceExtension) = getFileProperties(quality)
-        return startDownload(quality.url, generateFileName(quality), mimeType, forceExtension, referer)
+        val mediaKey = quality.sourceKey
+        return startDownload(quality.url, generateFileName(quality), mimeType, forceExtension, referer,
+            DownloadMetadata(
+                sourcePageUrl = referer, mediaKey = mediaKey,
+            ))
     }
 
     private fun startDownload(
@@ -316,6 +326,7 @@ class ShareViewModel @Inject constructor(
         mimeType: String,
         forceExtension: String?,
         referer: String?,
+        metadata: DownloadMetadata = DownloadMetadata(),
     ): Boolean {
         val intent = DownloadService.createStartIntent(
             context = appContext,
@@ -328,6 +339,7 @@ class ShareViewModel @Inject constructor(
             cookies = null,
             source = DOWNLOAD_SOURCE,
             forceExtension = forceExtension,
+            metadata = metadata,
         )
         return try {
             appContext.startForegroundService(intent)

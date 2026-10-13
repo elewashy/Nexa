@@ -8,17 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ### Added
 
+- **Downloads:** Missing downloaded files now offer **Download again**. The app checks for externally deleted files at startup and while the Downloads screen is active.
+- **Downloads:** Expired download links can now be refreshed through the source's media extraction pipeline, retaining the selected video quality or image position. Stable download addresses can also be retried when their resolved CDN links expire.
+- **Downloads:** Added distinct failure messages for link-refresh failures and files no longer provided by the source, with English, Arabic, and French translations.
 - **Downloads:** Added per-segment integrity checkpoints so resuming after an app restart verifies the saved file bytes before requesting the remaining data.
 - **Development:** Added reproducible download benchmarks comparing the previous engine, the rewritten engine, single-stream transfers, and curl, with recorded results and architecture documentation.
 
 ### Changed
 
+- **About:** The developer card now opens the developer's LinkedIn profile.
 - **Downloads:** Rebuilt the download engine around the initial download response instead of separate filename and server probes. Fast sources stay on one connection; slower sources can use parallel byte ranges when the server supports safe segmented downloading.
 - **Downloads:** Source filenames now retain their spaces, dots, capitalization, and extensions. Names change only for filesystem safety, length limits, existing-file collisions, or an explicitly selected media format.
 - **Browser:** Download handoff now captures available request headers, the download's user agent, and cookies before permission prompts, including incognito-profile cookies. Referrers are no longer truncated and Origin and language headers are no longer invented. Known non-GET downloads are refused rather than replayed incorrectly.
 
 ### Fixed
 
+- **Downloads:** Re-downloading a deleted file now clears stale progress and segment state before starting, instead of attempting to resume missing bytes. Revoked storage access is not mistaken for file deletion.
+- **Downloads:** Link refresh is limited to one attempt per download run to prevent loops. Refreshed links retain partial-file integrity and resource-validator checks, and ambiguous or unavailable media selections fail safely instead of downloading a different file.
+- **Downloads:** Fixed startup filesystem reconciliation not persisting corrected download state.
 - **Downloads:** Resume now validates resource identifiers, exact byte ranges, response lengths, and saved partial data before writing. Unsafe or unverifiable partial downloads are preserved instead of silently restarted or appended to.
 - **Downloads:** Fixed rapid pause/resume and cancellation races, bounded automatic retries, and network-loss recovery. File writers finish before cancellation or removal releases the filename for another download.
 - **Downloads:** Servers that reject parallel ranges can fall back to the original download stream without another full-file request.

@@ -8,7 +8,8 @@ data class VideoQuality(
     val url: String,
     val size: String? = null,
     val type: MediaType = MediaType.VIDEO,
-    val hasWatermark: Boolean = false
+    val hasWatermark: Boolean = false,
+    val sourceKey: String? = null
 ) {
 
     enum class MediaType {

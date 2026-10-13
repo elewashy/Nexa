@@ -97,6 +97,7 @@ class DownloadsViewModelDeleteConfirmationTest {
             _downloads.value = _downloads.value.filterNot { it.id == id }
         }
 
+        override suspend fun refreshFileAvailability() = Unit
         override suspend fun retry(id: Long) = Unit
         override suspend fun renameCompleted(id: Long, requestedName: String) =
             RenameDownloadResult.NotFound

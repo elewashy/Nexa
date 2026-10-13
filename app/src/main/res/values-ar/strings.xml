@@ -326,7 +326,10 @@
     <string name="failed_progress">فشل عند %d%%</string>
     <string name="download_failed">فشل التنزيل</string>
     <string name="download_finalize_failed">تعذّر إكمال الملف الذي تم تنزيله</string>
-    <string name="downloaded_file_missing">الملف الذي تم تنزيله مفقود</string>
+    <string name="downloaded_file_missing">الملف مفقود. يمكنك تنزيله مجددًا.</string>
+    <string name="download_again">تنزيل مجددًا</string>
+    <string name="download_link_refresh_failed">تعذّر تحديث رابط التنزيل. حاول مرة أخرى لاحقًا.</string>
+    <string name="download_source_unavailable">لم يعد المصدر يوفّر الملف المحدّد.</string>
     <string name="download_resume_unreachable">تعذّر الوصول إلى الخادم لاستئناف التنزيل. تقدّمك محفوظ وسيُعاد المحاولة تلقائيًا.</string>
     <string name="download_resume_url_dead">رابط التنزيل لم يعد متاحًا، لذلك لا يمكن استئنافه.</string>
     <string name="file_size_per_second">%s/ث</string>

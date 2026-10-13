@@ -81,7 +81,10 @@ interface DownloadRepository {
     /** Removes from the list but keeps the on-disk file. */
     suspend fun remove(id: Long)
 
-    /** Same semantics as [resume] — preserved for intent-action parity. */
+    /** Rechecks completed files after returning from external file managers. */
+    suspend fun refreshFileAvailability()
+
+    /** Retries failed work, restarting from zero when the downloaded file was deleted. */
     suspend fun retry(id: Long)
 
     /** Atomically renames a completed file and its persisted metadata where possible. */

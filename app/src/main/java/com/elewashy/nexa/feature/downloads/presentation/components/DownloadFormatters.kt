@@ -31,12 +31,13 @@ object DownloadFormatters {
             }
             DownloadStatus.PAUSED -> context.getString(R.string.paused)
             DownloadStatus.PENDING -> context.getString(R.string.waiting)
-            DownloadStatus.FAILED -> context.getString(R.string.download_failed)
+            DownloadStatus.FAILED -> context.getString(downloadErrorMessageResource(item.errorMessage))
             else -> ""
         }
     }
 
     fun formatActiveStatusSecondary(context: Context, item: DownloadItem): String {
+        if (item.status == DownloadStatus.FAILED) return ""
         val progress = LocalizedFormatters.percent(context, item.progress)
         return if (item.totalBytes > 0) {
             "$progress · ${LocalizedFormatters.progressSize(context, item.downloadedBytes, item.totalBytes)}"
@@ -58,7 +59,7 @@ object DownloadFormatters {
                     LocalizedFormatters.fileSize(context, item.totalBytes)
                 } else context.getString(R.string.completed)
             }
-            DownloadStatus.FAILED -> context.getString(R.string.download_failed)
+            DownloadStatus.FAILED -> context.getString(downloadErrorMessageResource(item.errorMessage))
             DownloadStatus.CANCELLED -> context.getString(R.string.cancelled)
             else -> ""
         }

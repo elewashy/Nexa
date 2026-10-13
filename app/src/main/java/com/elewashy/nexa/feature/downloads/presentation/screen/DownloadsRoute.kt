@@ -31,6 +31,7 @@ import com.elewashy.nexa.core.files.DownloadDirectory
 import com.elewashy.nexa.core.files.DownloadedFileIntents
 import com.elewashy.nexa.core.text.limitCodePoints
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.elewashy.nexa.feature.downloads.data.RenameDownloadResult
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.presentation.components.DownloadItemActions
@@ -52,6 +53,21 @@ fun DownloadsRoute(
     layoutViewModel: DownloadLayoutViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                try {
+                    viewModel.refreshFileAvailability()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    android.util.Log.w("DownloadsRoute", "File availability check failed", error)
+                }
+                kotlinx.coroutines.delay(5_000)
+            }
+        }
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val presentation by layoutViewModel.presentation.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }

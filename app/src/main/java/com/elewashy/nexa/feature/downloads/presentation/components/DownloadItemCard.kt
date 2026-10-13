@@ -21,6 +21,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.elewashy.nexa.feature.downloads.data.engine.DownloadTask
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -290,12 +292,18 @@ private fun TrailingAction(
             }
         }
         DownloadStatus.FAILED -> {
-            IconButton(onClick = { actions.onRetry(item) }) {
-                Icon(
-                    imageVector = RefreshFilled,
-                    contentDescription = stringResource(R.string.retry),
-                    tint = MaterialTheme.colorScheme.error
-                )
+            if (item.errorMessage == DownloadTask.ERROR_FILE_MISSING) {
+                TextButton(onClick = { actions.onRetry(item) }) {
+                    Text(stringResource(R.string.download_again))
+                }
+            } else {
+                IconButton(onClick = { actions.onRetry(item) }) {
+                    Icon(
+                        imageVector = RefreshFilled,
+                        contentDescription = stringResource(R.string.retry),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
         DownloadStatus.COMPLETED,

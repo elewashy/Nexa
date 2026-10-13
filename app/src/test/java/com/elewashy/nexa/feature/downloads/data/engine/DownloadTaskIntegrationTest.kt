@@ -69,6 +69,97 @@ class DownloadTaskIntegrationTest {
         withTimeout(15_000) { done.await() }
     }
 
+    @Test fun `expired link refreshes once and downloads fresh URL`() = runBlocking {
+        val (server, _) = server()
+        server.createContext("/expired") { exchange ->
+            exchange.sendResponseHeaders(403, -1)
+            exchange.close()
+        }
+        try {
+            val output = File(temp.newFolder(), "file")
+            val base = "http://127.0.0.1:${server.address.port}"
+            val item = DownloadItem(1, "$base/expired", "file", output.path)
+            var refreshes = 0
+            val task = DownloadTask(item, OkHttpClient(), refreshLink = {
+                refreshes++
+                com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult.Success("$base/file")
+            })
+            withTimeout(15_000) { task.start(this@runBlocking).join() }
+            assertEquals(DownloadStatus.COMPLETED, item.status)
+            assertEquals(1, refreshes)
+            assertArrayEquals(payload, output.readBytes())
+        } finally { server.stop(0) }
+    }
+
+    @Test fun `rejected refreshed URL does not loop`() = runBlocking {
+        val (server, _) = server()
+        server.createContext("/expired") { exchange ->
+            exchange.sendResponseHeaders(410, -1)
+            exchange.close()
+        }
+        try {
+            val output = File(temp.newFolder(), "file")
+            val url = "http://127.0.0.1:${server.address.port}/expired"
+            val item = DownloadItem(1, url, "file", output.path)
+            var refreshes = 0
+            val task = DownloadTask(item, OkHttpClient(), refreshLink = {
+                refreshes++
+                com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult.Success(url)
+            })
+            withTimeout(15_000) { task.start(this@runBlocking).join() }
+            assertEquals(DownloadStatus.FAILED, item.status)
+            assertEquals(DownloadTask.ERROR_RESUME_URL_DEAD, item.errorMessage)
+            assertEquals(1, refreshes)
+            assertFalse(output.exists())
+        } finally { server.stop(0) }
+    }
+
+    @Test fun `refresh failure and unavailable source report actionable errors`() = runBlocking {
+        val (server, _) = server()
+        server.createContext("/expired") { exchange ->
+            exchange.sendResponseHeaders(404, -1)
+            exchange.close()
+        }
+        try {
+            val cases = listOf(
+                com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult.Failed to DownloadTask.ERROR_LINK_REFRESH_FAILED,
+                com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult.Unavailable to DownloadTask.ERROR_SOURCE_UNAVAILABLE,
+            )
+            cases.forEach { (result, expected) ->
+                val output = File(temp.newFolder(), "file")
+                val item = DownloadItem(1, "http://127.0.0.1:${server.address.port}/expired", "file", output.path)
+                val task = DownloadTask(item, OkHttpClient(), refreshLink = { result })
+                withTimeout(15_000) { task.start(this@runBlocking).join() }
+                assertEquals(DownloadStatus.FAILED, item.status)
+                assertEquals(expected, item.errorMessage)
+                assertFalse(output.exists())
+            }
+        } finally { server.stop(0) }
+    }
+
+    @Test fun `refreshed link cannot append a changed representation`() = runBlocking {
+        val (server, _) = server(changed = true)
+        server.createContext("/expired") { exchange ->
+            exchange.sendResponseHeaders(403, -1)
+            exchange.close()
+        }
+        try {
+            val output = File(temp.newFolder(), "file")
+            val bytes = payload.copyOf(1000)
+            File(output.path + ".part").writeBytes(bytes)
+            val base = "http://127.0.0.1:${server.address.port}"
+            val item = DownloadItem(1, "$base/expired", "file", output.path,
+                totalBytes = payload.size.toLong(), downloadedBytes = 1000, metadata = DownloadMetadata(etag = "\"v1\""))
+            val task = DownloadTask(item, OkHttpClient(),
+                restoredSegments = listOf(PersistedSegment(0, payload.lastIndex.toLong(), 1000, false, hash(bytes))),
+                refreshLink = { com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult.Success("$base/file") })
+            withTimeout(15_000) { task.start(this@runBlocking).join() }
+            assertEquals(DownloadTask.ERROR_UNSAFE_RESUME, item.errorMessage)
+            assertArrayEquals(bytes, File(output.path + ".part").readBytes())
+            assertFalse(output.exists())
+        } finally { server.stop(0) }
+    }
+
     @Test fun `fresh parallel download reuses initial GET and is byte exact`() = runBlocking {
         val (server, requests) = server()
         try {

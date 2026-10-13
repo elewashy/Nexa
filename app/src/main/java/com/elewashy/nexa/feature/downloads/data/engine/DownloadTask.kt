@@ -3,6 +3,7 @@ package com.elewashy.nexa.feature.downloads.data.engine
 import com.elewashy.nexa.feature.downloads.data.persistence.PersistedSegment
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
+import com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult
 import kotlinx.coroutines.*
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -19,6 +20,7 @@ class DownloadTask(
     private val restoredSegments: List<PersistedSegment> = emptyList(),
     private val bandwidthLimiter: BandwidthLimiter = BandwidthLimiter(),
     private val onMetadata: suspend (DownloadItem, String?) -> Unit = { _, _ -> },
+    private val refreshLink: suspend (DownloadItem) -> LinkRefreshResult = { LinkRefreshResult.Unsupported },
 ) {
     companion object {
         const val ERROR_FINALIZE_FAILED = "ERR_DOWNLOAD_FINALIZE_FAILED"
@@ -27,6 +29,8 @@ class DownloadTask(
         const val ERROR_RESUME_URL_DEAD = "ERR_RESUME_URL_DEAD"
         const val ERROR_STORAGE_PERMISSION = "ERR_STORAGE_PERMISSION_MISSING"
         const val ERROR_UNSAFE_RESUME = "ERR_UNSAFE_RESUME"
+        const val ERROR_LINK_REFRESH_FAILED = "ERR_LINK_REFRESH_FAILED"
+        const val ERROR_SOURCE_UNAVAILABLE = "ERR_SOURCE_UNAVAILABLE"
         const val PART_SUFFIX = ".part"
 
         internal fun rebuildSegmentsFromState(restoredSegments: List<PersistedSegment>, totalBytes: Long): List<DownloadSegment>? {
@@ -82,8 +86,30 @@ class DownloadTask(
                             ?: throw UnsafeResumeException("Invalid saved segment coverage")
                     }
                 }
-                if (item.downloadedBytes > 0 || segments.any { it.downloadedBytes > 0 } ||
-                    segments.isNotEmpty() && segments.all { it.status == SegmentStatus.COMPLETED }) resumeExisting() else fresh()
+                try {
+                    transfer()
+                } catch (error: HttpDownloadException) {
+                    if (error.code !in setOf(401, 403, 404, 410)) throw error
+                    when (val result = refreshLink(item.copy())) {
+                        is LinkRefreshResult.Success -> {
+                            coroutineContext.ensureActive()
+                            item.metadata = item.metadata.copy(resolvedUrl = result.url)
+                            onMetadata(item, null)
+                            writer?.close()
+                            writer = null
+                            transfer()
+                        }
+                        LinkRefreshResult.Failed -> {
+                            item.errorMessage = ERROR_LINK_REFRESH_FAILED
+                            throw error
+                        }
+                        LinkRefreshResult.Unavailable -> {
+                            item.errorMessage = ERROR_SOURCE_UNAVAILABLE
+                            throw error
+                        }
+                        LinkRefreshResult.Unsupported -> throw error
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -91,7 +117,7 @@ class DownloadTask(
                 if (!stopped) {
                     item.errorMessage = when (e) {
                         is UnsafeResumeException -> ERROR_UNSAFE_RESUME
-                        is HttpDownloadException -> if (!e.retryable) ERROR_RESUME_URL_DEAD else e.message
+                        is HttpDownloadException -> item.errorMessage ?: if (!e.retryable) ERROR_RESUME_URL_DEAD else e.message
                         else -> item.errorMessage ?: e.message ?: ERROR_RESUME_UNREACHABLE
                     }
                     updateStatus(DownloadStatus.FAILED)
@@ -105,6 +131,11 @@ class DownloadTask(
             }
         }
         return job!!
+    }
+
+    private suspend fun transfer() {
+        if (item.downloadedBytes > 0 || segments.any { it.downloadedBytes > 0 } ||
+            segments.isNotEmpty() && segments.all { it.status == SegmentStatus.COMPLETED }) resumeExisting() else fresh()
     }
 
     fun pause() {
@@ -214,7 +245,7 @@ class DownloadTask(
         item.downloadedBytes = synchronized(stateLock) { segments.sumOf { it.effectiveDownloadedBytes } }
         if (!partFile.isFile) {
             // Recovery after a successful move followed by a process kill before the DB commit.
-            if (segments.all { it.status == SegmentStatus.COMPLETED } && File(item.filePath).length() == item.totalBytes) {
+            if (segments.all { it.status == SegmentStatus.COMPLETED } && File(item.filePath).isFile && File(item.filePath).length() == item.totalBytes) {
                 updateStatus(DownloadStatus.COMPLETED)
                 return
             }

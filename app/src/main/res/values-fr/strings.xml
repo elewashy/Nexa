@@ -317,7 +317,10 @@
     <string name="failed_progress">Échec à %d %%</string>
     <string name="download_failed">Échec du téléchargement</string>
     <string name="download_finalize_failed">Échec de la finalisation du fichier téléchargé</string>
-    <string name="downloaded_file_missing">Le fichier téléchargé est introuvable</string>
+    <string name="downloaded_file_missing">Fichier introuvable. Téléchargez-le à nouveau.</string>
+    <string name="download_again">Télécharger à nouveau</string>
+    <string name="download_link_refresh_failed">Impossible de renouveler le lien. Réessayez plus tard.</string>
+    <string name="download_source_unavailable">La source ne propose plus le fichier sélectionné.</string>
     <string name="download_resume_unreachable">Impossible de joindre le serveur pour reprendre. Votre progression est enregistrée — une nouvelle tentative aura lieu automatiquement.</string>
     <string name="download_resume_url_dead">Le lien de téléchargement n\'est plus disponible, il ne peut donc pas être repris.</string>
     <string name="file_size_per_second">%s/s</string>

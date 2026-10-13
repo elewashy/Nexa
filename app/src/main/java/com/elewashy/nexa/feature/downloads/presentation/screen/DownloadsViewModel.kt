@@ -43,7 +43,7 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class DownloadsViewModel @Inject constructor(
-    observeDownloads: ObserveDownloadsUseCase,
+    private val observeDownloads: ObserveDownloadsUseCase,
     observeNotificationsWarning: ObserveNotificationsWarningUseCase,
     private val dismissNotificationsWarningUseCase: DismissNotificationsWarningUseCase,
     private val pauseDownload: PauseDownloadUseCase,
@@ -87,6 +87,8 @@ class DownloadsViewModel @Inject constructor(
             }
         }
     }
+
+    suspend fun refreshFileAvailability() = observeDownloads.refreshFileAvailability()
 
     fun dismissNotificationsWarning() {
         dismissNotificationsWarningUseCase()

@@ -10,6 +10,10 @@ data class DownloadMetadata(
     val etag: String? = null,
     val lastModified: String? = null,
     val resolvedUrl: String? = null,
+    val sourcePageUrl: String? = null,
+    val mediaKey: String? = null,
+    val imageIndex: Int? = null,
+    val imageCount: Int? = null,
 ) {
     val validator: String?
         get() = etag?.takeIf { it.startsWith('"') && it.endsWith('"') } ?: lastModified

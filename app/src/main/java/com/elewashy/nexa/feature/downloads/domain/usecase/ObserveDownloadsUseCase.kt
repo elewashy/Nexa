@@ -17,4 +17,6 @@ class ObserveDownloadsUseCase @Inject constructor(
     private val repository: DownloadRepository
 ) {
     operator fun invoke(): StateFlow<List<DownloadItem>> = repository.downloads
+
+    suspend fun refreshFileAvailability() = repository.refreshFileAvailability()
 }

@@ -30,6 +30,8 @@ import com.elewashy.nexa.feature.downloads.presentation.service.DownloadService
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadItem
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadRequest
 import com.elewashy.nexa.feature.downloads.domain.model.DownloadStatus
+import com.elewashy.nexa.feature.downloads.domain.usecase.LinkRefreshResult
+import com.elewashy.nexa.feature.downloads.domain.usecase.RefreshDownloadLinkUseCase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -84,6 +86,7 @@ class DownloadRepositoryImpl @Inject constructor(
     @param:ApplicationScope private val appScope: CoroutineScope,
     private val store: DownloadStore,
     private val runtimeSettings: DownloadRuntimeSettings = DownloadRuntimeSettings(),
+    private val refreshDownloadLink: RefreshDownloadLinkUseCase? = null,
 ) : DownloadRepository {
 
     // ── State ──────────────────────────────────────────────────────────
@@ -157,6 +160,10 @@ class DownloadRepositoryImpl @Inject constructor(
     private val engine: DownloadEngine by lazy {
         DownloadEngine(
             maxConcurrentDownloads = 3,
+            refreshLink = { item ->
+                refreshDownloadLink?.invoke(item)
+                    ?: LinkRefreshResult.Unsupported
+            },
             onProgress = { item ->
                 appScope.launch(Dispatchers.Main.immediate) { updateProgress(item) }
             },
@@ -455,7 +462,7 @@ class DownloadRepositoryImpl @Inject constructor(
         if (reservedUrls.isNotEmpty()) return
         // A routed resume intent is queued but not handled yet — the service
         // it targets must survive until then.
-        if (routedResumes.isNotEmpty()) return
+        if (routedResumes.isNotEmpty() || restartingIds.isNotEmpty()) return
         // Only genuinely ACTIVE work keeps the service: paused items must not
         // hold a dataSync FGS (6h quota), and resuming them restarts the
         // service on demand via the notification/UI intents.
@@ -537,6 +544,10 @@ class DownloadRepositoryImpl @Inject constructor(
             // A manual resume resets the automatic-retry budget.
             cancelAutoRetry(item.id)
             if (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED) {
+                if (item.errorMessage == DownloadTask.ERROR_FILE_MISSING && !restartMissingFile(item)) {
+                    stopServiceIfIdle()
+                    return@withContext
+                }
                 if (!resumeInternal(item)) {
                     // Blocked (missing permission) or nothing resumable — the
                     // service this command started must not be left idle.
@@ -622,6 +633,69 @@ class DownloadRepositoryImpl @Inject constructor(
             engine.restoreTask(item, restoredSegments(item.id))
         }
         engine.resume(item.id)
+    }
+
+    private val restartingIds = mutableSetOf<Long>()
+
+    private suspend fun restartMissingFile(item: DownloadItem): Boolean {
+        if (!hasStorageWritePermission() || !restartingIds.add(item.id)) return false
+        try {
+            withContext(NonCancellable) { engine.remove(item.id) }
+            if (downloadItems[item.id] !== item) return false
+            val target = withContext(Dispatchers.IO) {
+                val file = safeDownloadedFile(item.filePath) ?: return@withContext null
+                val directory = file.parentFile ?: return@withContext null
+                if (!directory.isDirectory && !directory.mkdirs()) return@withContext null
+                val partial = File(file.path + DownloadTask.PART_SUFFIX)
+                if (partial.exists() && !partial.delete()) return@withContext null
+                file
+            }
+            if (downloadItems[item.id] !== item) return false
+            if (target == null) {
+                item.errorMessage = DownloadTask.ERROR_FINALIZE_FAILED
+                updateStatus(item, DownloadStatus.FAILED)
+                return false
+            }
+            val name = FileNameResolver.uniqueName(target.parentFile!!, item.fileName, reservedFileNames - item.fileName)
+            if (downloadItems[item.id] !== item) return false
+            reservedFileNames.remove(item.fileName)
+            item.fileName = name
+            item.filePath = File(target.parentFile, name).absolutePath
+            reservedFileNames.add(name)
+            restoredSegmentCache.remove(item.id)
+            item.downloadedBytes = 0
+            item.totalBytes = -1
+            item.etaSeconds = -1
+            item.metadata = item.metadata.copy(etag = null, lastModified = null, resolvedUrl = null)
+            // Keep the missing-file marker until the reset is durable so a failed write remains retryable.
+            store.upsertNow(listOf(item.id))
+            emit(force = true)
+            return true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e(TAG, "Unable to prepare re-download for ${item.id}", error)
+            return false
+        } finally {
+            restartingIds.remove(item.id)
+        }
+    }
+
+    override suspend fun refreshFileAvailability() = withContext(Dispatchers.Main.immediate) {
+        awaitInitialised()
+        if (!hasStorageWritePermission()) return@withContext
+        val candidates = downloadItems.values.filter { it.status == DownloadStatus.COMPLETED }.map { it.copy() }
+        val missing = withContext(Dispatchers.IO) {
+            candidates.filter { !File(it.filePath).isFile }
+        }
+        missing.forEach { snapshot ->
+            val item = downloadItems[snapshot.id] ?: return@forEach
+            if (item.status == DownloadStatus.COMPLETED && item.filePath == snapshot.filePath) {
+                item.errorMessage = DownloadTask.ERROR_FILE_MISSING
+                reservedFileNames.add(item.fileName)
+                updateStatus(item, DownloadStatus.FAILED)
+            }
+        }
     }
 
     override suspend fun retry(id: Long) = resume(id)
@@ -765,7 +839,7 @@ class DownloadRepositoryImpl @Inject constructor(
 
     private fun handleEngineStatusChange(item: DownloadItem, newStatus: DownloadStatus) {
         // item IS the same instance as downloadItems[item.id] — no sync needed
-        if (!downloadItems.containsKey(item.id)) return
+        if (downloadItems[item.id] !== item || item.status != newStatus || item.id in restartingIds) return
 
         when (newStatus) {
             DownloadStatus.PENDING -> {
@@ -1132,7 +1206,7 @@ class DownloadRepositoryImpl @Inject constructor(
         store.pruneCompleted()
         store.loadAll().forEach { entity ->
             val raw = entity.toItem()
-            val reconciled = reconcileWithFilesystem(raw)
+            val reconciled = reconcileWithFilesystem(raw.copy())
             if (reconciled.status != raw.status ||
                 reconciled.errorMessage != raw.errorMessage ||
                 reconciled.downloadedBytes != raw.downloadedBytes
@@ -1185,13 +1259,13 @@ class DownloadRepositoryImpl @Inject constructor(
         val finalFile = File(item.filePath)
         val partFile = File(item.filePath + DownloadTask.PART_SUFFIX)
         return when {
-            item.status == DownloadStatus.COMPLETED && !finalFile.exists() -> item.apply {
+            item.status == DownloadStatus.COMPLETED && hasStorageWritePermission() && !finalFile.isFile -> item.apply {
                 status = DownloadStatus.FAILED
                 errorMessage = DownloadTask.ERROR_FILE_MISSING
             }
             item.status != DownloadStatus.COMPLETED &&
                 item.status != DownloadStatus.CANCELLED &&
-                item.totalBytes > 0 && finalFile.exists() &&
+                item.totalBytes >= 0 && finalFile.isFile &&
                 finalFile.length() == item.totalBytes && !partFile.exists() -> item.apply {
                 status = DownloadStatus.COMPLETED
                 downloadedBytes = item.totalBytes
@@ -1645,7 +1719,9 @@ class DownloadRepositoryImpl @Inject constructor(
         private val NON_RETRYABLE_ERRORS = setOf(
             DownloadTask.ERROR_FILE_MISSING,
             DownloadTask.ERROR_RESUME_URL_DEAD,
-            DownloadTask.ERROR_STORAGE_PERMISSION
+            DownloadTask.ERROR_STORAGE_PERMISSION,
+            DownloadTask.ERROR_LINK_REFRESH_FAILED,
+            DownloadTask.ERROR_SOURCE_UNAVAILABLE,
         )
     }
 

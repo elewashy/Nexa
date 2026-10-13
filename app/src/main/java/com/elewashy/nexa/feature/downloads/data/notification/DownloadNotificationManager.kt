@@ -359,6 +359,8 @@ class DownloadNotificationManager(
         null -> null
         DownloadTask.ERROR_FINALIZE_FAILED -> service.getString(R.string.download_finalize_failed)
         DownloadTask.ERROR_FILE_MISSING -> service.getString(R.string.downloaded_file_missing)
+        DownloadTask.ERROR_LINK_REFRESH_FAILED -> service.getString(R.string.download_link_refresh_failed)
+        DownloadTask.ERROR_SOURCE_UNAVAILABLE -> service.getString(R.string.download_source_unavailable)
         DownloadTask.ERROR_RESUME_UNREACHABLE -> service.getString(R.string.download_resume_unreachable)
         DownloadTask.ERROR_RESUME_URL_DEAD -> service.getString(R.string.download_resume_url_dead)
         DownloadTask.ERROR_UNSAFE_RESUME -> service.getString(R.string.download_resume_unsafe)
