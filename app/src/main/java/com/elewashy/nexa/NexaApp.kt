@@ -1,13 +1,7 @@
 package com.elewashy.nexa
 
 import android.app.Application
-import com.elewashy.nexa.core.network.HttpClientProvider
-import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
-import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.HiltAndroidApp
-import dagger.hilt.components.SingletonComponent
 
 /**
  * Application entry point.
@@ -22,26 +16,4 @@ import dagger.hilt.components.SingletonComponent
  * channel lazily at first use so names resolve in the active locale.
  */
 @HiltAndroidApp
-class NexaApp : Application() {
-
-    @EntryPoint
-    @InstallIn(SingletonComponent::class)
-    interface NetworkDependencies {
-        fun httpClientProvider(): HttpClientProvider
-    }
-
-    private lateinit var httpClientProvider: HttpClientProvider
-
-    override fun onCreate() {
-        super.onCreate()
-
-        httpClientProvider = EntryPointAccessors
-            .fromApplication(this, NetworkDependencies::class.java)
-            .httpClientProvider()
-
-        // Statically referenced and therefore not Hilt-injectable; hand it the
-        // shared provider so its probe client reuses the app-wide pool.
-        FileNameResolver.installSharedClientProvider(httpClientProvider)
-    }
-
-}
+class NexaApp : Application()

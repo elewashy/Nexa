@@ -58,6 +58,8 @@ class NexaWebViewClient(
      * of truth — but with reload semantics, which history recording skips.
      * Consumed by the next [doUpdateVisitedHistory].
      */
+    val downloadRequests = DownloadRequestCapture()
+
     var suppressNextVisitCommit = false
 
     /** Correlates main-frame error callbacks with the error page that actually shows. */
@@ -253,6 +255,7 @@ class NexaWebViewClient(
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         // Chromium invokes this callback on an IO thread. Never read or mutate `view` here;
         // WebView methods are UI-thread-confined and newer WebView builds fail fast on misuse.
+        downloadRequests.record(request)
         return try {
             contentBlocker.intercept(request)
         } catch (e: RuntimeException) {

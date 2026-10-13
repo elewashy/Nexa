@@ -379,6 +379,8 @@ class DownloadStore @Inject constructor(
 
 // ── Entity ↔ domain mapping ─────────────────────────────────────────────
 
+private val metadataJson = com.google.gson.Gson()
+
 fun DownloadItem.toEntity(status: DownloadStatus = this.status): DownloadEntity {
     // Gson-based legacy documents bypass constructors. Reference-typed fields
     // (String, enum) can be null where Kotlin expects values — coerce them.
@@ -404,6 +406,7 @@ fun DownloadItem.toEntity(status: DownloadStatus = this.status): DownloadEntity 
         createdAt = createdAt,
         wasWaitingForNetwork = wasWaitingForNetwork,
         errorMessage = errorMessage,
+        requestMetadata = metadataJson.toJson(metadata),
     )
 }
 
@@ -424,6 +427,9 @@ fun DownloadEntity.toItem(): DownloadItem = DownloadItem(
     createdAt = createdAt,
     wasWaitingForNetwork = wasWaitingForNetwork,
     errorMessage = errorMessage,
+    metadata = requestMetadata?.let {
+        runCatching { metadataJson.fromJson(it, com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata::class.java) }.getOrNull()
+    } ?: com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata(),
 )
 
 /**
@@ -443,6 +449,7 @@ fun PersistedSegment.toSegmentEntityOrNull(downloadId: Long): DownloadSegmentEnt
         endByte = endByte,
         downloadedBytes = downloadedBytes.coerceIn(0L, endByte - startByte + 1),
         completed = completed,
+        sha256 = sha256,
     )
 }
 
@@ -452,4 +459,5 @@ fun DownloadSegmentEntity.toPersisted(): PersistedSegment =
         endByte = endByte,
         downloadedBytes = downloadedBytes,
         completed = completed,
+        sha256 = sha256,
     )

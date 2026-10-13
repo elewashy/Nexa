@@ -85,7 +85,7 @@ class NexaDatabaseMigrationTest {
             // Version advanced to the end of the chain.
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(10, cursor.getInt(0))
+                assertEquals(11, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -213,7 +213,7 @@ class NexaDatabaseMigrationTest {
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(10, cursor.getInt(0))
+                assertEquals(11, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -370,7 +370,7 @@ class NexaDatabaseMigrationTest {
             }
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(10, cursor.getInt(0))
+                assertEquals(11, cursor.getInt(0))
             }
         } finally {
             db.close()
@@ -392,7 +392,7 @@ class NexaDatabaseMigrationTest {
 
             sqliteDb.query("PRAGMA user_version").use { cursor ->
                 cursor.moveToFirst()
-                assertEquals(10, cursor.getInt(0))
+                assertEquals(11, cursor.getInt(0))
             }
             assertDownloadTablesPresent(sqliteDb)
             assertPhase3TablesPresent(sqliteDb)
@@ -447,7 +447,7 @@ class NexaDatabaseMigrationTest {
                 "id", "url", "file_name", "file_path", "total_bytes",
                 "downloaded_bytes", "status", "mime_type", "user_agent",
                 "referer", "origin", "cookies", "source", "created_at",
-                "was_waiting_for_network", "error_message"
+                "was_waiting_for_network", "error_message", "request_metadata"
             ),
             downloadColumns
         )

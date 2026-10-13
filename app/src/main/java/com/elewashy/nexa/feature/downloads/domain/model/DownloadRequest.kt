@@ -15,5 +15,6 @@ data class DownloadRequest(
     val origin: String?,
     val cookies: String?,
     val source: String,
-    val forceExtension: String? = null
+    val forceExtension: String? = null,
+    val metadata: DownloadMetadata = DownloadMetadata()
 )

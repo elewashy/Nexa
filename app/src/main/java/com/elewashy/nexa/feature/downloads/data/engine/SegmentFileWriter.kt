@@ -1,192 +1,74 @@
 package com.elewashy.nexa.feature.downloads.data.engine
 
-import android.util.Log
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 
-/**
- * Thread-safe file writer for segmented downloads.
- *
- * Uses [RandomAccessFile] to write bytes at arbitrary positions, enabling
- * multiple [SegmentDownloader]s to write their data concurrently without
- * corruption.
- *
- * Design:
- *  - Uses [FileChannel] to write bytes at specific positions. [FileChannel]
- *    is natively thread-safe for writing at an absolute position via
- *    [FileChannel.write(ByteBuffer, Long)], allowing multiple segments
- *    to write concurrently without a lock bottleneck.
- *  - The file is pre-allocated on creation for:
- *      (a) fast-fail if disk space is insufficient
- *      (b) reduced filesystem fragmentation
- *      (c) contiguous sector allocation for better throughput on eMMC/UFS
- *
- * Performance note:
- *  Using `synchronized` on RAF is much cheaper than a coroutine [Mutex]
- *  for high-frequency I/O. The lock granularity is minimal (just seek+write),
- *  so segments rarely contend — they're writing to different file positions.
- *
- * @property filePath   Absolute path where the file will be written.
- * @property totalSize  Expected file size in bytes (used for pre-allocation).
- *                      Pass -1 to disable pre-allocation (single-stream mode).
- */
-class SegmentFileWriter(
-    private val filePath: String,
-    private val totalSize: Long
-) {
-    companion object {
-        private const val TAG = "SegmentFileWriter"
-    }
-
-    /** Lock object for init/close operations. */
-    private val initLock = Any()
-
-    /** Lazy-initialized Channel; opened on first write, closed via [close]. */
+/** Positional writes never share a mutable file offset. Close only after workers have joined. */
+class SegmentFileWriter(private val filePath: String, private val totalSize: Long) {
+    private val lock = Any()
     @Volatile private var channel: FileChannel? = null
-
-    /**
-     * Terminal flag — once closed or deleted, [ensureOpen] must never recreate
-     * the file. Without it an in-flight [writeAt] racing a [deleteFile] would
-     * resurrect the just-deleted partial file.
-     */
     @Volatile private var closed = false
 
-    /**
-     * Pre-allocates the file to [totalSize] bytes.
-     *
-     * Call this **once** before any segment downloading starts.
-     * On Android's UFS/eMMC storage this significantly improves sequential
-     * write throughput and prevents fragmentation.
-     *
-     * @throws java.io.IOException if there isn't enough disk space.
-     */
+    /** Sparse sizing, not physical allocation or a guarantee of sufficient free space. */
     fun preAllocate() {
-        if (totalSize <= 0) return
-
-        synchronized(initLock) {
-            if (closed) {
-                throw java.io.IOException("File writer is closed: $filePath")
-            }
-            try {
-                val file = File(filePath)
-                file.parentFile?.mkdirs()
-
-                val randomAccessFile = RandomAccessFile(file, "rw")
-                try {
-                    randomAccessFile.setLength(totalSize)
-                    channel = randomAccessFile.channel
-                } catch (e: Exception) {
-                    randomAccessFile.close()
-                    throw e
-                }
-
-                Log.d(TAG, "Pre-allocated ${totalSize} bytes → $filePath")
-            } catch (e: Exception) {
-                Log.e(TAG, "Pre-allocation failed: ${e.message}", e)
-                throw e
-            }
-        }
-    }
-
-    /**
-     * Writes [data] at [position] in the file.
-     *
-     * This method is **thread-safe** — multiple threads/coroutines can call it
-     * concurrently. The synchronized block on the RAF instance ensures that
-     * seek+write is atomic (no interleaving from other segments).
-     *
-     * The lock is very lightweight: held only for the ~32KB buffer write
-     * (microseconds on modern flash storage). Segments writing to different
-     * file positions will rarely contend.
-     *
-     * @param position  File offset (byte position) to write at.
-     * @param data      Byte array containing data to write.
-     * @param offset    Start offset within [data].
-     * @param length    Number of bytes to write from [data].
-     */
-    fun writeAt(position: Long, data: ByteArray, offset: Int = 0, length: Int = data.size) {
-        if (closed) {
-            throw java.io.IOException("File writer is closed: $filePath")
-        }
-        val fc = ensureOpen()
-        // FileChannel.write(ByteBuffer, Long) is thread-safe and doesn't update the 
-        // channel's position, eliminating the need for seek+synchronization.
-        val buffer = ByteBuffer.wrap(data, offset, length)
-        var writePosition = position
-        var zeroWriteCount = 0
-        while (buffer.hasRemaining()) {
-            val written = fc.write(buffer, writePosition)
-            if (written < 0) {
-                throw java.io.EOFException("FileChannel closed while writing $filePath")
-            }
-            if (written == 0) {
-                zeroWriteCount++
-                if (zeroWriteCount >= 3) {
-                    throw java.io.IOException("Unable to make progress writing $filePath")
-                }
-                Thread.yield()
-                continue
-            }
-            zeroWriteCount = 0
-            writePosition += written
-        }
-    }
-
-    /**
-     * Closes the underlying file handle.
-     * Safe to call multiple times. Should only be called after all segment
-     * coroutines have completed.
-     */
-    fun close() {
-        synchronized(initLock) {
-            closed = true
-            try {
-                channel?.close()
-                channel = null
-                Log.d(TAG, "Closed file writer: $filePath")
-            } catch (e: Exception) {
-                Log.w(TAG, "Error closing file writer: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * Deletes the file from disk. Used when a download is cancelled.
-     */
-    fun deleteFile() {
-        close()
-        try {
-            val file = File(filePath)
-            if (file.exists()) {
-                file.delete()
-                Log.d(TAG, "Deleted: $filePath")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error deleting file: ${e.message}")
-        }
-    }
-
-    /**
-     * Ensures the [RandomAccessFile] is open; creates it on first call.
-     * Thread-safe via the double-checked locking pattern on [initLock].
-     */
-    private fun ensureOpen(): FileChannel {
-        channel?.let { return it }
-
-        synchronized(initLock) {
-            channel?.let { return it }
-            if (closed) {
-                throw java.io.IOException("File writer is closed: $filePath")
-            }
-
+        if (totalSize < 0) return
+        synchronized(lock) {
+            check(channel == null) { "Output is already open" }
+            check(!closed) { "Output is closed" }
             val file = File(filePath)
             file.parentFile?.mkdirs()
-            val newRaf = RandomAccessFile(file, "rw")
-            val newChannel = newRaf.channel
-            channel = newChannel
-            return newChannel
+            val output = RandomAccessFile(file, "rw")
+            try {
+                output.setLength(totalSize)
+                channel = output.channel
+            } catch (error: Exception) {
+                output.close()
+                throw error
+            }
+        }
+    }
+
+    fun writeAt(position: Long, data: ByteArray, offset: Int = 0, length: Int = data.size) =
+        writeAt(position, ByteBuffer.wrap(data, offset, length))
+
+    internal fun writeAt(position: Long, buffer: ByteBuffer) {
+        val output = ensureOpen()
+        var offset = position
+        var stalled = 0
+        while (buffer.hasRemaining()) {
+            val count = output.write(buffer, offset)
+            if (count <= 0) {
+                if (++stalled >= 3) throw IOException("Unable to write download output")
+                Thread.yield()
+            } else {
+                offset += count
+                stalled = 0
+            }
+        }
+    }
+
+    fun force() = ensureOpen().force(true)
+
+    fun close() = synchronized(lock) {
+        closed = true
+        val output = channel
+        channel = null
+        output?.close()
+    }
+
+    private fun ensureOpen(): FileChannel {
+        if (closed) throw IOException("Download output is closed")
+        channel?.let { return it }
+        return synchronized(lock) {
+            if (closed) throw IOException("Download output is closed")
+            channel ?: run {
+                val file = File(filePath)
+                file.parentFile?.mkdirs()
+                RandomAccessFile(file, "rw").channel.also { channel = it }
+            }
         }
     }
 }

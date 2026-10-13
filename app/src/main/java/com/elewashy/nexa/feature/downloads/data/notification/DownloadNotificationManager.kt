@@ -361,6 +361,7 @@ class DownloadNotificationManager(
         DownloadTask.ERROR_FILE_MISSING -> service.getString(R.string.downloaded_file_missing)
         DownloadTask.ERROR_RESUME_UNREACHABLE -> service.getString(R.string.download_resume_unreachable)
         DownloadTask.ERROR_RESUME_URL_DEAD -> service.getString(R.string.download_resume_url_dead)
+        DownloadTask.ERROR_UNSAFE_RESUME -> service.getString(R.string.download_resume_unsafe)
         DownloadTask.ERROR_STORAGE_PERMISSION -> service.getString(R.string.storage_permission_required_downloads)
         else -> errorMessage
     }

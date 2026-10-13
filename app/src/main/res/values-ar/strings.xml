@@ -785,4 +785,5 @@
     <string name="download_button_content_description">تنزيل الوسائط من هذه الصفحة</string>
     <string name="download_button_hide">إخفاء لهذه الصفحة</string>
     <string name="download_button_hidden">تم إخفاء زر التنزيل لهذه الصفحة</string>
+    <string name="download_resume_unsafe">لا يمكن استئناف هذا التنزيل بأمان. تم الاحتفاظ بالملف الجزئي.</string>
 </resources>

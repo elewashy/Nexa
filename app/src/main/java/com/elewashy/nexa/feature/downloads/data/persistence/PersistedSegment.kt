@@ -12,5 +12,6 @@ data class PersistedSegment(
     val startByte: Long,
     val endByte: Long,
     val downloadedBytes: Long,
-    val completed: Boolean
+    val completed: Boolean,
+    val sha256: String? = null,
 )

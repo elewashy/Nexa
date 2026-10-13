@@ -1,7 +1,8 @@
 package com.elewashy.nexa.feature.browser.presentation.webview
 
 import android.content.Context
-import android.webkit.URLUtil
+import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
+import com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata
 import android.webkit.CookieManager
 import com.elewashy.nexa.ui.components.common.AppMessages
 import androidx.core.net.toUri
@@ -47,6 +48,8 @@ object DownloadHandler {
         cookieManager: CookieManager = CookieManager.getInstance(),
         source: String = SOURCE_BROWSER,
         onDownloadStarted: ((StartedDownload) -> Unit)? = null,
+        metadata: DownloadMetadata = DownloadMetadata(),
+        capturedCookies: String? = null,
     ) {
         try {
             // Do NOT decode the URL. OkHttp expects the raw encoded URL.
@@ -65,15 +68,16 @@ object DownloadHandler {
                 return
             }
 
-            val initialFileName = URLUtil.guessFileName(finalUrl, contentDisposition, mimeType)
+            if (metadata.method != "GET") {
+                AppMessages.show(context.getString(R.string.file_type_not_downloadable))
+                return
+            }
+            val initialFileName = FileNameResolver.fromSource(finalUrl, contentDisposition)
             val startedAt = System.currentTimeMillis()
-            val cookies = cookieManager.getCookie(finalUrl)
-
-            // Normalize Origin & Referer (truncate to origin only)
-            // Some hosts (e.g. Lulustream) return 403 if referer includes a path.
-            val uri = (currentPageUrl ?: "").toUri()
-            val origin = if (uri.scheme != null && uri.host != null) "${uri.scheme}://${uri.host}" else null
-            val referer = if (origin != null) "$origin/" else currentPageUrl
+            val cookies = capturedCookies ?: cookieManager.getCookie(finalUrl)
+            fun header(name: String) = metadata.headers.entries.firstOrNull { it.key.equals(name, true) }?.value
+            val origin = header("Origin")
+            val referer = header("Referer")
 
             val intent = DownloadService.createStartIntent(
                 context = context,
@@ -84,7 +88,8 @@ object DownloadHandler {
                 referer = referer,
                 origin = origin,
                 cookies = cookies,
-                source = source
+                source = source,
+                metadata = metadata.copy(contentDisposition = contentDisposition),
             )
             context.startForegroundService(intent)
 

@@ -718,4 +718,5 @@
     <string name="download_button_content_description">Télécharger les médias de cette page</string>
     <string name="download_button_hide">Masquer pour cette page</string>
     <string name="download_button_hidden">Bouton de téléchargement masqué pour cette page</string>
+    <string name="download_resume_unsafe">Ce téléchargement ne peut pas être repris en toute sécurité. Votre fichier partiel a été conservé.</string>
 </resources>

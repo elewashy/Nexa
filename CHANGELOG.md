@@ -4,6 +4,26 @@ All notable changes to Nexa are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Downloads:** Added per-segment integrity checkpoints so resuming after an app restart verifies the saved file bytes before requesting the remaining data.
+- **Development:** Added reproducible download benchmarks comparing the previous engine, the rewritten engine, single-stream transfers, and curl, with recorded results and architecture documentation.
+
+### Changed
+
+- **Downloads:** Rebuilt the download engine around the initial download response instead of separate filename and server probes. Fast sources stay on one connection; slower sources can use parallel byte ranges when the server supports safe segmented downloading.
+- **Downloads:** Source filenames now retain their spaces, dots, capitalization, and extensions. Names change only for filesystem safety, length limits, existing-file collisions, or an explicitly selected media format.
+- **Browser:** Download handoff now captures available request headers, the download's user agent, and cookies before permission prompts, including incognito-profile cookies. Referrers are no longer truncated and Origin and language headers are no longer invented. Known non-GET downloads are refused rather than replayed incorrectly.
+
+### Fixed
+
+- **Downloads:** Resume now validates resource identifiers, exact byte ranges, response lengths, and saved partial data before writing. Unsafe or unverifiable partial downloads are preserved instead of silently restarted or appended to.
+- **Downloads:** Fixed rapid pause/resume and cancellation races, bounded automatic retries, and network-loss recovery. File writers finish before cancellation or removal releases the filename for another download.
+- **Downloads:** Servers that reject parallel ranges can fall back to the original download stream without another full-file request.
+- **Downloads:** Completion now checks the written byte count and output length, flushes the file before finalization, and never overwrites an unrelated destination file. Failed finalization keeps the completed partial file for retry.
+
 ## [1.4.1] - 2026-10-07
 
 ### Added
@@ -224,6 +244,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 - Initial release with browsing, ad blocking, safer link handling, large-file downloads, filter updates, and GitHub release updates.
 
+[Unreleased]: https://github.com/elewashy/Nexa/compare/v1.4.1...HEAD
 [1.4.1]: https://github.com/elewashy/Nexa/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/elewashy/Nexa/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/elewashy/Nexa/compare/v1.3.0...v1.3.1

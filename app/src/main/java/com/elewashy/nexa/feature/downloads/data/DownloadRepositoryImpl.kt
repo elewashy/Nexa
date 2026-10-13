@@ -17,7 +17,6 @@ import com.elewashy.nexa.core.common.ApplicationScope
 import com.elewashy.nexa.core.permissions.StorageAccess
 import com.elewashy.nexa.feature.downloads.data.engine.DownloadEngine
 import com.elewashy.nexa.feature.downloads.data.engine.DownloadTask
-import com.elewashy.nexa.feature.downloads.data.engine.HttpProber
 import com.elewashy.nexa.feature.downloads.data.filename.FileNameResolver
 import com.elewashy.nexa.feature.downloads.data.notification.DownloadNotificationManager
 import com.elewashy.nexa.feature.downloads.data.persistence.DownloadSnapshot
@@ -163,8 +162,28 @@ class DownloadRepositoryImpl @Inject constructor(
             },
             onStatusChange = { item, status ->
                 appScope.launch(Dispatchers.Main.immediate) { handleEngineStatusChange(item, status) }
+            },
+            onMetadata = { item, disposition ->
+                withContext(Dispatchers.Main.immediate) {
+                    if (downloadItems[item.id] !== item) throw CancellationException("Download was removed")
+                    val suggested = disposition?.let { FileNameResolver.fromSource(item.metadata.resolvedUrl ?: item.url, it) }
+                    if (suggested != null) {
+                        val clean = item.metadata.forceExtension?.let { FileNameResolver.sanitiseWithForcedExtension(suggested, it) }
+                            ?: FileNameResolver.sanitise(suggested, item.mimeType)
+                        if (clean != item.fileName) {
+                            val directory = File(item.filePath).parentFile!!
+                            val unique = FileNameResolver.uniqueName(directory, clean, reservedFileNames)
+                            reservedFileNames.remove(item.fileName)
+                            item.fileName = unique
+                            item.filePath = File(directory, unique).absolutePath
+                            reservedFileNames.add(unique)
+                        }
+                    }
+                    store.upsertNow(listOf(item.id))
+                    emit(force = true)
+                }
             }
-        ).also { Log.d(TAG, "Custom download engine initialised (segmented, parallel, OkHttp)") }
+        ).also { Log.d(TAG, "Download engine initialised") }
     }
 
     // ── Service binding (for foreground lifecycle only) ───────────────
@@ -176,7 +195,7 @@ class DownloadRepositoryImpl @Inject constructor(
 
     /**
      * Automatic retry for FAILED downloads. Transient failures (server
-     * hiccups, unreachable resume probes, mid-stream resets) are retried on a
+     * hiccups, unreachable servers, mid-stream resets) are retried on a
      * backoff schedule before the download is left failed for manual action.
      * Both maps are main-thread only (all mutations happen on Main.immediate).
      */
@@ -462,7 +481,13 @@ class DownloadRepositoryImpl @Inject constructor(
             return@withContext
         }
 
-        awaitInitialised()
+        try {
+            awaitInitialised()
+        } catch (e: Exception) {
+            reservedUrls.remove(request.url)
+            stopServiceIfIdle()
+            throw e
+        }
 
         // Dedup against items that now exist (persisted state is loaded).
         val alreadyActive = downloadItems.values.any {
@@ -474,49 +499,14 @@ class DownloadRepositoryImpl @Inject constructor(
             return@withContext
         }
 
-        // Resolve filename + size + range support in ONE probe pass (IO-bound, on
-        // the application scope so it survives the caller's lifecycle). The probe
-        // result is handed to the engine so the URL is never hit twice.
         try {
-            appScope.launch {
-                val probe = FileNameResolver.probeOnce(
-                    request.url, request.userAgent, request.referer, request.cookies
-                )
-
-                val finalName = probe.fileName ?: request.fileName
-                val effectiveMime = if (probe.contentType != null && request.forceExtension == null) {
-                    probe.contentType
-                } else {
-                    request.mimeType
-                }
-
-                Log.d(TAG, "Starting download: $finalName (MIME=$effectiveMime, forceExt=${request.forceExtension})")
-                withContext(Dispatchers.Main.immediate) {
-                    try {
-                        createAndStartDownload(
-                            url = request.url,
-                            fileName = finalName,
-                            mimeType = effectiveMime,
-                            userAgent = request.userAgent,
-                            referer = request.referer,
-                            origin = request.origin,
-                            cookies = request.cookies,
-                            source = request.source,
-                            forceExtension = request.forceExtension,
-                            initialProbe = probe
-                        )
-                    } catch (cancellation: CancellationException) {
-                        reservedUrls.remove(request.url)
-                        throw cancellation
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to create download: ${request.url}", e)
-                        reservedUrls.remove(request.url)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Scope unusable — the reservation must not leak.
-            Log.e(TAG, "Failed to launch probe for: ${request.url}", e)
+            createAndStartDownload(
+                url = request.url, fileName = request.fileName, mimeType = request.mimeType,
+                userAgent = request.userAgent, referer = request.referer, origin = request.origin,
+                cookies = request.cookies, source = request.source, forceExtension = request.forceExtension,
+                metadata = request.metadata.copy(forceExtension = request.forceExtension),
+            )
+        } finally {
             reservedUrls.remove(request.url)
         }
         Unit
@@ -528,7 +518,9 @@ class DownloadRepositoryImpl @Inject constructor(
             // Manual pause supersedes any scheduled automatic retry.
             cancelAutoRetry(item.id)
             if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.PENDING) {
-                engine.pause(item.id)
+                item.wasWaitingForNetwork = false
+                if (engine.hasTask(item.id)) engine.pause(item.id)
+                else updateStatus(item, DownloadStatus.PAUSED)
                 Log.d(TAG, "Pausing: ${item.fileName}")
             }
         }
@@ -729,7 +721,6 @@ class DownloadRepositoryImpl @Inject constructor(
                 //    This prevents the engine's inline CANCELLED callback
                 //    (handleEngineStatusChange) from racing with this code.
                 downloadItems.remove(item.id)
-                reservedFileNames.remove(item.fileName)
 
                 // 3) Cancel the per-item notification and update the summary
                 //    with the item already removed from the map.
@@ -740,20 +731,21 @@ class DownloadRepositoryImpl @Inject constructor(
                 //    The engine's CANCELLED callback will short-circuit because
                 //    the item is no longer in downloadItems.
                 if (deleteFile) {
-                    engine.cancel(item.id)
+                    withContext(NonCancellable) { engine.cancel(item.id) }
                     Log.d(TAG, "Cancelling + deleting: ${item.fileName}")
                     deleteDownloadedFile(filePath)
                     // Restored-but-never-started tasks have no writer, so the engine
                     // can't delete their .part file — remove it explicitly.
                     deleteDownloadedFile(filePath + DownloadTask.PART_SUFFIX)
                 } else {
-                    engine.remove(item.id)
+                    withContext(NonCancellable) { engine.remove(item.id) }
                     Log.d(TAG, "Removing from list: ${item.fileName}")
                     // No final file exists for unfinished downloads — drop the .part
                     // so removing an unfinished item doesn't orphan partial data.
                     deleteDownloadedFile(filePath + DownloadTask.PART_SUFFIX)
                 }
 
+                reservedFileNames.remove(item.fileName)
                 cancelAutoRetry(item.id)
                 restoredSegmentCache.remove(item.id)
                 lastNotificationUpdateById.remove(item.id)
@@ -781,7 +773,7 @@ class DownloadRepositoryImpl @Inject constructor(
             }
             DownloadStatus.DOWNLOADING -> {
                 item.wasWaitingForNetwork = false
-                cancelAutoRetry(item.id)
+                autoRetryJobs.remove(item.id)?.cancel()
                 updateStatus(item, DownloadStatus.DOWNLOADING)
             }
             DownloadStatus.PAUSED -> {
@@ -845,7 +837,7 @@ class DownloadRepositoryImpl @Inject constructor(
      */
     private fun scheduleAutoRetry(item: DownloadItem) {
         if (!autoRetryEnabled) return
-        if (item.errorMessage in NON_RETRYABLE_ERRORS) return
+        if (item.errorMessage in NON_RETRYABLE_ERRORS || item.errorMessage == DownloadTask.ERROR_UNSAFE_RESUME) return
 
         val attempt = autoRetryCounts.getOrDefault(item.id, 0)
         if (attempt >= AUTO_RETRY_DELAYS_MS.size) {
@@ -893,7 +885,7 @@ class DownloadRepositoryImpl @Inject constructor(
         url: String, fileName: String, mimeType: String?,
         userAgent: String?, referer: String?, origin: String?,
         cookies: String?, source: String, forceExtension: String?,
-        initialProbe: HttpProber.ProbeResult? = null
+        metadata: com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata
     ) {
         try {
             val downloadId = idCounter.incrementAndGet()
@@ -930,7 +922,7 @@ class DownloadRepositoryImpl @Inject constructor(
                 id = downloadId, url = url, fileName = uniqueName,
                 filePath = filePath, status = DownloadStatus.PENDING,
                 mimeType = mimeType, userAgent = userAgent, referer = referer,
-                origin = origin, cookies = cookies, source = source
+                origin = origin, cookies = cookies, source = source, metadata = metadata
             )
 
             // Storage gate — the engine writes the public Downloads/Nexa directory
@@ -969,12 +961,15 @@ class DownloadRepositoryImpl @Inject constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // The item stays in memory and re-persists at the next
-                    // structural transition; the download itself proceeds.
                     Log.e(TAG, "Initial record persist failed for $downloadId", e)
+                    item.errorMessage = "Unable to persist download before starting"
+                    updateStatus(item, DownloadStatus.FAILED)
+                    stopServiceIfIdle()
+                    return@launch
                 }
+                if (downloadItems[downloadId] !== item || item.status != DownloadStatus.PENDING) return@launch
                 if (attachedService == null) {
-                    // The probe window can outlive the foreground service (system
+                    // Creation can outlive the foreground service (system
                     // pressure, Android 15 dataSync timeout). A download running
                     // outside the FGS is killed as soon as the app is backgrounded,
                     // so persist it paused and route through the service exactly
@@ -987,9 +982,7 @@ class DownloadRepositoryImpl @Inject constructor(
                     // manual resume instead of running unprotected.
                     routeResumeThroughService(item)
                 } else {
-                    // Enqueue in the custom download engine, reusing the upstream
-                    // probe so the URL is only hit once.
-                    engine.enqueue(item, initialProbe = initialProbe)
+                    engine.enqueue(item)
                 }
             }
         } finally {
@@ -1247,14 +1240,14 @@ class DownloadRepositoryImpl @Inject constructor(
                 DownloadStatus.DOWNLOADING, DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
                     val snapshot = engine.snapshotProgress(id, item.status)
                     val effective = if (snapshot.segments.isEmpty()) {
-                        restoredSegmentCache[id].orEmpty()
+                        if (engine.hasTask(id)) emptyList() else restoredSegmentCache[id].orEmpty()
                     } else {
                         restoredSegmentCache[id] = snapshot.segments
                         snapshot.segments
                     }
                     val entity = item.copy().toEntity().copy(
-                        downloadedBytes = snapshot.downloadedBytes,
-                        totalBytes = snapshot.totalBytes,
+                        downloadedBytes = if (engine.hasTask(id)) snapshot.downloadedBytes else item.downloadedBytes,
+                        totalBytes = if (engine.hasTask(id)) snapshot.totalBytes else item.totalBytes,
                     )
                     DownloadSnapshot(
                         entity,
@@ -1480,11 +1473,21 @@ class DownloadRepositoryImpl @Inject constructor(
                 }
             }
 
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    appScope.launch(Dispatchers.Main.immediate) { handleNetworkAvailable() }
+                }
+            }
+
             override fun onLost(network: Network) {
-                super.onLost(network)
-                Log.d(TAG, "Network lost")
-                // The engine is the source of truth. It will mark affected downloads
-                // PAUSED + wasWaitingForNetwork and that status transition will render notifications.
+                appScope.launch(Dispatchers.Main.immediate) {
+                    val activeNetwork = connectivityManager.activeNetwork
+                    if (activeNetwork != null && activeNetwork != network) return@launch
+                    downloadItems.values.filter { it.status in ACTIVE_STATUSES }.forEach { item ->
+                        item.wasWaitingForNetwork = true
+                        engine.pause(item.id)
+                    }
+                }
             }
         }
         networkCallback = cb
@@ -1522,6 +1525,9 @@ class DownloadRepositoryImpl @Inject constructor(
      */
     private fun handleNetworkAvailable() {
         if (attachedService == null) return
+        val active = connectivityManager.activeNetwork ?: return
+        if (connectivityManager.getNetworkCapabilities(active)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true) return
 
         val waitingDownloads = downloadItems.values.filter {
             it.status == DownloadStatus.PAUSED && it.wasWaitingForNetwork

@@ -1548,15 +1548,19 @@ class MainActivity : AppCompatActivity() {
         onDownloadStarted: (StartedDownload) -> Unit,
         launchDownload: (download: () -> Unit) -> Unit,
     ) {
-        setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+        setDownloadListener { url, listenerUserAgent, contentDisposition, mimeType, contentLength ->
             // Captured now: the page may navigate while storage access is being granted.
-            val userAgent = settings.userAgentString
+            val userAgent = listenerUserAgent ?: settings.userAgentString
             val pageUrl = this.url
+            val metadata = (webViewClient as? NexaWebViewClient)?.downloadRequests?.take(url)
+                ?: com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata()
+            val capturedCookies = metadata.headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value
             val cookieManager = if (tabItem(tabIdOf(this))?.isPrivate == true) {
                 privateWebViewProfile.cookieManager(this)
             } else {
                 android.webkit.CookieManager.getInstance()
             }
+            val cookieSnapshot = capturedCookies ?: cookieManager.getCookie(url)
             launchDownload {
                 DownloadHandler.startDownload(
                     context = context,
@@ -1566,6 +1570,8 @@ class MainActivity : AppCompatActivity() {
                     userAgent = userAgent,
                     currentPageUrl = pageUrl,
                     cookieManager = cookieManager,
+                    metadata = metadata.copy(contentDisposition = contentDisposition, browserContentLength = contentLength),
+                    capturedCookies = cookieSnapshot,
                     onDownloadStarted = onDownloadStarted,
                 )
             }

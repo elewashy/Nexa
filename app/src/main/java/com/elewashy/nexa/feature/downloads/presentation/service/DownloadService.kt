@@ -68,6 +68,7 @@ class DownloadService : Service() {
         const val EXTRA_DOWNLOAD_ID     = "extra_download_id"
         const val EXTRA_SOURCE          = "extra_source"
         const val EXTRA_FORCE_EXTENSION = "extra_force_extension"
+        const val EXTRA_METADATA = "extra_request_metadata"
 
         /** Builds an intent to start a new download. */
         fun createStartIntent(
@@ -80,7 +81,8 @@ class DownloadService : Service() {
             origin: String?,
             cookies: String?,
             source: String,
-            forceExtension: String? = null
+            forceExtension: String? = null,
+            metadata: com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata = com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata(),
         ): Intent = Intent(context, DownloadService::class.java).apply {
             action = ACTION_START_DOWNLOAD
             putExtra(EXTRA_URL, url)
@@ -92,6 +94,7 @@ class DownloadService : Service() {
             putExtra(EXTRA_COOKIES, cookies)
             putExtra(EXTRA_SOURCE, source)
             putExtra(EXTRA_FORCE_EXTENSION, forceExtension)
+            putExtra(EXTRA_METADATA, com.google.gson.Gson().toJson(metadata))
         }
 
         /** Builds a control intent (pause / resume / cancel / retry). */
@@ -180,7 +183,10 @@ class DownloadService : Service() {
             origin = intent.getStringExtra(EXTRA_ORIGIN),
             cookies = intent.getStringExtra(EXTRA_COOKIES),
             source = intent.getStringExtra(EXTRA_SOURCE) ?: "UNKNOWN",
-            forceExtension = intent.getStringExtra(EXTRA_FORCE_EXTENSION)
+            forceExtension = intent.getStringExtra(EXTRA_FORCE_EXTENSION),
+            metadata = intent.getStringExtra(EXTRA_METADATA)?.let {
+                runCatching { com.google.gson.Gson().fromJson(it, com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata::class.java) }.getOrNull()
+            } ?: com.elewashy.nexa.feature.downloads.domain.model.DownloadMetadata(),
         )
         appScope.launch { repository.start(request) }
     }

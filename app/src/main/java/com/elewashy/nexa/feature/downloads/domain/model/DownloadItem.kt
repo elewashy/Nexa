@@ -19,12 +19,13 @@ data class DownloadItem(
     @Volatile var downloadSpeedBytesPerSecond: Long = 0, // Current download speed in bytes per second
     @Volatile var etaSeconds: Long = -1, // Estimated time remaining in seconds, -1 if unknown
     @Volatile var wasWaitingForNetwork: Boolean = false, // Flag to track if download was paused due to network loss
-    @Volatile var errorMessage: String? = null // User-facing reason when the download fails (shown in the failure notification)
+    @Volatile var errorMessage: String? = null,
+    @Volatile var metadata: DownloadMetadata = DownloadMetadata()
 ) {
     val progress: Int
         get() = when {
             status == DownloadStatus.COMPLETED -> 100
-            totalBytes > 0 && downloadedBytes <= totalBytes -> ((downloadedBytes * 100) / totalBytes).toInt()
+            totalBytes > 0 -> (downloadedBytes.toDouble() / totalBytes * 100).toInt().coerceIn(0, 100)
             else -> 0
         }
     

@@ -63,6 +63,7 @@ data class DownloadEntity(
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "was_waiting_for_network") val wasWaitingForNetwork: Boolean = false,
     @ColumnInfo(name = "error_message") val errorMessage: String? = null,
+    @ColumnInfo(name = "request_metadata") val requestMetadata: String? = null,
 )
 
 /**
@@ -88,6 +89,7 @@ data class DownloadSegmentEntity(
     @ColumnInfo(name = "end_byte") val endByte: Long,
     @ColumnInfo(name = "downloaded_bytes") val downloadedBytes: Long,
     val completed: Boolean,
+    val sha256: String? = null,
 )
 
 /**

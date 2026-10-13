@@ -360,6 +360,7 @@
     <string name="failed_progress">Failed at %d%%</string>
     <string name="download_failed">Download failed</string>
     <string name="download_finalize_failed">Failed to finalize the downloaded file</string>
+    <string name="download_resume_unsafe">This download cannot be resumed safely. Your partial file has been preserved.</string>
     <string name="downloaded_file_missing">Downloaded file is missing</string>
     <string name="download_resume_unreachable">Couldn\'t reach the server to resume. Your progress is saved — it will retry automatically.</string>
     <string name="download_resume_url_dead">The download link is no longer available, so it can\'t be resumed.</string>
