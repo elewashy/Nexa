@@ -30,7 +30,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ReportDrawn
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -91,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
@@ -356,7 +356,7 @@ class MainActivity : AppCompatActivity() {
         // Once per process; filter lists refresh in the background on the application scope.
         filterUpdateScheduler.start()
 
-        enableEdgeToEdge()
+        WindowCompat.enableEdgeToEdge(window)
 
         // File uploads (<input type=file>): the picker result is routed back
         // to the chrome client that asked for it.
