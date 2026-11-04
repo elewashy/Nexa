@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Browser:** Inline images saved or shared from the long-press menu now keep their original format and quality instead of being re-encoded as JPEG, so transparency is preserved.
+- **Development:** Updated the Android Gradle Plugin, Kotlin, KSP, Gradle, and libraries to their latest stable releases.
+
+### Fixed
+
+- **Browser:** Saving, sharing, and previewing inline images no longer block the UI thread; large page images are downscaled for the preview.
+
 ## [1.4.2] - 2026-10-13
 
 ### Added

@@ -22,10 +22,12 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -33,13 +35,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.annotation.StringRes
 import com.elewashy.nexa.R
-import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuHandler
+import com.elewashy.nexa.feature.browser.data.image.DataUrlImage
 import androidx.compose.ui.unit.dp
 import com.elewashy.nexa.ui.adaptive.rememberAdaptiveLayoutInfo
 import com.elewashy.nexa.ui.icons.Close
 import com.elewashy.nexa.ui.icons.Image as ImageIcon
 import com.elewashy.nexa.ui.icons.Save
 import com.elewashy.nexa.ui.icons.Share
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Defines the available context menu actions for browser long-press.
@@ -54,12 +58,21 @@ enum class ContextMenuAction(
     CLOSE(R.string.close, Close)
 }
 
+/** Longest side, in pixels, an inline image is decoded at for the preview dialog. */
+private const val PREVIEW_MAX_DIMENSION_PX = 2048
+
 @Composable
 fun Base64ImageDialog(
     dataUrl: String,
     onDismiss: () -> Unit,
 ) {
-    val bitmap = remember(dataUrl) { ContextMenuHandler.decodeBase64Image(dataUrl) }
+    // Decoding is proportional to the page-supplied payload: keep it off the main thread and
+    // subsample it, so a large image can neither stall a frame nor exhaust the heap.
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, dataUrl) {
+        value = withContext(Dispatchers.Default) {
+            DataUrlImage.decode(dataUrl, PREVIEW_MAX_DIMENSION_PX)?.asImageBitmap()
+        }
+    }
     val adaptiveInfo = rememberAdaptiveLayoutInfo()
 
     Dialog(onDismissRequest = onDismiss) {
@@ -74,7 +87,7 @@ fun Base64ImageDialog(
                     .padding(8.dp)
             ) {
                 Image(
-                    bitmap = it.asImageBitmap(),
+                    bitmap = it,
                     contentDescription = null,
                     modifier = Modifier.fillMaxWidth(),
                     contentScale = ContentScale.Fit,

@@ -1,16 +1,14 @@
 package com.elewashy.nexa.feature.browser.presentation.webview
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.util.Base64
 import android.util.Log
 import android.webkit.WebView
 import androidx.core.app.ShareCompat
 import com.elewashy.nexa.R
+import com.elewashy.nexa.feature.browser.data.image.DataUrlImage
 import com.elewashy.nexa.feature.browser.presentation.screen.ContextMenuAction
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -18,6 +16,12 @@ sealed interface ContextMenuResult {
     data object None : ContextMenuResult
     data class Message(val text: String) : ContextMenuResult
     data class Base64Image(val dataUrl: String) : ContextMenuResult
+
+    /** Save an inline image to the gallery; blocking I/O the caller runs off the main thread. */
+    data class SaveInlineImage(val dataUrl: String) : ContextMenuResult
+
+    /** Save an inline image, then share it; the caller runs the save off the main thread. */
+    data class ShareInlineImage(val dataUrl: String) : ContextMenuResult
 }
 
 /**
@@ -30,6 +34,10 @@ sealed interface ContextMenuResult {
  *  2. Caller shows a Compose [ContextMenuScreen] with the returned actions
  *  3. User taps an action → [onActionSelected] dispatches it using the
  *     probe result captured at step 1 — never blocking the UI thread
+ *
+ * Everything here runs on the UI thread. Inline (`data:`) image work — decoding and
+ * writing to MediaStore — is returned as [ContextMenuResult.SaveInlineImage] /
+ * [ContextMenuResult.ShareInlineImage] for the caller to run in the background.
  */
 object ContextMenuHandler {
 
@@ -144,12 +152,12 @@ object ContextMenuHandler {
     }
 
     // ────────────────────────────────────────────────────────────
-    //  Action handlers (unchanged from original)
+    //  Action handlers
     // ────────────────────────────────────────────────────────────
 
     private fun handleViewImage(imgUrl: String?, webView: WebView): ContextMenuResult {
         imgUrl ?: return ContextMenuResult.None
-        return if (isBase64DataUrl(imgUrl)) {
+        return if (DataUrlImage.isBase64Image(imgUrl)) {
             ContextMenuResult.Base64Image(imgUrl)
         } else {
             webView.loadUrl(imgUrl)
@@ -165,17 +173,8 @@ object ContextMenuHandler {
         launchDownload: (download: () -> Unit) -> Unit,
     ): ContextMenuResult {
         imgUrl ?: return ContextMenuResult.None
-        return if (isBase64DataUrl(imgUrl)) {
-            val bitmap = decodeBase64Image(imgUrl) ?: return ContextMenuResult.None
-            val uri = ImageSaver.saveToGallery(
-                context, bitmap, "Nexa_Image_${System.currentTimeMillis()}"
-            )
-            val msg = if (uri != null) {
-                context.getString(R.string.image_saved_to_gallery)
-            } else {
-                context.getString(R.string.failed_to_save_image)
-            }
-            ContextMenuResult.Message(msg)
+        return if (DataUrlImage.isBase64Image(imgUrl)) {
+            ContextMenuResult.SaveInlineImage(imgUrl)
         } else {
             // Download via app's DownloadHandler instead of external view intent
             val userAgent = webView.settings.userAgentString
@@ -198,47 +197,14 @@ object ContextMenuHandler {
         if (tempUrl == null) {
             return ContextMenuResult.Message(context.getString(R.string.invalid_link))
         }
-        return if (isBase64DataUrl(tempUrl)) {
-            val bitmap = decodeBase64Image(tempUrl) ?: return ContextMenuResult.None
-            val uri = ImageSaver.saveToGallery(
-                context, bitmap, "Nexa_Share_${System.currentTimeMillis()}"
-            )
-            if (uri != null) {
-                ShareCompat.IntentBuilder(context)
-                    .setChooserTitle(context.getString(R.string.sharing_image))
-                    .setType("image/*")
-                    .setStream(uri)
-                    .startChooser()
-                ContextMenuResult.None
-            } else {
-                ContextMenuResult.Message(context.getString(R.string.failed_to_save_image_for_sharing))
-            }
-        } else {
-            ShareCompat.IntentBuilder(context)
-                .setChooserTitle(context.getString(R.string.sharing_url))
-                .setType("text/plain")
-                .setText(tempUrl)
-                .startChooser()
-            ContextMenuResult.None
+        if (DataUrlImage.isBase64Image(tempUrl)) {
+            return ContextMenuResult.ShareInlineImage(tempUrl)
         }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    //  Helpers
-    // ────────────────────────────────────────────────────────────
-
-    /** True for inline base64 data-URIs; a plain substring match on
-     *  "base64" also caught ordinary URLs that merely contain the word. */
-    private fun isBase64DataUrl(url: String?): Boolean =
-        url != null && url.startsWith("data:") && url.contains(";base64,")
-
-    fun decodeBase64Image(dataUrl: String): Bitmap? {
-        return try {
-            val pureBytes = dataUrl.substring(dataUrl.indexOf(",") + 1)
-            val decoded = Base64.decode(pureBytes, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(decoded, 0, decoded.size)
-        } catch (_: Exception) {
-            null
-        }
+        ShareCompat.IntentBuilder(context)
+            .setChooserTitle(context.getString(R.string.sharing_url))
+            .setType("text/plain")
+            .setText(tempUrl)
+            .startChooser()
+        return ContextMenuResult.None
     }
 }

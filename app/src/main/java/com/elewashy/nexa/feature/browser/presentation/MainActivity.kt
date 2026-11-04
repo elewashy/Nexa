@@ -30,6 +30,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ReportDrawn
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -90,8 +91,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ShareCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import androidx.core.splashscreen.SplashScreen
@@ -131,6 +132,8 @@ import com.elewashy.nexa.feature.browser.presentation.webview.PopupWindowHandler
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewContentBlocker
 import com.elewashy.nexa.feature.browser.presentation.webview.PrivateWebViewProfile
 import com.elewashy.nexa.feature.browser.domain.model.BrowserNavigationBarPosition
+import com.elewashy.nexa.feature.browser.domain.usecase.InlineImagePurpose
+import com.elewashy.nexa.feature.browser.domain.usecase.SaveInlineImageUseCase
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewConfigurator
 import com.elewashy.nexa.feature.browser.presentation.webview.WebViewSessionState
 import com.elewashy.nexa.feature.browser.presentation.webview.ContextMenuResult
@@ -305,6 +308,7 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var refreshRateManager: RefreshRateManager
     @Inject lateinit var networkMonitor: NetworkMonitor
+    @Inject lateinit var saveInlineImage: SaveInlineImageUseCase
     // Lazy: neither is needed to draw the first frame. The download engine is built on the
     // first download snackbar, the favicon cache on the first page icon.
     @Inject lateinit var downloadRepository: dagger.Lazy<DownloadRepository>
@@ -356,7 +360,7 @@ class MainActivity : AppCompatActivity() {
         // Once per process; filter lists refresh in the background on the application scope.
         filterUpdateScheduler.start()
 
-        WindowCompat.enableEdgeToEdge(window)
+        enableEdgeToEdge()
 
         // File uploads (<input type=file>): the picker result is routed back
         // to the chrome client that asked for it.
@@ -1230,6 +1234,34 @@ class MainActivity : AppCompatActivity() {
         super.onLowMemory()
     }
 
+    // ========== Inline (data: URL) images ==========
+
+    /** Saves a page's inline image in the background, then reports the outcome. */
+    private fun saveInlineImageToGallery(dataUrl: String, onShowMessage: (String) -> Unit) {
+        lifecycleScope.launch {
+            val saved = saveInlineImage(dataUrl, InlineImagePurpose.SAVE) != null
+            onShowMessage(
+                getString(if (saved) R.string.image_saved_to_gallery else R.string.failed_to_save_image),
+            )
+        }
+    }
+
+    /** Saves a page's inline image in the background, then opens the share sheet for it. */
+    private fun shareInlineImage(dataUrl: String, onShowMessage: (String) -> Unit) {
+        lifecycleScope.launch {
+            val uri = saveInlineImage(dataUrl, InlineImagePurpose.SHARE)
+            if (uri == null) {
+                onShowMessage(getString(R.string.failed_to_save_image_for_sharing))
+                return@launch
+            }
+            ShareCompat.IntentBuilder(this@MainActivity)
+                .setChooserTitle(getString(R.string.sharing_image))
+                .setType("image/*")
+                .setStream(uri)
+                .startChooser()
+        }
+    }
+
     // ========== Compose WebView ==========
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1319,6 +1351,10 @@ class MainActivity : AppCompatActivity() {
                             ContextMenuResult.None -> Unit
                             is ContextMenuResult.Message -> onShowMessage(result.text)
                             is ContextMenuResult.Base64Image -> onShowBase64Image(result.dataUrl)
+                            is ContextMenuResult.SaveInlineImage ->
+                                saveInlineImageToGallery(result.dataUrl, onShowMessage)
+                            is ContextMenuResult.ShareInlineImage ->
+                                shareInlineImage(result.dataUrl, onShowMessage)
                         }
                     }
                 },
